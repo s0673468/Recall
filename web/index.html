@@ -8,9 +8,6 @@
     The path provided below has to start and end with a slash "/" in order for
     it to work correctly.
 
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
     This is a placeholder for base href that will be replaced by the value of
     the `--base-href` argument provided to `flutter build`.
   -->
@@ -18,14 +15,24 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <!-- No `viewport-fit=cover`: Flutter web doesn't feed iOS Safari's safe-area
+       insets into MediaQuery.padding, so the in-app SafeArea is a no-op there.
+       Letting Safari keep the layout inside the safe area stops content from
+       being clipped under the notch / home indicator. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="description" content="Recall — spaced-repetition review across all your devices.">
   <meta name="theme-color" content="#1B1B29">
 
-  <!-- Dark everywhere the Flutter canvas doesn't paint (status-bar band, any
-       safe-area inset) so the top of the PWA isn't a white strip. -->
-  <style>html, body { height: 100%; margin: 0; background: #1B1B29; }</style>
+  <!-- Warm up the Google Fonts origins so Outfit / DM Sans paint sooner. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-  <!-- iOS / installable PWA meta tags (iOS ignores manifest.json) -->
+  <!-- Prefetch the CanvasKit engine so it downloads in parallel with the boot
+       script and the app paints sooner on a cold load. -->
+  <link rel="prefetch" href="canvaskit/canvaskit.js">
+  <link rel="prefetch" href="canvaskit/canvaskit.wasm">
+
+  <!-- PWA: installable to the iOS/Android home screen, standalone, dark status bar -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -39,8 +46,7 @@
   <link rel="manifest" href="manifest.json">
 
   <!-- No-op shim for the transitive passkeys_web plugin (see passkeys_stub.js).
-       Must load BEFORE Flutter's plugin registrant so PasskeyAuthenticator.init()
-       doesn't throw and white-screen the app. -->
+       Must load before Flutter's plugin registrant so init() doesn't throw. -->
   <script src="passkeys_stub.js"></script>
 
   <!-- Diagnostic: surface any boot error on-screen instead of a white page.
@@ -69,18 +75,72 @@
         var r = e.reason;
         show('PROMISE', (r && (r.stack || r.message)) || String(r));
       });
+      var origErr = console.error;
+      console.error = function () {
+        show('console.error', Array.prototype.join.call(arguments, ' '));
+        origErr.apply(console, arguments);
+      };
     })();
   </script>
+
+  <!-- Boot splash: shown immediately so the first paint isn't a blank dark
+       screen while CanvasKit + fonts load. Removed on Flutter's first frame
+       (with a timeout fallback so it can never get stuck). -->
+  <style>
+    html, body { height: 100%; margin: 0; background: #1B1B29; }
+    #splash {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 20px;
+      background: #1B1B29;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      opacity: 1; transition: opacity .35s ease;
+    }
+    #splash.hide { opacity: 0; pointer-events: none; }
+    #splash .mark {
+      width: 56px; height: 56px; border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #8A90FF, rgba(138,144,255,.55));
+      box-shadow: 0 10px 34px rgba(138,144,255,.28);
+    }
+    #splash .ring {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.12); border-top-color: #8A90FF;
+      animation: splash-spin .8s linear infinite;
+    }
+    #splash .label { color: #95919E; font-size: 13px; letter-spacing: .2px; }
+    @keyframes splash-spin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
-
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <div id="splash" aria-hidden="true">
+    <div class="mark">
+      <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
+           stroke="#1B1B29" stroke-width="2.4" stroke-linecap="round"
+           stroke-linejoin="round">
+        <path d="M12 2 2 7l10 5 10-5-10-5Z"/>
+        <path d="m2 17 10 5 10-5"/>
+        <path d="m2 12 10 5 10-5"/>
+      </svg>
+    </div>
+    <div class="ring"></div>
+    <div class="label">Loading Recall…</div>
+  </div>
+  <script>
+    (function () {
+      function hideSplash() {
+        var s = document.getElementById('splash');
+        if (!s) return;
+        s.classList.add('hide');
+        setTimeout(function () {
+          if (s && s.parentNode) s.parentNode.removeChild(s);
+        }, 400);
+      }
+      window.addEventListener('flutter-first-frame', hideSplash);
+      // Fallback: never let the splash outlive a slow/failed boot.
+      setTimeout(hideSplash, 12000);
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

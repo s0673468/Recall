@@ -6,7 +6,7 @@
     "background_color": "#1B1B29",
     "theme_color": "#1B1B29",
     "description": "Spaced-repetition review across all your devices.",
-    "orientation": "portrait-primary",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {
