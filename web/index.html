@@ -21,12 +21,16 @@
   <meta name="description" content="Recall — spaced-repetition review across all your devices.">
   <meta name="theme-color" content="#1B1B29">
 
+  <!-- Dark everywhere the Flutter canvas doesn't paint (status-bar band, any
+       safe-area inset) so the top of the PWA isn't a white strip. -->
+  <style>html, body { height: 100%; margin: 0; background: #1B1B29; }</style>
+
   <!-- iOS / installable PWA meta tags (iOS ignores manifest.json) -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="Recall">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
