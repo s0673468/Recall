@@ -5,10 +5,13 @@
 // without Corbado's external SDK bundle that global is undefined, the call throws
 // during plugin registration, and the whole Flutter app white-screens.
 //
-// Recall authenticates with email/password only and never invokes any passkey
-// flow, so we define a minimal stub matching passkeys_web/lib/interop.dart just
-// enough for init() to succeed and the app to boot. No third-party code is
+// Every app here authenticates with email/password only and never invokes any
+// passkey flow, so we define a minimal stub matching passkeys_web/lib/interop.dart
+// just enough for init() to succeed and the app to boot. No third-party code is
 // loaded; the passkey methods are inert (register/login reject if ever called).
+//
+// CANONICAL SOURCE: health_flutter_shared/docs/passkeys_stub.js — keep the three
+// app copies (dashboard / recall / lift web/) byte-identical to this file.
 window.PasskeyAuthenticator = {
   init: function () {},
   register: function () {

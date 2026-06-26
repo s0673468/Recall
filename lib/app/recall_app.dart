@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../features/review/presentation/widgets/auth_gate.dart';
+import 'package:health_flutter_shared/health_flutter_shared.dart'
+    show AuthGate, AuthGateModel;
+
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_dependencies.dart';
@@ -93,7 +95,16 @@ class _RecallRoot extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         if (controller.currentUser == null) {
-          return AuthGate(controller: controller);
+          return AuthGate(
+            model: AuthGateModel(
+              source: controller,
+              submitting: () => controller.state.authSubmitting,
+              errorText: () => controller.state.error,
+              signIn: controller.signIn,
+            ),
+            appName: UiBrand.appName,
+            subtitle: UiBrand.subtitle,
+          );
         }
         return AppShell(controller: controller, api: dependencies.api);
       },

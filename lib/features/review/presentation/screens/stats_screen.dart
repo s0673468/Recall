@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:health_flutter_shared/health_flutter_shared.dart'
+    show SignOutButton, SignOutButtonVariant;
 import 'package:intl/intl.dart';
 
 import '../../../../theme/ui_tokens.dart';
@@ -120,15 +122,10 @@ class _StatsScreenState extends State<StatsScreen> {
           ),
           const SizedBox(height: UiSpacing.xl),
           Center(
-            child: TextButton.icon(
-              onPressed: widget.controller.signOut,
-              icon: const Icon(Icons.logout, size: 16, color: UiColors.textMuted),
-              label: Text(
-                widget.controller.currentUser?.email == null
-                    ? 'Sign out'
-                    : 'Sign out · ${widget.controller.currentUser!.email}',
-                style: const TextStyle(color: UiColors.textMuted, fontSize: 13),
-              ),
+            child: SignOutButton(
+              onSignOut: widget.controller.signOut,
+              email: widget.controller.currentUser?.email,
+              variant: SignOutButtonVariant.text,
             ),
           ),
         ],
