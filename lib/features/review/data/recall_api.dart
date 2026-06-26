@@ -21,6 +21,13 @@ class RecallApi {
           _ => 'desktop',
         };
 
+  // --- Auth ---
+  User? get currentUser => client.auth.currentUser;
+  Stream<AuthState> get onAuthStateChange => client.auth.onAuthStateChange;
+  Future<void> signIn({required String email, required String password}) =>
+      client.auth.signInWithPassword(email: email, password: password);
+  Future<void> signOut() => client.auth.signOut();
+
   Future<List<DeckRow>> fetchDecks() async {
     final rows = await client
         .from('decks')

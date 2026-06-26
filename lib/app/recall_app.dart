@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../features/review/presentation/widgets/auth_gate.dart';
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_dependencies.dart';
@@ -75,10 +76,27 @@ class RecallApp extends StatelessWidget {
       title: UiBrand.appName,
       debugShowCheckedModeBanner: false,
       theme: buildRecallTheme(),
-      home: AppShell(
-        controller: dependencies.reviewController,
-        api: dependencies.api,
-      ),
+      home: _RecallRoot(dependencies: dependencies),
+    );
+  }
+}
+
+/// Shows the login gate until there's a signed-in user, then the app shell.
+class _RecallRoot extends StatelessWidget {
+  final RecallDependencies dependencies;
+  const _RecallRoot({required this.dependencies});
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = dependencies.reviewController;
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        if (controller.currentUser == null) {
+          return AuthGate(controller: controller);
+        }
+        return AppShell(controller: controller, api: dependencies.api);
+      },
     );
   }
 }

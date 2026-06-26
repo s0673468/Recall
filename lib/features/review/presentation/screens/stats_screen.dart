@@ -118,6 +118,19 @@ class _StatsScreenState extends State<StatsScreen> {
               );
             },
           ),
+          const SizedBox(height: UiSpacing.xl),
+          Center(
+            child: TextButton.icon(
+              onPressed: widget.controller.signOut,
+              icon: const Icon(Icons.logout, size: 16, color: UiColors.textMuted),
+              label: Text(
+                widget.controller.currentUser?.email == null
+                    ? 'Sign out'
+                    : 'Sign out · ${widget.controller.currentUser!.email}',
+                style: const TextStyle(color: UiColors.textMuted, fontSize: 13),
+              ),
+            ),
+          ),
         ],
       ),
     );

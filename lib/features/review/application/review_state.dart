@@ -13,6 +13,7 @@ class ReviewState {
   final int reviewedThisSession;
   final bool offline;
   final int pendingSync;
+  final bool authSubmitting;
 
   const ReviewState({
     this.loading = true,
@@ -25,6 +26,7 @@ class ReviewState {
     this.reviewedThisSession = 0,
     this.offline = false,
     this.pendingSync = 0,
+    this.authSubmitting = false,
   });
 
   ReviewCard? get current => index >= 0 && index < queue.length ? queue[index] : null;
@@ -46,6 +48,7 @@ class ReviewState {
     int? reviewedThisSession,
     bool? offline,
     int? pendingSync,
+    bool? authSubmitting,
   }) {
     return ReviewState(
       loading: loading ?? this.loading,
@@ -60,6 +63,7 @@ class ReviewState {
       reviewedThisSession: reviewedThisSession ?? this.reviewedThisSession,
       offline: offline ?? this.offline,
       pendingSync: pendingSync ?? this.pendingSync,
+      authSubmitting: authSubmitting ?? this.authSubmitting,
     );
   }
 }

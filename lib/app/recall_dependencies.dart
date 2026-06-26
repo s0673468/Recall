@@ -22,9 +22,19 @@ class RecallDependencies {
 
     final client = await _client(config);
 
-    // Auto-login: silent sign-in with the bundled single-user credentials.
-    // supabase_flutter persists the session, so this only hits the network the
-    // first time on each device.
+    final api = RecallApi(client);
+    final engine = FsrsEngine(desiredRetention: 0.9);
+    // The controller subscribes to auth changes in its constructor and loads the
+    // queue once there's a session — so it must exist before we (maybe) sign in.
+    final controller = ReviewController(
+      api: api,
+      engine: engine,
+      store: LocalReviewStore(),
+    );
+
+    // Optional dev auto-login: only when the LOCAL config carries credentials.
+    // The CI/Pages build writes a no-creds config, so prod shows the login
+    // screen and RLS gates everything. A failed auto-login is non-fatal.
     if (config.canAutoLogin && client.auth.currentSession == null) {
       try {
         await client.auth.signInWithPassword(
@@ -32,19 +42,9 @@ class RecallDependencies {
           password: config.password,
         );
       } catch (e) {
-        debugPrint('Recall: auto sign-in failed: $e');
-        rethrow;
+        debugPrint('Recall: auto-login failed (showing login screen): $e');
       }
     }
-
-    final api = RecallApi(client);
-    final engine = FsrsEngine(desiredRetention: 0.9);
-    final controller = ReviewController(
-      api: api,
-      engine: engine,
-      store: LocalReviewStore(),
-    );
-    await controller.initialize();
 
     return RecallDependencies(reviewController: controller, api: api);
   }
