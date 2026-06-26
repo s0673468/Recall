@@ -1,0 +1,129 @@
+// Plain data rows mirroring the Supabase schema (see ANKI_WEB_PLAN.md §3).
+
+class DeckRow {
+  final int deckId;
+  final String name;
+  const DeckRow({required this.deckId, required this.name});
+
+  factory DeckRow.fromMap(Map<String, dynamic> m) => DeckRow(
+    deckId: (m['deck_id'] as num).toInt(),
+    name: (m['name'] as String?) ?? 'Deck',
+  );
+
+  Map<String, dynamic> toJson() => {'deck_id': deckId, 'name': name};
+  factory DeckRow.fromJson(Map<String, dynamic> m) => DeckRow.fromMap(m);
+}
+
+/// A card joined to its note content. `state`: 0=new 1=learning 2=review
+/// 3=relearning (Anki/FSRS convention).
+class ReviewCard {
+  final int id;
+  final String guid;
+  final int deckId;
+  final String front;
+  final String back;
+  final bool hasLatex;
+  final double? stability;
+  final double? difficulty;
+  final DateTime? due;
+  final int state;
+  final int reps;
+  final int lapses;
+  final DateTime? lastReview;
+
+  const ReviewCard({
+    required this.id,
+    required this.guid,
+    required this.deckId,
+    required this.front,
+    required this.back,
+    required this.hasLatex,
+    required this.stability,
+    required this.difficulty,
+    required this.due,
+    required this.state,
+    required this.reps,
+    required this.lapses,
+    required this.lastReview,
+  });
+
+  bool get isNew => state == 0;
+
+  factory ReviewCard.fromRow(Map<String, dynamic> m) {
+    final note = (m['notes'] as Map?)?.cast<String, dynamic>() ?? const {};
+    return ReviewCard(
+      id: (m['id'] as num).toInt(),
+      guid: m['guid'] as String,
+      deckId: (note['deck_id'] as num?)?.toInt() ?? 0,
+      front: (note['front'] as String?) ?? '',
+      back: (note['back'] as String?) ?? '',
+      hasLatex: (note['has_latex'] as bool?) ?? false,
+      stability: (m['stability'] as num?)?.toDouble(),
+      difficulty: (m['difficulty'] as num?)?.toDouble(),
+      due: _parseTs(m['due']),
+      state: (m['state'] as num?)?.toInt() ?? 0,
+      reps: (m['reps'] as num?)?.toInt() ?? 0,
+      lapses: (m['lapses'] as num?)?.toInt() ?? 0,
+      lastReview: _parseTs(m['last_review']),
+    );
+  }
+
+  /// Flat JSON for the offline snapshot cache (no nested `notes`).
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'guid': guid,
+    'deck_id': deckId,
+    'front': front,
+    'back': back,
+    'has_latex': hasLatex,
+    'stability': stability,
+    'difficulty': difficulty,
+    'due': due?.toIso8601String(),
+    'state': state,
+    'reps': reps,
+    'lapses': lapses,
+    'last_review': lastReview?.toIso8601String(),
+  };
+
+  factory ReviewCard.fromJson(Map<String, dynamic> m) => ReviewCard(
+    id: (m['id'] as num).toInt(),
+    guid: m['guid'] as String,
+    deckId: (m['deck_id'] as num?)?.toInt() ?? 0,
+    front: (m['front'] as String?) ?? '',
+    back: (m['back'] as String?) ?? '',
+    hasLatex: (m['has_latex'] as bool?) ?? false,
+    stability: (m['stability'] as num?)?.toDouble(),
+    difficulty: (m['difficulty'] as num?)?.toDouble(),
+    due: _parseTs(m['due']),
+    state: (m['state'] as num?)?.toInt() ?? 0,
+    reps: (m['reps'] as num?)?.toInt() ?? 0,
+    lapses: (m['lapses'] as num?)?.toInt() ?? 0,
+    lastReview: _parseTs(m['last_review']),
+  );
+}
+
+/// Result of scheduling a card with FSRS — the columns to persist.
+class ReviewOutcome {
+  final double stability;
+  final double difficulty;
+  final DateTime due;
+  final int state;
+  final int reps;
+  final int lapses;
+  final DateTime reviewedAt;
+  final int rating;
+
+  const ReviewOutcome({
+    required this.stability,
+    required this.difficulty,
+    required this.due,
+    required this.state,
+    required this.reps,
+    required this.lapses,
+    required this.reviewedAt,
+    required this.rating,
+  });
+}
+
+DateTime? _parseTs(dynamic v) =>
+    v == null ? null : DateTime.parse(v as String).toUtc();
