@@ -180,5 +180,18 @@ void main() {
       expect(left.length, 1);
       expect(left.single['card_id'], 2);
     });
+
+    test('clear() drops snapshot + outbox (sign-out)', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 1, name: 'ML')],
+        queue: [_card(id: 1)],
+      );
+      await store.enqueueReview({'card_id': 1, 'rating': 3});
+      await store.clear();
+      expect(await store.loadSnapshot(), isNull);
+      expect(await store.outbox(), isEmpty);
+    });
   });
 }

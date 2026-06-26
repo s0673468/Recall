@@ -24,7 +24,14 @@ class ReviewController extends ChangeNotifier {
     required this.engine,
     required this.store,
   }) {
-    _authSub = api.onAuthStateChange.listen(_onAuthChanged);
+    // Supabase emits auth errors (e.g. an offline token refresh) as STREAM
+    // errors; without onError they rethrow and can crash the app. Swallow them —
+    // an active session going offline should fall back to the cache, not die.
+    _authSub = api.onAuthStateChange.listen(
+      _onAuthChanged,
+      onError: (Object e) =>
+          debugPrint('Recall: auth stream error (non-fatal): $e'),
+    );
   }
 
   ReviewState _state = const ReviewState(loading: false);
@@ -61,7 +68,14 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  Future<void> signOut() => api.signOut();
+  Future<void> signOut() async {
+    // Best-effort: push any queued reviews before dropping the local cache.
+    await _flushOutbox();
+    // Don't leave one user's snapshot/outbox on disk for the next person on a
+    // shared browser — RLS protects the cloud, but the device cache is global.
+    await store.clear();
+    await api.signOut(); // _onAuthChanged then resets in-memory state
+  }
 
   String _authMessage(Object e) {
     final s = e.toString();

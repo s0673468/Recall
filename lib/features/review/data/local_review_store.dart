@@ -61,6 +61,14 @@ class LocalReviewStore {
     return _readOutbox(prefs);
   }
 
+  /// Drop the cached snapshot + outbox (called on sign-out so the next user on
+  /// a shared browser can't see the previous user's cards/reviews).
+  Future<void> clear() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_snapshotKey);
+    await prefs.remove(_outboxKey);
+  }
+
   Future<void> replaceOutbox(List<Map<String, dynamic>> items) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_outboxKey, jsonEncode(items));
