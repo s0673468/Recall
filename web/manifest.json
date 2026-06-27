@@ -1,7 +1,9 @@
 {
     "name": "Recall",
     "short_name": "Recall",
+    "id": "/Health/recall/",
     "start_url": ".",
+    "scope": "./",
     "display": "standalone",
     "background_color": "#1B1B29",
     "theme_color": "#1B1B29",
