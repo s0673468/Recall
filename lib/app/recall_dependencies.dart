@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config/recall_config.dart';
@@ -7,7 +6,7 @@ import '../features/review/application/review_controller.dart';
 import '../features/review/data/local_review_store.dart';
 import '../features/review/data/recall_api.dart';
 
-/// Boots Supabase, auto-signs-in the single user, and wires the review feature.
+/// Boots Supabase and wires the review feature.
 class RecallDependencies {
   final ReviewController reviewController;
   final RecallApi api;
@@ -32,20 +31,6 @@ class RecallDependencies {
       store: LocalReviewStore(),
     );
 
-    // Optional dev auto-login: only when the LOCAL config carries credentials.
-    // The CI/Pages build writes a no-creds config, so prod shows the login
-    // screen and RLS gates everything. A failed auto-login is non-fatal.
-    if (config.canAutoLogin && client.auth.currentSession == null) {
-      try {
-        await client.auth.signInWithPassword(
-          email: config.email,
-          password: config.password,
-        );
-      } catch (e) {
-        debugPrint('Recall: auto-login failed (showing login screen): $e');
-      }
-    }
-
     return RecallDependencies(reviewController: controller, api: api);
   }
 
@@ -68,6 +53,6 @@ class RecallConfigException implements Exception {
   const RecallConfigException();
   @override
   String toString() =>
-      'Supabase config missing — populate config/supabase.local.json '
-      'or pass --dart-define-from-file.';
+      'Supabase config missing — pass SUPABASE_URL and SUPABASE_ANON_KEY '
+      'with --dart-define-from-file.';
 }
