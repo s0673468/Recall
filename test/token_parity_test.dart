@@ -5,7 +5,8 @@ import 'package:health_flutter_shared/ui_tokens_canonical.dart' as canon;
 
 /// Compile-time mirror of the Python `canonical_ui_token_drifts` check: every
 /// non-accent UiColors token must equal the canonical shared source. Recall's
-/// accent is indigo (same family as mobile + Lift) — the one allowed divergence.
+/// accent is yellow (`UiAccents.recall`, its designated registry hue) — the one
+/// allowed divergence.
 void main() {
   test('UiColors palette mirrors the canonical shared source', () {
     final mirrored = <String, List<Color>>{
@@ -68,9 +69,9 @@ void main() {
       expect(pair[0], pair[1], reason: '$name must mirror canonical UiColors');
     });
 
-    // Recall's accent is indigo — the one intentional divergence.
-    expect(UiColors.primary, const Color(0xFF7F85FF));
-    expect(UiColors.primaryMuted, const Color(0x267F85FF));
+    // Recall's accent is yellow (UiAccents.recall) — the one intentional divergence.
+    expect(UiColors.primary, const Color(0xFFFDE047));
+    expect(UiColors.primaryMuted, const Color(0x26FDE047));
     expect(UiColors.primary, isNot(canon.UiColors.primary));
   });
 }
