@@ -1,17 +1,25 @@
-# health_anki_flutter
+# Recall
 
-A new Flutter project.
+Cross-platform Anki review app for the Health workspace.
 
-## Getting Started
+## Role
 
-This project is a starting point for a Flutter application.
+- reads decks, due cards, new cards, recent reviews, and per-deck counts from
+  Supabase
+- schedules ratings with FSRS
+- stores a local snapshot and durable review outbox so offline reviews are not
+  lost
+- shares the Health design system and auth shell
 
-A few resources to get you started if this is your first Flutter project:
+## Local commands
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+flutter pub get
+flutter analyze --no-pub
+flutter test --no-pub --reporter=failures-only
+flutter run -d chrome --dart-define-from-file=config/supabase.local.json
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Use `config/supabase.local.example.json` for local bootstrapping only. Keep the
+build input to `SUPABASE_URL` plus `SUPABASE_ANON_KEY`; user access still goes
+through interactive auth and row-level security.
