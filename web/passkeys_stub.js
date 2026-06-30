@@ -10,8 +10,8 @@
 // just enough for init() to succeed and the app to boot. No third-party code is
 // loaded; the passkey methods are inert (register/login reject if ever called).
 //
-// CANONICAL SOURCE: health_flutter_shared/docs/passkeys_stub.js — keep the three
-// app copies (dashboard / recall / lift web/) byte-identical to this file.
+// CANONICAL SOURCE: health_flutter_shared/docs/passkeys_stub.js — keep all app
+// web/ copies byte-identical to this file.
 window.PasskeyAuthenticator = {
   init: function () {},
   register: function () {
