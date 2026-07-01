@@ -1,8 +1,4 @@
-import 'package:flutter/foundation.dart'
-    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show GlassTabBar, GlassTabItem;
 
 import '../features/review/application/review_controller.dart';
 import '../features/review/data/recall_api.dart';
@@ -44,30 +40,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
   }
 
-  // dart:io is unavailable on web, so never call Platform here — the iPhone PWA
-  // runs the web build and uses the Material chrome; only a native iOS build
-  // gets the frosted GlassTabBar.
-  bool get _useIosChrome =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
-
-  static const _iosTabs = [
-    GlassTabItem(
-      icon: Icons.style_outlined,
-      activeIcon: Icons.style,
-      label: 'Study',
-    ),
-    GlassTabItem(
-      icon: Icons.folder_outlined,
-      activeIcon: Icons.folder,
-      label: 'Decks',
-    ),
-    GlassTabItem(
-      icon: Icons.bar_chart_outlined,
-      activeIcon: Icons.bar_chart,
-      label: 'Stats',
-    ),
-  ];
-
   late final List<Widget> _pages = [
     StudyScreen(controller: widget.controller),
     DecksScreen(
@@ -83,55 +55,44 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final ios = _useIosChrome;
     return Scaffold(
-      extendBody: ios,
       body: Container(
         decoration: const BoxDecoration(gradient: scaffoldGradient),
         child: SafeArea(
-          bottom: !ios,
           child: Padding(
-            padding: EdgeInsets.fromLTRB(
+            padding: const EdgeInsets.fromLTRB(
               UiSpacing.sm,
               UiSpacing.sm,
               UiSpacing.sm,
-              ios
-                  ? UiIos.tabBarHeight + MediaQuery.viewPaddingOf(context).bottom
-                  : 0,
+              0,
             ),
             child: IndexedStack(index: _index, children: _pages),
           ),
         ),
       ),
-      bottomNavigationBar: ios
-          ? GlassTabBar(
-              items: _iosTabs,
-              currentIndex: _index,
-              onTap: (i) => setState(() => _index = i),
-            )
-          : NavigationBar(
-              backgroundColor: UiColors.panel,
-              indicatorColor: UiColors.primary.withValues(alpha: 0.15),
-              selectedIndex: _index,
-              onDestinationSelected: (i) => setState(() => _index = i),
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.style_outlined),
-                  selectedIcon: Icon(Icons.style),
-                  label: 'Study',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.folder_outlined),
-                  selectedIcon: Icon(Icons.folder),
-                  label: 'Decks',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.bar_chart_outlined),
-                  selectedIcon: Icon(Icons.bar_chart),
-                  label: 'Stats',
-                ),
-              ],
-            ),
+      bottomNavigationBar: NavigationBar(
+        backgroundColor: UiColors.panel,
+        indicatorColor: UiColors.primary.withValues(alpha: 0.15),
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.style_outlined),
+            selectedIcon: Icon(Icons.style),
+            label: 'Study',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.folder_outlined),
+            selectedIcon: Icon(Icons.folder),
+            label: 'Decks',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.bar_chart_outlined),
+            selectedIcon: Icon(Icons.bar_chart),
+            label: 'Stats',
+          ),
+        ],
+      ),
     );
   }
 }

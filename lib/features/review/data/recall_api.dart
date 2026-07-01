@@ -16,7 +16,6 @@ class RecallApi {
   String get device => kIsWeb
       ? 'web'
       : switch (defaultTargetPlatform) {
-          TargetPlatform.iOS => 'ios',
           TargetPlatform.android => 'android',
           _ => 'desktop',
         };

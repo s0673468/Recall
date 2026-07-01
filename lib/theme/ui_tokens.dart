@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/ui_tokens_canonical.dart' hide UiColors;
 
 /// Recall reuses the Health design system verbatim — Outfit + DM Sans, the dark
-/// navy-violet surfaces, the yellow Recall accent, and the iOS frosted chrome.
+/// navy-violet surfaces, and the yellow Recall accent.
 /// Only the brand name and the accent split are app-local (mirrors how
 /// mobile/Lift do it).
 export 'package:health_flutter_shared/ui_tokens_canonical.dart'
@@ -12,11 +12,8 @@ export 'package:health_flutter_shared/ui_tokens_canonical.dart'
         UiRadius,
         UiTypography,
         UiLayout,
-        UiIos,
         scaffoldGradient,
         buildPanelDecoration,
-        buildGlassDecoration,
-        glassSpecularGradient,
         buildHealthTheme;
 
 abstract final class UiBrand {
@@ -27,8 +24,7 @@ abstract final class UiBrand {
 /// Colour literals mirror the canonical [UiColors] exactly — parity is enforced
 /// by `scripts/check_docs_drift.py` and `test/token_parity_test.dart`. Recall's
 /// accent is yellow (`UiAccents.recall`, its designated registry hue); only
-/// `primary` / `primaryMuted` (and the `tintApp*` that follow them) differ from
-/// the canonical emerald.
+/// `primary` / `primaryMuted` differ from the canonical emerald.
 abstract final class UiColors {
   static const canvas = Color(0xFF1B1B29);
   static const sidebar = Color(0xFF202030);
@@ -69,12 +65,6 @@ abstract final class UiColors {
   static const scorePoor = chartOrange;
   static const scoreBad = Color(0xFFE2674A);
   static const scoreEmpty = foodEmpty;
-  // iOS platform chrome — mirrors canonical (see shared_ui_tokens.dart).
-  static const tintApp = primary;
-  static const tintAppMuted = primaryMuted;
-  static const glassFill = Color(0x8C1C1C2E);
-  static const glassHairline = Color(0x1AFFFFFF);
-  static const glassSpecular = Color(0x1AFFFFFF);
   static const success = chartTeal;
   static const warning = chartYellow;
   static const danger = chartOrange;
