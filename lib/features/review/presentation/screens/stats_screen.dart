@@ -1,6 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show SignOutButton, SignOutButtonVariant;
+    show AppSwitcher, HealthWebApp, SignOutButton, SignOutButtonVariant;
 import 'package:intl/intl.dart';
 
 import '../../../../theme/ui_tokens.dart';
@@ -121,6 +122,15 @@ class _StatsScreenState extends State<StatsScreen> {
             },
           ),
           const SizedBox(height: UiSpacing.xl),
+          // Web-only cross-app switcher. Recall has no settings surface, so
+          // Stats (which already hosts sign-out) is its meta tab.
+          if (kIsWeb) ...[
+            const AppSwitcher(
+              current: HealthWebApp.recall,
+              alignment: WrapAlignment.center,
+            ),
+            const SizedBox(height: UiSpacing.md),
+          ],
           Center(
             child: SignOutButton(
               onSignOut: widget.controller.signOut,
