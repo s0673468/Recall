@@ -28,3 +28,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # Static Outfit + DM Sans instances. google_fonts resolves these from the
+    # asset manifest instead of fetching fonts.gstatic.com at runtime, so
+    # Recall paints with its real type from the first frame — critical for the
+    # iPhone PWA, where the runtime fetch used to block on the network every
+    # cold open. See assets/fonts/OFL.txt.
+    - assets/fonts/

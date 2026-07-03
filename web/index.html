@@ -23,14 +23,16 @@
   <meta name="description" content="Recall — spaced-repetition review across all your devices.">
   <meta name="theme-color" content="#1B1B29">
 
-  <!-- Warm up the Google Fonts origins so Outfit / DM Sans paint sooner. -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-
-  <!-- Prefetch the CanvasKit engine so it downloads in parallel with the boot
-       script and the app paints sooner on a cold load. -->
-  <link rel="prefetch" href="canvaskit/canvaskit.js">
-  <link rel="prefetch" href="canvaskit/canvaskit.wasm">
+  <!-- Preload the app bundle + CanvasKit engine so they download in parallel
+       with the boot script instead of serially after it. `preload` (not
+       `prefetch`) because iOS Safari ignores prefetch entirely. The `as` /
+       module / crossorigin choices match how each file is actually requested
+       (classic script tag, dynamic import(), emscripten fetch()) so the
+       preloaded bytes are reused rather than downloaded twice. Requires the
+       deploy to pin the local CanvasKit (--no-web-resources-cdn). -->
+  <link rel="preload" href="main.dart.js" as="script">
+  <link rel="modulepreload" href="canvaskit/canvaskit.js">
+  <link rel="preload" href="canvaskit/canvaskit.wasm" as="fetch" crossorigin>
 
   <!-- PWA: installable to the iOS/Android home screen, standalone, dark status bar -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -145,5 +147,21 @@
     })();
   </script>
   <script src="flutter_bootstrap.js" async></script>
+  <!-- Cache-first PWA service worker (sw.js) — replaces Flutter's deprecated
+       self-unregistering one, so repeat opens on the phone paint from cache
+       instead of re-negotiating every asset. Registered after load so it
+       never competes with boot fetches, and never on localhost so local
+       dev servers can't serve stale bundles. -->
+  <script>
+    if ('serviceWorker' in navigator &&
+        location.hostname !== 'localhost' &&
+        location.hostname !== '127.0.0.1') {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function (e) {
+          console.warn('sw.js registration failed:', e);
+        });
+      });
+    }
+  </script>
 </body>
 </html>

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating, defaultParameters;
@@ -40,6 +42,7 @@ const _desktopFsrsParameters = [
 
 ReviewCard _card({
   int id = 1,
+  int deckId = 1,
   double? stability,
   double? difficulty,
   int state = 0,
@@ -53,7 +56,7 @@ ReviewCard _card({
 }) => ReviewCard(
   id: id,
   guid: 'g$id',
-  deckId: 1,
+  deckId: deckId,
   front: front,
   back: back,
   hasLatex: hasLatex,
@@ -69,6 +72,16 @@ ReviewCard _card({
 class _FakeRecallApi implements RecallApi {
   final List<ReviewCard> queue;
   final FsrsSettings? fsrsSettings;
+
+  /// Awaited inside fetchQueue — lets tests hold the network fetch open
+  /// while asserting on the snapshot-hydrated state.
+  Future<void> Function()? beforeQueue;
+
+  /// Awaited inside applyReview — lets tests block the outbox flush.
+  Future<void> Function()? beforeApplyReview;
+
+  /// Every entry applyReview delivered, in order.
+  final List<Map<String, dynamic>> applied = [];
 
   _FakeRecallApi(this.queue, {this.fsrsSettings});
 
@@ -90,14 +103,23 @@ class _FakeRecallApi implements RecallApi {
   ];
 
   @override
-  Future<List<ReviewCard>> fetchQueue({int? deckId, int newLimit = 20}) async =>
-      queue;
+  Future<List<ReviewCard>> fetchQueue({int? deckId, int newLimit = 20}) async {
+    await beforeQueue?.call();
+    if (deckId == null) return queue;
+    return [
+      for (final c in queue)
+        if (c.deckId == deckId) c,
+    ];
+  }
 
   @override
   Future<FsrsSettings?> fetchFsrsSettings() async => fsrsSettings;
 
   @override
-  Future<void> applyReview(Map<String, dynamic> e) async {}
+  Future<void> applyReview(Map<String, dynamic> e) async {
+    await beforeApplyReview?.call();
+    applied.add(e);
+  }
 
   @override
   Map<String, dynamic> reviewEntry(ReviewCard card, ReviewOutcome o) => {
@@ -246,6 +268,167 @@ void main() {
       expect(engine.parameters, defaultParameters);
       expect(engine.desiredRetention, 0.9);
     });
+
+    test('cold start paints the snapshot before the network answers', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+        queue: [_card(id: 42, front: 'cached card')],
+      );
+      final api = _FakeRecallApi([_card(id: 1, front: 'fresh card')]);
+      final gate = Completer<void>();
+      api.beforeQueue = () => gate.future;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+
+      final loading = controller.load();
+      // The snapshot must be on screen while fetchQueue is still blocked.
+      while (controller.state.queue.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(controller.state.loading, isFalse);
+      expect(controller.state.queue.single.id, 42);
+
+      gate.complete();
+      await loading;
+      // The background fetch replaced the snapshot with the fresh queue.
+      expect(controller.state.queue.single.id, 1);
+      expect(controller.state.offline, isFalse);
+    });
+
+    test('background refresh never clobbers a session in progress', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+        queue: [_card(id: 42, front: 'cached card')],
+      );
+      final api = _FakeRecallApi([_card(id: 1, front: 'fresh card')]);
+      final gate = Completer<void>();
+      api.beforeQueue = () => gate.future;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+
+      final loading = controller.load();
+      while (controller.state.queue.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      // The user starts studying the snapshot mid-refresh.
+      controller.flip();
+      expect(controller.state.showBack, isTrue);
+
+      gate.complete();
+      await loading;
+      // Queue and place preserved; only metadata refreshed.
+      expect(controller.state.queue.single.id, 42);
+      expect(controller.state.showBack, isTrue);
+      expect(controller.state.decks.single.name, 'Portuguese');
+    });
+
+    test('rate advances to the next card without waiting on the sync', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final gate = Completer<void>();
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      api.beforeApplyReview = () => gate.future;
+      controller.flip();
+      await controller.rate(Rating.good);
+
+      // Next card is up immediately; the review is queued, not yet delivered.
+      expect(controller.state.index, 1);
+      expect(controller.state.pendingSync, 1);
+      expect(api.applied, isEmpty);
+
+      gate.complete();
+      await controller.syncPending();
+      expect(api.applied.length, 1);
+      expect(controller.state.pendingSync, 0);
+    });
+
+    test('a deck switch supersedes a still-in-flight load', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([
+        _card(id: 1, deckId: 1),
+        _card(id: 2, deckId: 2),
+      ]);
+      // Gate only the FIRST fetch (the cold all-decks load); the deck-switch
+      // fetch goes straight through and finishes first.
+      final gate = Completer<void>();
+      var fetches = 0;
+      api.beforeQueue = () {
+        fetches++;
+        return fetches == 1 ? gate.future : Future.value();
+      };
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+
+      final coldLoad = controller.load(); // blocked on the gate
+      while (fetches == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      await controller.selectDeck(2);
+      expect(controller.state.queue.single.id, 2);
+
+      // The superseded cold load must not clobber the deck-2 queue.
+      gate.complete();
+      await coldLoad;
+      expect(controller.state.deckFilter, 2);
+      expect(controller.state.queue.single.id, 2);
+    });
+
+    test('a rating enqueued mid-flush is delivered by the follow-up pass',
+        () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      // Hold the first flush open on its first delivery, rate a second card
+      // while it is stuck, then release it.
+      final gate = Completer<void>();
+      var deliveries = 0;
+      api.beforeApplyReview = () {
+        deliveries++;
+        return deliveries == 1 ? gate.future : Future.value();
+      };
+
+      controller.flip();
+      await controller.rate(Rating.good); // flush starts, blocks on gate
+      controller.flip();
+      await controller.rate(Rating.good); // enqueued while flush is stuck
+      expect(controller.state.pendingSync, 2);
+
+      gate.complete();
+      await controller.syncPending();
+      expect(api.applied.length, 2);
+      expect(controller.state.pendingSync, 0);
+      expect(controller.state.index, 2);
+    });
   });
 
   group('UI widgets', () {
@@ -373,16 +556,17 @@ void main() {
     test('outbox enqueues and drains', () async {
       SharedPreferences.setMockInitialValues({});
       final store = LocalReviewStore();
-      await store.enqueueReview({'card_id': 1, 'rating': 3});
-      await store.enqueueReview({'card_id': 2, 'rating': 4});
+      expect(await store.enqueueReview({'card_id': 1, 'rating': 3}), 1);
+      expect(await store.enqueueReview({'card_id': 2, 'rating': 4}), 2);
       expect((await store.outbox()).length, 2);
-      // Simulate one synced, one still pending.
-      await store.replaceOutbox([
-        {'card_id': 2, 'rating': 4},
-      ]);
+      // Simulate one synced (the flush removes only the delivered prefix,
+      // so an entry enqueued mid-flush can never be clobbered).
+      expect(await store.removeFirst(1), 1);
       final left = await store.outbox();
       expect(left.length, 1);
       expect(left.single['card_id'], 2);
+      // removeFirst(0) is a pure count read.
+      expect(await store.removeFirst(0), 1);
     });
 
     test('clear() drops snapshot + outbox (sign-out)', () async {
