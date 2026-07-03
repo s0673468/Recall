@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:health_flutter_shared/health_flutter_shared.dart'
+    show scopedPanelColor;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
@@ -152,7 +154,7 @@ class _CardPanel extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(UiSpacing.lg),
       decoration: BoxDecoration(
-        color: UiColors.panel,
+        color: scopedPanelColor(context),
         borderRadius: BorderRadius.circular(UiRadius.xl),
         border: Border.all(color: UiColors.border),
       ),

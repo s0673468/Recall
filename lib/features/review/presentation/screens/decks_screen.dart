@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:health_flutter_shared/health_flutter_shared.dart'
+    show scopedPanelColor;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
@@ -100,9 +102,12 @@ class _DecksScreenState extends State<DecksScreen> {
     required VoidCallback onTap,
   }) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs, vertical: 5),
+      padding: const EdgeInsets.symmetric(
+        horizontal: UiSpacing.xs,
+        vertical: 5,
+      ),
       child: Material(
-        color: UiColors.panel,
+        color: scopedPanelColor(context),
         borderRadius: BorderRadius.circular(UiRadius.lg),
         child: InkWell(
           onTap: onTap,

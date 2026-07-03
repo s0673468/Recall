@@ -1,7 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show AppSwitcher, HealthWebApp, SignOutButton, SignOutButtonVariant;
+    show
+        AppSwitcher,
+        HealthWebApp,
+        SignOutButton,
+        SignOutButtonVariant,
+        scopedPanelColor;
 import 'package:intl/intl.dart';
 
 import '../../../../theme/ui_tokens.dart';
@@ -110,7 +115,10 @@ class _StatsScreenState extends State<StatsScreen> {
                     children: [
                       _tile('Recall · 30d', recall),
                       const SizedBox(width: UiSpacing.sm),
-                      _tile('Streak', '$streak${streak == 1 ? ' day' : ' days'}'),
+                      _tile(
+                        'Streak',
+                        '$streak${streak == 1 ? ' day' : ' days'}',
+                      ),
                       const SizedBox(width: UiSpacing.sm),
                       _tile('Reviews · 30d', '${reviews.length}'),
                     ],
@@ -150,7 +158,7 @@ class _StatsScreenState extends State<StatsScreen> {
         horizontal: UiSpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: UiColors.panel,
+        color: scopedPanelColor(context),
         borderRadius: BorderRadius.circular(UiRadius.lg),
         border: Border.all(color: UiColors.border),
       ),
@@ -187,7 +195,11 @@ class _Histogram extends StatelessWidget {
     final today = DateTime.now();
     final days = [
       for (var i = 13; i >= 0; i--)
-        DateTime(today.year, today.month, today.day).subtract(Duration(days: i)),
+        DateTime(
+          today.year,
+          today.month,
+          today.day,
+        ).subtract(Duration(days: i)),
     ];
     final counts = {for (final d in days) d: 0};
     for (final r in reviews) {
@@ -199,7 +211,7 @@ class _Histogram extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(UiSpacing.md),
       decoration: BoxDecoration(
-        color: UiColors.panel,
+        color: scopedPanelColor(context),
         borderRadius: BorderRadius.circular(UiRadius.lg),
         border: Border.all(color: UiColors.border),
       ),
