@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Geometric "R" mark for Recall. The legacy Android PNGs still showed the
+     stock Flutter mark, so this uses the existing Recall PWA mark rebuilt in
+     the H/L rounded-bar family and coloured with UiAccents.recall. The group
+     maps the 512 viewBox onto the 108dp adaptive-icon canvas, inside the 66dp
+     safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.15625"
+        android:scaleY="0.15625"
+        android:translateX="14"
+        android:translateY="14">
+        <!-- Diagonal leg, tucked under the waist bar. -->
+        <path
+            android:fillColor="@android:color/transparent"
+            android:strokeColor="#FDE047"
+            android:strokeWidth="56"
+            android:strokeLineCap="round"
+            android:pathData="M250,270 L344,378" />
+        <!-- Vertical stem, pill-capped top & bottom: x[164,220], y[128,384]. -->
+        <path
+            android:fillColor="#FDE047"
+            android:pathData="M164,156 a28,28 0 0 1 56,0 v200 a28,28 0 0 1 -56,0 z" />
+        <!-- Closed top bowl in the same rounded-bar construction as H/L. -->
+        <path
+            android:fillColor="#FDE047"
+            android:pathData="M192,128 h100 a28,28 0 0 1 0,56 h-100 a28,28 0 0 1 0,-56 z" />
+        <path
+            android:fillColor="#FDE047"
+            android:pathData="M294,156 a28,28 0 0 1 56,0 v68 a28,28 0 0 1 -56,0 z" />
+        <path
+            android:fillColor="#FDE047"
+            android:pathData="M192,232 h100 a28,28 0 0 1 0,56 h-100 a28,28 0 0 1 0,-56 z" />
+    </group>
+</vector>
