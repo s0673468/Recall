@@ -100,8 +100,11 @@
     #splash .mark {
       width: 56px; height: 56px; border-radius: 16px;
       display: flex; align-items: center; justify-content: center;
-      background: linear-gradient(135deg, #8A90FF, rgba(138,144,255,.55));
-      box-shadow: 0 10px 34px rgba(138,144,255,.28);
+      background:
+        repeating-linear-gradient(transparent 0 3px, rgba(255,255,255,.02) 3px 4px),
+        linear-gradient(135deg, #1F1E3B, #252540);
+      border: 1px solid #33345A;
+      box-shadow: 0 10px 34px #FDE04738;
     }
     #splash .ring {
       width: 28px; height: 28px; border-radius: 50%;
@@ -116,7 +119,7 @@
   <div id="splash" aria-hidden="true">
     <div class="mark">
       <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
-           stroke="#1B1B29" stroke-width="2.4" stroke-linecap="round"
+           stroke="#FDE047" stroke-width="2.4" stroke-linecap="round"
            stroke-linejoin="round">
         <path d="M12 2 2 7l10 5 10-5-10-5Z"/>
         <path d="m2 17 10 5 10-5"/>
