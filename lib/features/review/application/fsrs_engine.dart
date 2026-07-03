@@ -5,13 +5,42 @@ import '../data/models.dart';
 /// Wraps the FSRS-6 scheduler. Reconstructs a card from its cloud state, applies
 /// a rating, and returns the columns to persist. FSRS is UTC-only.
 class FsrsEngine {
-  final Scheduler _scheduler;
+  late Scheduler _scheduler;
+  late List<double> _parameters;
+  late double _desiredRetention;
 
-  FsrsEngine({List<double>? parameters, double desiredRetention = 0.9})
-    : _scheduler = Scheduler(
-        parameters: parameters ?? defaultParameters,
-        desiredRetention: desiredRetention,
-      );
+  FsrsEngine({List<double>? parameters, double desiredRetention = 0.9}) {
+    _configure(
+      parameters: parameters ?? defaultParameters,
+      desiredRetention: desiredRetention,
+    );
+  }
+
+  List<double> get parameters => List.unmodifiable(_parameters);
+  double get desiredRetention => _desiredRetention;
+
+  void configure(FsrsSettings settings) {
+    _configure(
+      parameters: settings.parameters,
+      desiredRetention: settings.desiredRetention,
+    );
+  }
+
+  void resetToDefaults() {
+    _configure(parameters: defaultParameters, desiredRetention: 0.9);
+  }
+
+  void _configure({
+    required List<double> parameters,
+    required double desiredRetention,
+  }) {
+    _parameters = List<double>.unmodifiable(parameters);
+    _desiredRetention = desiredRetention;
+    _scheduler = Scheduler(
+      parameters: _parameters,
+      desiredRetention: _desiredRetention,
+    );
+  }
 
   static State _stateFromInt(int s) => switch (s) {
     2 => State.review,
@@ -43,7 +72,11 @@ class FsrsEngine {
 
   ReviewOutcome review(ReviewCard c, Rating rating, {DateTime? now}) {
     final when = (now ?? DateTime.now()).toUtc();
-    final result = _scheduler.reviewCard(_build(c), rating, reviewDateTime: when);
+    final result = _scheduler.reviewCard(
+      _build(c),
+      rating,
+      reviewDateTime: when,
+    );
     final card = result.card;
     final wasReviewish = c.state == 2 || c.state == 3;
     final lapsed = rating == Rating.again && wasReviewish;
@@ -64,7 +97,11 @@ class FsrsEngine {
     final when = (now ?? DateTime.now()).toUtc();
     return {
       for (final r in Rating.values)
-        r: _scheduler.reviewCard(_build(c), r, reviewDateTime: when).card.due.toUtc(),
+        r: _scheduler
+            .reviewCard(_build(c), r, reviewDateTime: when)
+            .card
+            .due
+            .toUtc(),
     };
   }
 }

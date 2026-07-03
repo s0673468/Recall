@@ -33,7 +33,18 @@ class RecallApi {
         .select('deck_id,name')
         .eq('deleted', false)
         .order('name');
-    return [for (final r in rows) DeckRow.fromMap(Map<String, dynamic>.from(r))];
+    return [
+      for (final r in rows) DeckRow.fromMap(Map<String, dynamic>.from(r)),
+    ];
+  }
+
+  Future<FsrsSettings?> fetchFsrsSettings() async {
+    final row = await client
+        .from('user_settings')
+        .select('settings_value')
+        .eq('settings_key', 'fsrs_params')
+        .maybeSingle();
+    return FsrsSettings.tryParse(row?['settings_value']);
   }
 
   /// The study queue: every due review/learning card (due <= now), then up to

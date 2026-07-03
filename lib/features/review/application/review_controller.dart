@@ -49,6 +49,7 @@ class ReviewController extends ChangeNotifier {
   void _onAuthChanged(AuthState _) {
     if (api.currentUser == null) {
       // Signed out — drop the session state and show the login gate.
+      engine.resetToDefaults();
       _set(const ReviewState(loading: false));
     } else if (_state.queue.isEmpty && !_state.loading) {
       // Signed in (or restored session) — load the queue.
@@ -101,6 +102,7 @@ class ReviewController extends ChangeNotifier {
     await _flushOutbox();
 
     try {
+      await _refreshFsrsSettings();
       final decks = await api.fetchDecks();
       final queue = await api.fetchQueue(deckId: _state.deckFilter);
       await store.saveSnapshot(decks: decks, queue: queue);
@@ -134,6 +136,20 @@ class ReviewController extends ChangeNotifier {
       } else {
         _set(_state.copyWith(loading: false, error: e.toString()));
       }
+    }
+  }
+
+  Future<void> _refreshFsrsSettings() async {
+    try {
+      final settings = await api.fetchFsrsSettings();
+      if (settings != null) {
+        engine.configure(settings);
+      } else {
+        engine.resetToDefaults();
+      }
+    } catch (e) {
+      engine.resetToDefaults();
+      debugPrint('Recall: FSRS settings unavailable, using defaults: $e');
     }
   }
 

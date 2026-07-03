@@ -14,6 +14,33 @@ class DeckRow {
   factory DeckRow.fromJson(Map<String, dynamic> m) => DeckRow.fromMap(m);
 }
 
+class FsrsSettings {
+  final List<double> parameters;
+  final double desiredRetention;
+
+  const FsrsSettings({required this.parameters, this.desiredRetention = 0.9});
+
+  static FsrsSettings? tryParse(Object? value) {
+    if (value is! Map) return null;
+    final data = Map<String, dynamic>.from(value);
+    final rawParameters = data['parameters'] ?? data['weights'];
+    if (rawParameters is! List || rawParameters.length != 21) return null;
+    final rawRetention =
+        data['desired_retention'] ??
+        data['desiredRetention'] ??
+        data['requestRetention'];
+    final parameters = <double>[];
+    for (final v in rawParameters) {
+      if (v is! num) return null;
+      parameters.add(v.toDouble());
+    }
+    return FsrsSettings(
+      parameters: parameters,
+      desiredRetention: rawRetention is num ? rawRetention.toDouble() : 0.9,
+    );
+  }
+}
+
 /// A card joined to its note content. `state`: 0=new 1=learning 2=review
 /// 3=relearning (Anki/FSRS convention).
 class ReviewCard {

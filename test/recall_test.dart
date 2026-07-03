@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fsrs/fsrs.dart' show Rating;
+import 'package:fsrs/fsrs.dart' show Rating, defaultParameters;
 import 'package:supabase_flutter/supabase_flutter.dart'
     show AuthState, SupabaseClient, User;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +13,30 @@ import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/rating_bar.dart';
+
+const _desktopFsrsParameters = [
+  0.98086613,
+  2.09384704,
+  13.26146507,
+  13.43933392,
+  6.41675615,
+  0.78818476,
+  2.95193529,
+  0.03727497,
+  1.8791039,
+  0.18768801,
+  0.80702776,
+  1.6284579,
+  0.05166227,
+  0.50534296,
+  1.72878981,
+  0.49406245,
+  2.15494156,
+  0.6520682,
+  0.2181288,
+  0.05643269,
+  0.15054572,
+];
 
 ReviewCard _card({
   int id = 1,
@@ -44,8 +68,9 @@ ReviewCard _card({
 
 class _FakeRecallApi implements RecallApi {
   final List<ReviewCard> queue;
+  final FsrsSettings? fsrsSettings;
 
-  _FakeRecallApi(this.queue);
+  _FakeRecallApi(this.queue, {this.fsrsSettings});
 
   @override
   SupabaseClient get client => throw UnimplementedError();
@@ -67,6 +92,9 @@ class _FakeRecallApi implements RecallApi {
   @override
   Future<List<ReviewCard>> fetchQueue({int? deckId, int newLimit = 20}) async =>
       queue;
+
+  @override
+  Future<FsrsSettings?> fetchFsrsSettings() async => fsrsSettings;
 
   @override
   Future<void> applyReview(Map<String, dynamic> e) async {}
@@ -131,6 +159,92 @@ void main() {
       expect(p.keys.toSet(), Rating.values.toSet());
       expect(!p[Rating.again]!.isAfter(p[Rating.good]!), isTrue);
       expect(!p[Rating.good]!.isAfter(p[Rating.easy]!), isTrue);
+    });
+
+    test('can be configured from seeded FSRS settings', () {
+      final engine = FsrsEngine();
+      engine.configure(
+        const FsrsSettings(
+          parameters: _desktopFsrsParameters,
+          desiredRetention: 0.82,
+        ),
+      );
+      expect(engine.parameters, _desktopFsrsParameters);
+      expect(engine.desiredRetention, 0.82);
+    });
+
+    test('can reset back to package defaults', () {
+      final engine = FsrsEngine(
+        parameters: _desktopFsrsParameters,
+        desiredRetention: 0.82,
+      );
+      engine.resetToDefaults();
+      expect(engine.parameters, defaultParameters);
+      expect(engine.desiredRetention, 0.9);
+    });
+  });
+
+  group('FsrsSettings', () {
+    test('parses seeded parameters and desired retention', () {
+      final parsed = FsrsSettings.tryParse({
+        'parameters': List<double>.filled(21, 1),
+        'desired_retention': 0.86,
+      });
+      expect(parsed, isNotNull);
+      expect(parsed!.parameters, hasLength(21));
+      expect(parsed.desiredRetention, 0.86);
+    });
+
+    test('accepts legacy weights key and rejects wrong vector length', () {
+      final parsed = FsrsSettings.tryParse({
+        'weights': List<int>.filled(21, 2),
+      });
+      expect(parsed?.parameters.first, 2.0);
+      expect(
+        FsrsSettings.tryParse({
+          'weights': [1, 2, 3],
+        }),
+        isNull,
+      );
+    });
+  });
+
+  group('ReviewController', () {
+    test('load applies seeded FSRS settings before study', () async {
+      SharedPreferences.setMockInitialValues({});
+      final engine = FsrsEngine();
+      final controller = ReviewController(
+        api: _FakeRecallApi(
+          [_card()],
+          fsrsSettings: const FsrsSettings(
+            parameters: _desktopFsrsParameters,
+            desiredRetention: 0.84,
+          ),
+        ),
+        engine: engine,
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      expect(engine.parameters, _desktopFsrsParameters);
+      expect(engine.desiredRetention, 0.84);
+    });
+
+    test('load resets stale FSRS settings when the row is absent', () async {
+      SharedPreferences.setMockInitialValues({});
+      final engine = FsrsEngine(
+        parameters: _desktopFsrsParameters,
+        desiredRetention: 0.84,
+      );
+      final controller = ReviewController(
+        api: _FakeRecallApi([_card()]),
+        engine: engine,
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      expect(engine.parameters, defaultParameters);
+      expect(engine.desiredRetention, 0.9);
     });
   });
 
