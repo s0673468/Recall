@@ -13,7 +13,10 @@ export 'package:health_flutter_shared/ui_tokens_canonical.dart'
         UiTypography,
         UiLayout,
         scaffoldGradient,
+        UiShadows,
+        UiMood,
         buildPanelDecoration,
+        buildHeroPanelDecoration,
         buildHealthTheme;
 
 abstract final class UiBrand {
