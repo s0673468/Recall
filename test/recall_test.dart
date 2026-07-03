@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
+import 'package:supabase_flutter/supabase_flutter.dart'
+    show AuthState, SupabaseClient, User;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
+import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
+import 'package:health_anki_flutter/features/review/data/recall_api.dart';
+import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/rating_bar.dart';
 
@@ -36,6 +41,58 @@ ReviewCard _card({
   lapses: lapses,
   lastReview: lastReview,
 );
+
+class _FakeRecallApi implements RecallApi {
+  final List<ReviewCard> queue;
+
+  _FakeRecallApi(this.queue);
+
+  @override
+  SupabaseClient get client => throw UnimplementedError();
+
+  @override
+  User? get currentUser => null;
+
+  @override
+  String get device => 'test';
+
+  @override
+  Stream<AuthState> get onAuthStateChange => const Stream<AuthState>.empty();
+
+  @override
+  Future<List<DeckRow>> fetchDecks() async => const [
+    DeckRow(deckId: 1, name: 'Portuguese'),
+  ];
+
+  @override
+  Future<List<ReviewCard>> fetchQueue({int? deckId, int newLimit = 20}) async =>
+      queue;
+
+  @override
+  Future<void> applyReview(Map<String, dynamic> e) async {}
+
+  @override
+  Map<String, dynamic> reviewEntry(ReviewCard card, ReviewOutcome o) => {
+    'card_id': card.id,
+  };
+
+  @override
+  Future<List<({DateTime at, int rating})>> fetchRecentReviews({
+    int days = 30,
+  }) async => const [];
+
+  @override
+  Future<Map<int, ({int due, int neu})>> fetchDeckCounts() async => const {};
+
+  @override
+  Future<void> signIn({
+    required String email,
+    required String password,
+  }) async {}
+
+  @override
+  Future<void> signOut() async {}
+}
 
 void main() {
   group('FsrsEngine', () {
@@ -137,6 +194,39 @@ void main() {
       );
       await tester.pump();
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('StudyScreen reveals answers only from the button', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: _FakeRecallApi([
+          _card(front: 'Complete: nos __ felizes.', back: 'eramos'),
+        ]),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
+
+      expect(find.text('Tap to reveal'), findsNothing);
+      expect(find.text('Show answer'), findsOneWidget);
+      expect(find.textContaining('eramos'), findsNothing);
+
+      await tester.tap(find.byType(SingleChildScrollView));
+      await tester.pump();
+      expect(find.textContaining('eramos'), findsNothing);
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pump();
+      expect(find.textContaining('eramos'), findsOneWidget);
     });
   });
 

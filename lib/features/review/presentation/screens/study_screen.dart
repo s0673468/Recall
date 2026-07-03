@@ -60,11 +60,7 @@ class StudyScreen extends StatelessWidget {
             ),
             const SizedBox(height: UiSpacing.sm),
             Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: s.showBack ? null : controller.flip,
-                child: _CardPanel(card: card, showBack: s.showBack, style: style),
-              ),
+              child: _CardPanel(card: card, showBack: s.showBack, style: style),
             ),
             const SizedBox(height: UiSpacing.md),
             if (s.showBack)
@@ -128,10 +124,7 @@ class _Header extends StatelessWidget {
   }
 
   Widget _pill(String label, Color color) => Container(
-    padding: const EdgeInsets.symmetric(
-      horizontal: UiSpacing.sm,
-      vertical: 4,
-    ),
+    padding: const EdgeInsets.symmetric(horizontal: UiSpacing.sm, vertical: 4),
     decoration: BoxDecoration(
       color: color.withValues(alpha: 0.15),
       borderRadius: BorderRadius.circular(UiRadii.pill),
@@ -183,15 +176,7 @@ class _CardPanel extends StatelessWidget {
                   fontWeight: FontWeight.w400,
                 ),
               ),
-            ] else
-              const Padding(
-                padding: EdgeInsets.only(top: UiSpacing.lg),
-                child: Text(
-                  'Tap to reveal',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: UiColors.textMuted, fontSize: 13),
-                ),
-              ),
+            ],
             const SizedBox(height: UiSpacing.sm),
           ],
         ),
