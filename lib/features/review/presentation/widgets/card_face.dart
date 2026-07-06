@@ -29,32 +29,52 @@ class CardFace extends StatelessWidget {
       );
     }
 
-    final spans = <InlineSpan>[];
-    var last = 0;
-    for (final m in _mathRe.allMatches(html)) {
-      if (m.start > last) {
-        spans.add(TextSpan(text: _clean(html.substring(last, m.start))));
-      }
-      spans.add(
-        WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: Math.tex(
-            m.group(1)!,
-            textStyle: style,
-            mathStyle: MathStyle.text,
-            onErrorFallback: (_) => Text(m.group(0)!, style: style),
-          ),
-        ),
-      );
-      last = m.end;
-    }
-    if (last < html.length) {
-      spans.add(TextSpan(text: _clean(html.substring(last))));
-    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.hasBoundedWidth
+            ? constraints.maxWidth
+            : double.infinity;
+        final spans = <InlineSpan>[];
+        var last = 0;
+        var previousWasMath = false;
 
-    return SelectableText.rich(
-      TextSpan(style: style, children: spans),
-      textAlign: TextAlign.center,
+        void addText(String text) {
+          final cleaned = previousWasMath
+              ? _keepLeadingPunctuationWithMath(_clean(text))
+              : _clean(text);
+          if (cleaned.isNotEmpty) {
+            spans.add(TextSpan(text: cleaned));
+          }
+          previousWasMath = false;
+        }
+
+        for (final m in _mathRe.allMatches(html)) {
+          if (m.start > last) {
+            addText(html.substring(last, m.start));
+          }
+          spans.add(
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: _MathFragment(
+                expression: m.group(1)!,
+                fallback: m.group(0)!,
+                maxWidth: maxWidth,
+                style: style,
+              ),
+            ),
+          );
+          previousWasMath = true;
+          last = m.end;
+        }
+        if (last < html.length) {
+          addText(html.substring(last));
+        }
+
+        return SelectableText.rich(
+          TextSpan(style: style, children: spans),
+          textAlign: TextAlign.center,
+        );
+      },
     );
   }
 
@@ -70,5 +90,53 @@ class CardFace extends StatelessWidget {
         .replaceAll('&gt;', '>')
         .replaceAll('&quot;', '"')
         .replaceAll('&#39;', "'");
+  }
+
+  static String _keepLeadingPunctuationWithMath(String s) {
+    return s.replaceFirstMapped(
+      RegExp(r'^\s*([.,;:!?])'),
+      (m) => '\u2060${m.group(1)}',
+    );
+  }
+}
+
+class _MathFragment extends StatelessWidget {
+  final String expression;
+  final String fallback;
+  final double maxWidth;
+  final TextStyle style;
+
+  const _MathFragment({
+    required this.expression,
+    required this.fallback,
+    required this.maxWidth,
+    required this.style,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final math = Math.tex(
+      expression,
+      textStyle: style,
+      mathStyle: MathStyle.text,
+      onErrorFallback: (_) => Text(fallback, style: style),
+    );
+    final broken = math.texBreak().parts;
+    final child = broken.length > 1
+        ? Wrap(
+            alignment: WrapAlignment.center,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: broken,
+          )
+        : math;
+
+    if (!maxWidth.isFinite) {
+      return child;
+    }
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: child,
+    );
   }
 }

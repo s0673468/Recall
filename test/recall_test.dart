@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating, defaultParameters;
 import 'package:supabase_flutter/supabase_flutter.dart'
@@ -490,6 +491,58 @@ void main() {
         ),
       );
       await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('CardFace keeps punctuation with preceding inline LaTeX', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: CardFace(
+              html: r'Write the formula in terms of \(Q, K, V\).',
+              hasLatex: true,
+              style: TextStyle(fontSize: 18),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final selectable = tester.widget<SelectableText>(
+        find.byType(SelectableText),
+      );
+      expect(selectable.textSpan!.toPlainText(), contains('\u2060.'));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('CardFace wraps long LaTeX formulas within the card width', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SizedBox(
+                width: 280,
+                child: CardFace(
+                  html:
+                      r'Attention \(Q, K, V\) = \( \operatorname{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V \)',
+                  hasLatex: true,
+                  style: TextStyle(fontSize: 24),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      for (final element in find.byType(Math).evaluate()) {
+        final width = tester.getSize(find.byWidget(element.widget)).width;
+        expect(width, lessThanOrEqualTo(280));
+      }
       expect(tester.takeException(), isNull);
     });
 
