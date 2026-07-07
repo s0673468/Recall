@@ -9,7 +9,19 @@ class RecallConfig {
 
   const RecallConfig({required this.url, required this.anonKey});
 
-  bool get isConfigured => url.isNotEmpty && anonKey.isNotEmpty;
+  bool get isConfigured =>
+      url.isNotEmpty &&
+      anonKey.isNotEmpty &&
+      !_isPlaceholder(url) &&
+      !_isPlaceholder(anonKey);
+
+  static bool _isPlaceholder(String value) {
+    final normalized = value.toLowerCase();
+    return normalized.contains('your_project') ||
+        normalized.contains('your-project') ||
+        normalized.contains('your-anon') ||
+        normalized.contains('your_anon');
+  }
 
   static Future<RecallConfig> load() async {
     const envUrl = String.fromEnvironment('SUPABASE_URL');
