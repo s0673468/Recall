@@ -8,13 +8,21 @@ import '../features/review/data/recall_api.dart';
 import '../features/review/presentation/screens/decks_screen.dart';
 import '../features/review/presentation/screens/stats_screen.dart';
 import '../features/review/presentation/screens/study_screen.dart';
+import '../features/settings/application/recall_prefs_controller.dart';
+import '../features/settings/presentation/screens/settings_screen.dart';
 import '../theme/ui_tokens.dart';
 
 class AppShell extends StatefulWidget {
   final ReviewController controller;
   final RecallApi api;
+  final RecallPrefsController prefs;
 
-  const AppShell({super.key, required this.controller, required this.api});
+  const AppShell({
+    super.key,
+    required this.controller,
+    required this.api,
+    required this.prefs,
+  });
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -56,8 +64,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
   }
 
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SettingsScreen(
+          prefs: widget.prefs,
+          controller: widget.controller,
+        ),
+      ),
+    );
+  }
+
   late final List<Widget> _pages = [
-    StudyScreen(controller: widget.controller),
+    StudyScreen(controller: widget.controller, onOpenSettings: _openSettings),
     DecksScreen(
       key: _decksKey,
       controller: widget.controller,

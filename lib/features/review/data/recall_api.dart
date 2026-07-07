@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../settings/domain/recall_prefs.dart';
+import '../domain/stats_models.dart';
 import 'models.dart';
 
 /// All Supabase reads/writes for Recall. RLS scopes every row to the signed-in
@@ -47,9 +49,38 @@ class RecallApi {
     return FsrsSettings.tryParse(row?['settings_value']);
   }
 
+  /// Recall's study preferences row (new-card limit, retention, ordering).
+  /// Returns null when the row is absent so the caller keeps its defaults.
+  Future<Map<String, dynamic>?> fetchRecallPrefs() async {
+    final row = await client
+        .from('user_settings')
+        .select('settings_value')
+        .eq('settings_key', 'recall_prefs')
+        .maybeSingle();
+    final value = row?['settings_value'];
+    return value is Map ? Map<String, dynamic>.from(value) : null;
+  }
+
+  /// Write-through the study preferences. Relies on the same owner default
+  /// user_id the review-log inserts use, and the (user_id, settings_key)
+  /// unique constraint for the upsert.
+  Future<void> saveRecallPrefs(Map<String, dynamic> value) async {
+    await client.from('user_settings').upsert({
+      'user_id': ?currentUser?.id,
+      'settings_key': 'recall_prefs',
+      'settings_value': value,
+    }, onConflict: 'user_id,settings_key');
+  }
+
   /// The study queue: every due review/learning card (due <= now), then up to
-  /// [newLimit] new cards. Optionally restricted to one deck.
-  Future<List<ReviewCard>> fetchQueue({int? deckId, int newLimit = 20}) async {
+  /// [newLimit] new cards ordered per [order]. Optionally restricted to one
+  /// deck. `random` shuffles the fetched new-card page with a per-(day, deck)
+  /// seed so re-entering the tab mid-day keeps a stable order.
+  Future<List<ReviewCard>> fetchQueue({
+    int? deckId,
+    int newLimit = 20,
+    NewOrder order = NewOrder.oldestFirst,
+  }) async {
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
     PostgrestFilterBuilder<List<Map<String, dynamic>>> dueQ = client
@@ -69,16 +100,29 @@ class RecallApi {
       newQ = newQ.eq('notes.deck_id', deckId);
     }
 
+    // newest_first inverts the id order; random still fetches a stable page
+    // (id asc) and shuffles client-side so the same cards recur across loads.
+    final newAscending = order != NewOrder.newestFirst;
     final results = await Future.wait<List<Map<String, dynamic>>>([
       dueQ.order('due', ascending: true).limit(500),
-      newQ.order('id', ascending: true).limit(newLimit),
+      newQ.order('id', ascending: newAscending).limit(newLimit),
     ]);
     final dueRows = results[0];
     final newRows = results[1];
 
+    var newCards = [
+      for (final r in newRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
+    ];
+    if (order == NewOrder.random) {
+      newCards = seededShuffle(
+        newCards,
+        newOrderDaySeed(DateTime.now(), deckId),
+      );
+    }
+
     return [
       for (final r in dueRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
-      for (final r in newRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
+      ...newCards,
     ];
   }
 
@@ -128,25 +172,44 @@ class RecallApi {
     });
   }
 
-  /// Recent reviews (local timestamp + 1-4 rating) for the stats screen.
-  Future<List<({DateTime at, int rating})>> fetchRecentReviews({
-    int days = 30,
-  }) async {
+  /// Enriched review-log rows (local timestamp, rating, post-review state and
+  /// scheduled due) for the Stats screen's heatmap + retention.
+  Future<List<ReviewLogEntry>> fetchReviewLog({int days = 190}) async {
     final since = DateTime.now()
         .toUtc()
         .subtract(Duration(days: days))
         .toIso8601String();
     final rows = await client
         .from('review_log')
-        .select('rating_at,rating')
+        .select('rating_at,rating,state_after,due_after')
         .gte('rating_at', since)
         .order('rating_at', ascending: true);
     return [
       for (final r in rows)
-        (
+        ReviewLogEntry(
           at: DateTime.parse(r['rating_at'] as String).toLocal(),
           rating: (r['rating'] as num).toInt(),
+          stateAfter: (r['state_after'] as num?)?.toInt(),
+          dueAfter: r['due_after'] == null
+              ? null
+              : DateTime.parse(r['due_after'] as String).toLocal(),
         ),
+    ];
+  }
+
+  /// Upcoming due dates (local) for scheduled (non-new) cards — powers the due
+  /// forecast. With ~1.2k cards a plain ranged select is well within limits.
+  Future<List<DateTime>> fetchDueDates() async {
+    final rows = await client
+        .from('cards')
+        .select('due')
+        .eq('deleted', false)
+        .neq('state', 0)
+        .not('due', 'is', null)
+        .limit(5000);
+    return [
+      for (final r in rows)
+        if (r['due'] != null) DateTime.parse(r['due'] as String).toLocal(),
     ];
   }
 

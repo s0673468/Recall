@@ -30,6 +30,12 @@ class FsrsEngine {
     _configure(parameters: defaultParameters, desiredRetention: 0.9);
   }
 
+  /// Update only the desired retention, keeping the current parameters. Used
+  /// when the user changes the retention slider in settings.
+  void setDesiredRetention(double desiredRetention) {
+    _configure(parameters: _parameters, desiredRetention: desiredRetention);
+  }
+
   void _configure({
     required List<double> parameters,
     required double desiredRetention,

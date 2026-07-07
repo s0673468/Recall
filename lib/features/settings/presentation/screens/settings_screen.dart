@@ -1,0 +1,294 @@
+import 'package:flutter/material.dart';
+import 'package:health_flutter_shared/health_flutter_shared.dart'
+    show SectionCard, SignOutButton, SignOutButtonVariant;
+
+import '../../../../theme/ui_tokens.dart';
+import '../../../review/application/review_controller.dart';
+import '../../application/recall_prefs_controller.dart';
+import '../../domain/recall_prefs.dart';
+
+/// Recall's settings surface (pushed from the Study header gear): scheduling
+/// (retention, new-cards/day, new-card order), per-deck new-card overrides, and
+/// the account sign-out (relocated from the Stats tab).
+class SettingsScreen extends StatefulWidget {
+  final RecallPrefsController prefs;
+  final ReviewController controller;
+
+  const SettingsScreen({
+    super.key,
+    required this.prefs,
+    required this.controller,
+  });
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  /// Live value while the retention slider is being dragged (committed on
+  /// change-end so we don't spam the cloud on every tick).
+  double? _dragRetention;
+
+  RecallPrefs get _prefs => widget.prefs.value;
+
+  void _apply(RecallPrefs next) => widget.prefs.update(next);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: UiColors.canvas,
+      appBar: AppBar(
+        backgroundColor: UiColors.panel,
+        foregroundColor: UiColors.textPrimary,
+        elevation: 0,
+        title: const Text('Settings'),
+      ),
+      body: Container(
+        decoration: const BoxDecoration(gradient: scaffoldGradient),
+        child: SafeArea(
+          child: ListenableBuilder(
+            listenable: widget.prefs,
+            builder: (context, _) => ListView(
+              padding: const EdgeInsets.all(UiSpacing.sm),
+              children: [
+                _schedulingCard(context),
+                const SizedBox(height: UiSpacing.lg),
+                _perDeckCard(context),
+                const SizedBox(height: UiSpacing.lg),
+                _accountCard(context),
+                const SizedBox(height: UiSpacing.xl),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Scheduling ──
+
+  Widget _schedulingCard(BuildContext context) {
+    final retention = _dragRetention ?? _prefs.desiredRetention;
+    final mult = retentionWorkloadMultiplier(retention);
+    return SectionCard(
+      title: 'Scheduling',
+      subtitle: 'How Recall paces reviews and introduces new cards.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Desired retention',
+                style: TextStyle(
+                  color: UiColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${(retention * 100).round()}%',
+                style: const TextStyle(
+                  color: UiColors.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: retention.clamp(
+              RecallPrefs.minRetention,
+              RecallPrefs.maxRetention,
+            ),
+            min: RecallPrefs.minRetention,
+            max: RecallPrefs.maxRetention,
+            divisions:
+                ((RecallPrefs.maxRetention - RecallPrefs.minRetention) / 0.01)
+                    .round(),
+            label: '${(retention * 100).round()}%',
+            activeColor: UiColors.primary,
+            onChanged: (v) => setState(() => _dragRetention = v),
+            onChangeEnd: (v) {
+              _apply(_prefs.copyWith(desiredRetention: v));
+              setState(() => _dragRetention = null);
+            },
+          ),
+          Text(
+            '≈ workload ×${mult.toStringAsFixed(1)} vs the 90% baseline. '
+            'Higher retention means more reviews.',
+            style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+          ),
+          const Divider(color: UiColors.border, height: UiSpacing.xl),
+          _stepperRow(
+            label: 'New cards / day',
+            value: _prefs.newLimitDefault,
+            onChanged: (v) => _apply(_prefs.copyWith(newLimitDefault: v)),
+          ),
+          const SizedBox(height: UiSpacing.md),
+          const Text(
+            'New-card order',
+            style: TextStyle(
+              color: UiColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: UiSpacing.xs),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<NewOrder>(
+              segments: [
+                for (final o in NewOrder.values)
+                  ButtonSegment(value: o, label: Text(o.label)),
+              ],
+              selected: {_prefs.newOrder},
+              showSelectedIcon: false,
+              onSelectionChanged: (s) =>
+                  _apply(_prefs.copyWith(newOrder: s.first)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Per-deck limits ──
+
+  Widget _perDeckCard(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.controller,
+      builder: (context, _) {
+        final decks = widget.controller.state.decks;
+        return SectionCard(
+          title: 'Per-deck new-card limits',
+          subtitle: decks.isEmpty
+              ? 'Deck list loads after your first sync.'
+              : 'Override the daily new-card limit for a specific deck.',
+          child: Column(
+            children: [
+              for (final deck in decks)
+                _deckOverrideRow(
+                  name: deck.name.replaceAll('::', '  ›  '),
+                  override: _prefs.perDeck[deck.deckId],
+                  onSet: (v) =>
+                      _apply(_prefs.withDeckOverride(deck.deckId, v)),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _deckOverrideRow({
+    required String name,
+    required int? override,
+    required ValueChanged<int?> onSet,
+  }) {
+    final active = override != null;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              name,
+              style: const TextStyle(color: UiColors.textPrimary, fontSize: 14),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (active) ...[
+            _stepper(
+              value: override,
+              onChanged: (v) => onSet(v),
+            ),
+            IconButton(
+              tooltip: 'Use default',
+              icon: const Icon(Icons.close, size: 18, color: UiColors.textMuted),
+              onPressed: () => onSet(null),
+            ),
+          ] else
+            TextButton(
+              onPressed: () => onSet(_prefs.newLimitDefault),
+              child: const Text('Set override'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── Account ──
+
+  Widget _accountCard(BuildContext context) {
+    return SectionCard(
+      title: 'Account',
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SignOutButton(
+          onSignOut: () async {
+            await widget.controller.signOut();
+            if (context.mounted) Navigator.of(context).maybePop();
+          },
+          email: widget.controller.currentUser?.email,
+          variant: SignOutButtonVariant.text,
+        ),
+      ),
+    );
+  }
+
+  // ── Shared stepper widgets ──
+
+  Widget _stepperRow({
+    required String label,
+    required int value,
+    required ValueChanged<int> onChanged,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: UiColors.textPrimary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        _stepper(value: value, onChanged: onChanged),
+      ],
+    );
+  }
+
+  Widget _stepper({required int value, required ValueChanged<int> onChanged}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.remove_circle_outline),
+          color: UiColors.textMuted,
+          onPressed: value <= 0
+              ? null
+              : () => onChanged((value - 1).clamp(0, RecallPrefs.maxNewLimit)),
+        ),
+        SizedBox(
+          width: 32,
+          child: Text(
+            '$value',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: UiColors.textPrimary,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.add_circle_outline),
+          color: UiColors.primary,
+          onPressed: value >= RecallPrefs.maxNewLimit
+              ? null
+              : () => onChanged((value + 1).clamp(0, RecallPrefs.maxNewLimit)),
+        ),
+      ],
+    );
+  }
+}

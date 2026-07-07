@@ -121,7 +121,11 @@ class _RecallRootState extends State<_RecallRoot> {
             subtitle: UiBrand.subtitle,
           );
         }
-        return AppShell(controller: controller, api: widget.dependencies.api);
+        return AppShell(
+          controller: controller,
+          api: widget.dependencies.api,
+          prefs: widget.dependencies.recallPrefs,
+        );
       },
     );
   }

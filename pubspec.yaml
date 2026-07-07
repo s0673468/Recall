@@ -16,6 +16,9 @@ dependencies:
   fl_chart: ^1.2.0
   fsrs: ^2.0.0
   flutter_math_fork: ^0.7.3
+  # Small, web+Android-safe SVG renderer for the server-side `latex_svg`
+  # display-math fallback (already resolved transitively; promoted to direct).
+  flutter_svg: ^2.0.0
   health_shared:
     path: ../health_shared
   health_flutter_shared:

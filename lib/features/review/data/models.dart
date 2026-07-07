@@ -58,6 +58,11 @@ class ReviewCard {
   final int lapses;
   final DateTime? lastReview;
 
+  /// Server-side rendered SVG for display (block) LaTeX the client can't render
+  /// inline. Empty in practice (the pipeline never populated it), so treated as
+  /// an optional fallback — see [CardFace]. Extracted to raw `<svg …>` markup.
+  final String? latexSvg;
+
   const ReviewCard({
     required this.id,
     required this.guid,
@@ -72,6 +77,7 @@ class ReviewCard {
     required this.reps,
     required this.lapses,
     required this.lastReview,
+    this.latexSvg,
   });
 
   bool get isNew => state == 0;
@@ -92,6 +98,7 @@ class ReviewCard {
       reps: (m['reps'] as num?)?.toInt() ?? 0,
       lapses: (m['lapses'] as num?)?.toInt() ?? 0,
       lastReview: _parseTs(m['last_review']),
+      latexSvg: _svgString(note['latex_svg']),
     );
   }
 
@@ -110,6 +117,7 @@ class ReviewCard {
     'reps': reps,
     'lapses': lapses,
     'last_review': lastReview?.toIso8601String(),
+    if (latexSvg != null) 'latex_svg': latexSvg,
   };
 
   factory ReviewCard.fromJson(Map<String, dynamic> m) => ReviewCard(
@@ -126,6 +134,8 @@ class ReviewCard {
     reps: (m['reps'] as num?)?.toInt() ?? 0,
     lapses: (m['lapses'] as num?)?.toInt() ?? 0,
     lastReview: _parseTs(m['last_review']),
+    // Tolerant: snapshots written before this field simply omit the key.
+    latexSvg: m['latex_svg'] as String?,
   );
 }
 
@@ -154,3 +164,26 @@ class ReviewOutcome {
 
 DateTime? _parseTs(dynamic v) =>
     v == null ? null : DateTime.parse(v as String).toUtc();
+
+/// The `latex_svg` column is `jsonb` and, in practice, always null. Defensively
+/// pull the first `<svg …>` string out of whatever shape it holds (a raw
+/// string, or a map/list of per-field SVGs) so a future population can't crash
+/// the client; returns null when there's nothing SVG-shaped to render.
+String? _svgString(dynamic v) {
+  if (v is String) {
+    return v.trimLeft().startsWith('<svg') ? v : null;
+  }
+  if (v is Map) {
+    for (final value in v.values) {
+      final s = _svgString(value);
+      if (s != null) return s;
+    }
+  }
+  if (v is List) {
+    for (final value in v) {
+      final s = _svgString(value);
+      if (s != null) return s;
+    }
+  }
+  return null;
+}

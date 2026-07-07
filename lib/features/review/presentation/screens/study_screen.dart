@@ -10,7 +10,11 @@ import '../widgets/rating_bar.dart';
 
 class StudyScreen extends StatelessWidget {
   final ReviewController controller;
-  const StudyScreen({super.key, required this.controller});
+
+  /// Opens the settings screen from the header gear. Null hides the gear.
+  final VoidCallback? onOpenSettings;
+
+  const StudyScreen({super.key, required this.controller, this.onOpenSettings});
 
   @override
   Widget build(BuildContext context) {
@@ -59,6 +63,7 @@ class StudyScreen extends StatelessWidget {
               session: s.reviewedThisSession,
               offline: s.offline,
               pendingSync: s.pendingSync,
+              onOpenSettings: onOpenSettings,
             ),
             const SizedBox(height: UiSpacing.sm),
             Expanded(
@@ -94,12 +99,14 @@ class _Header extends StatelessWidget {
   final int session;
   final bool offline;
   final int pendingSync;
+  final VoidCallback? onOpenSettings;
   const _Header({
     required this.due,
     required this.neu,
     required this.session,
     required this.offline,
     required this.pendingSync,
+    this.onOpenSettings,
   });
 
   @override
@@ -121,6 +128,17 @@ class _Header extends StatelessWidget {
           '$session done',
           style: const TextStyle(color: UiColors.textMuted, fontSize: 13),
         ),
+        if (onOpenSettings != null)
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Settings',
+            icon: const Icon(
+              Icons.settings_outlined,
+              size: 20,
+              color: UiColors.textMuted,
+            ),
+            onPressed: onOpenSettings,
+          ),
       ],
     );
   }
@@ -164,7 +182,13 @@ class _CardPanel extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const SizedBox(height: UiSpacing.sm),
-            CardFace(html: card.front, hasLatex: card.hasLatex, style: style),
+            CardFace(
+              html: card.front,
+              hasLatex: card.hasLatex,
+              latexSvg: card.latexSvg,
+              cacheKey: '${card.id}:front',
+              style: style,
+            ),
             if (showBack) ...[
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: UiSpacing.lg),
@@ -173,6 +197,8 @@ class _CardPanel extends StatelessWidget {
               CardFace(
                 html: card.back,
                 hasLatex: card.hasLatex,
+                latexSvg: card.latexSvg,
+                cacheKey: '${card.id}:back',
                 style: style.copyWith(
                   color: UiColors.textSecondary,
                   fontWeight: FontWeight.w400,

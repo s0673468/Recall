@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:supabase_flutter/supabase_flutter.dart' show User, AuthState;
 
+import '../../settings/application/recall_prefs_controller.dart';
+import '../../settings/domain/recall_prefs.dart';
 import '../data/local_review_store.dart';
 import '../data/models.dart';
 import '../data/recall_api.dart';
@@ -24,6 +26,10 @@ class ReviewController extends ChangeNotifier {
   final RecallApi api;
   final FsrsEngine engine;
   final LocalReviewStore store;
+
+  /// Study preferences (new-card limit, retention, ordering). Optional so the
+  /// existing test harness can construct the controller without one.
+  final RecallPrefsController? prefs;
   final Future<void> Function({
     required String email,
     required String password,
@@ -36,6 +42,7 @@ class ReviewController extends ChangeNotifier {
     required this.api,
     required this.engine,
     required this.store,
+    this.prefs,
     this.rememberCredentials,
     this.forgetCredentials,
   }) {
@@ -47,6 +54,33 @@ class ReviewController extends ChangeNotifier {
       onError: (Object e) =>
           debugPrint('Recall: auth stream error (non-fatal): $e'),
     );
+    prefs?.addListener(_onPrefsChanged);
+  }
+
+  RecallPrefs get _activePrefs => prefs?.value ?? const RecallPrefs();
+  RecallPrefs? _appliedPrefs;
+
+  /// React to a settings change: keep the engine's retention in lockstep and
+  /// reload the queue when a queue-shaping field (limit/order/per-deck) moved.
+  void _onPrefsChanged() {
+    final p = prefs;
+    if (p == null) return;
+    final next = p.value;
+    final prev = _appliedPrefs;
+    _appliedPrefs = next;
+
+    engine.setDesiredRetention(next.desiredRetention);
+    _previewForCardId = null; // rating-button intervals must re-price
+
+    // Only reload once a session-driven load has happened. On the initial
+    // startup hydration (prefs.load() before any queue load) the auth-driven
+    // load() reads prefs.value directly, so a reload here would be premature.
+    final queueAffecting = prev == null || !prev.sameQueueShape(next);
+    if (queueAffecting && _sessionLoaded) {
+      unawaited(refresh());
+    } else {
+      notifyListeners();
+    }
   }
 
   ReviewState _state = const ReviewState(loading: false);
@@ -135,7 +169,12 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> initialize() => load();
 
+  /// True once at least one session-driven load() has run — gates prefs-change
+  /// reloads so startup hydration doesn't reload before there's a session.
+  bool _sessionLoaded = false;
+
   Future<void> load({int? deckId, bool keepReviewed = true}) async {
+    _sessionLoaded = true;
     final loadToken = ++_loadSequence;
     // NB: load() always applies [deckId] as the new filter (null = all decks),
     // so any difference from the current filter is a deck switch.
@@ -185,10 +224,15 @@ class ReviewController extends ChangeNotifier {
     try {
       // Independent round-trips — run them together instead of serially.
       // _refreshFsrsSettings never throws (it falls back to defaults).
+      final active = _activePrefs;
       final results = await Future.wait<Object?>([
         _refreshFsrsSettings(),
         api.fetchDecks(),
-        api.fetchQueue(deckId: _state.deckFilter),
+        api.fetchQueue(
+          deckId: _state.deckFilter,
+          newLimit: active.newLimitForDeck(_state.deckFilter),
+          order: active.newOrder,
+        ),
       ]);
       final decks = results[1] as List<DeckRow>;
       final queue = results[2] as List<ReviewCard>;
@@ -272,6 +316,13 @@ class ReviewController extends ChangeNotifier {
     } catch (e) {
       engine.resetToDefaults();
       debugPrint('Recall: FSRS settings unavailable, using defaults: $e');
+    }
+    // Stored study prefs are the source of truth for desired retention; the
+    // fsrs_params retention above only fills in when the user hasn't set one.
+    final p = prefs;
+    if (p != null && p.hasStoredPrefs) {
+      engine.setDesiredRetention(p.value.desiredRetention);
+      _appliedPrefs = p.value;
     }
   }
 
@@ -379,6 +430,7 @@ class ReviewController extends ChangeNotifier {
   @override
   void dispose() {
     _authSub?.cancel();
+    prefs?.removeListener(_onPrefsChanged);
     super.dispose();
   }
 }
