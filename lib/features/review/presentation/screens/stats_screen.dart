@@ -22,10 +22,10 @@ class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key, required this.api, required this.controller});
 
   @override
-  State<StatsScreen> createState() => _StatsScreenState();
+  State<StatsScreen> createState() => StatsScreenState();
 }
 
-class _StatsScreenState extends State<StatsScreen> {
+class StatsScreenState extends State<StatsScreen> {
   late Future<List<({DateTime at, int rating})>> _reviews;
 
   @override
@@ -34,8 +34,10 @@ class _StatsScreenState extends State<StatsScreen> {
     _reviews = widget.api.fetchRecentReviews(days: 30);
   }
 
-  void _reload() =>
-      setState(() => _reviews = widget.api.fetchRecentReviews(days: 30));
+  Future<void> reload() async {
+    setState(() => _reviews = widget.api.fetchRecentReviews(days: 30));
+    await _reviews;
+  }
 
   static DateTime _dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -57,7 +59,7 @@ class _StatsScreenState extends State<StatsScreen> {
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: () async => _reload(),
+      onRefresh: reload,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(
           UiSpacing.md,

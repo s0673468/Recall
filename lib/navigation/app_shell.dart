@@ -32,6 +32,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final MirrorWeeklyService _mirrorService = MirrorWeeklyService.forClient(
     _supabaseClientOrNull(),
   );
+  final _decksKey = GlobalKey<DecksScreenState>();
+  final _statsKey = GlobalKey<StatsScreenState>();
   int _index = 0;
 
   @override
@@ -57,58 +59,92 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final List<Widget> _pages = [
     StudyScreen(controller: widget.controller),
     DecksScreen(
+      key: _decksKey,
       controller: widget.controller,
       api: widget.api,
       onStudyDeck: (deckId) {
         widget.controller.selectDeck(deckId);
-        setState(() => _index = 0);
+        _selectIndex(0);
       },
     ),
-    StatsScreen(api: widget.api, controller: widget.controller),
+    StatsScreen(key: _statsKey, api: widget.api, controller: widget.controller),
   ];
+
+  void _selectIndex(int index) {
+    if (index == _index) {
+      return;
+    }
+    if (index == 1) {
+      _reloadQuietly(_decksKey.currentState?.reload(), 'Reload decks');
+    } else if (index == 2) {
+      _reloadQuietly(_statsKey.currentState?.reload(), 'Reload stats');
+    }
+    setState(() => _index = index);
+  }
+
+  void _reloadQuietly(Future<void>? reloadFuture, String context) {
+    reloadFuture?.catchError((Object error, StackTrace stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'recall navigation',
+          context: ErrorDescription(context),
+        ),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: MirrorMoodScope(
-        service: _mirrorService,
-        child: Container(
-          decoration: const BoxDecoration(gradient: scaffoldGradient),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                UiSpacing.sm,
-                UiSpacing.sm,
-                UiSpacing.sm,
-                0,
+    return PopScope(
+      canPop: _index == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          _selectIndex(0);
+        }
+      },
+      child: Scaffold(
+        body: MirrorMoodScope(
+          service: _mirrorService,
+          child: Container(
+            decoration: const BoxDecoration(gradient: scaffoldGradient),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  UiSpacing.sm,
+                  UiSpacing.sm,
+                  UiSpacing.sm,
+                  0,
+                ),
+                child: IndexedStack(index: _index, children: _pages),
               ),
-              child: IndexedStack(index: _index, children: _pages),
             ),
           ),
         ),
-      ),
-      bottomNavigationBar: NavigationBar(
-        backgroundColor: UiColors.panel,
-        indicatorColor: UiColors.primary.withValues(alpha: 0.15),
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.style_outlined),
-            selectedIcon: Icon(Icons.style),
-            label: 'Study',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.folder_outlined),
-            selectedIcon: Icon(Icons.folder),
-            label: 'Decks',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart),
-            label: 'Stats',
-          ),
-        ],
+        bottomNavigationBar: NavigationBar(
+          backgroundColor: UiColors.panel,
+          indicatorColor: UiColors.primary.withValues(alpha: 0.15),
+          selectedIndex: _index,
+          onDestinationSelected: _selectIndex,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.style_outlined),
+              selectedIcon: Icon(Icons.style),
+              label: 'Study',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.folder_outlined),
+              selectedIcon: Icon(Icons.folder),
+              label: 'Decks',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.bar_chart_outlined),
+              selectedIcon: Icon(Icons.bar_chart),
+              label: 'Stats',
+            ),
+          ],
+        ),
       ),
     );
   }

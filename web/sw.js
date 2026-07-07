@@ -17,7 +17,8 @@
 'use strict';
 
 const VERSION = '__SW_VERSION__';
-const CACHE_NAME = 'health-pwa-' + VERSION;
+const CACHE_PREFIX = 'health-recall-pwa-';
+const CACHE_NAME = CACHE_PREFIX + VERSION;
 
 // Boot-critical files, precached at install so the second launch after a
 // deploy paints without the network. Everything else (assets/, fonts,
@@ -49,7 +50,7 @@ self.addEventListener('activate', (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key.startsWith('health-pwa-') && key !== CACHE_NAME)
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
             .map((key) => caches.delete(key))
         )
       )

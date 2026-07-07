@@ -21,6 +21,10 @@ class LocalReviewStore {
   static const _outboxKey = 'recall_outbox_v1';
 
   Future<void> _outboxTail = Future.value();
+  Future<SharedPreferences>? _prefsFuture;
+
+  Future<SharedPreferences> get _prefs =>
+      _prefsFuture ??= SharedPreferences.getInstance();
 
   Future<T> _withOutboxLock<T>(Future<T> Function() action) {
     final run = _outboxTail.then((_) => action());
@@ -33,7 +37,7 @@ class LocalReviewStore {
     required List<DeckRow> decks,
     required List<ReviewCard> queue,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs;
     await prefs.setString(
       _snapshotKey,
       jsonEncode({
@@ -44,8 +48,9 @@ class LocalReviewStore {
     );
   }
 
-  Future<({List<DeckRow> decks, List<ReviewCard> queue})?> loadSnapshot() async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<({List<DeckRow> decks, List<ReviewCard> queue})?>
+  loadSnapshot() async {
+    final prefs = await _prefs;
     final raw = prefs.getString(_snapshotKey);
     if (raw == null) return null;
     try {
@@ -69,7 +74,7 @@ class LocalReviewStore {
   /// update its badge without re-reading + re-decoding the whole outbox.
   Future<int> enqueueReview(Map<String, dynamic> entry) {
     return _withOutboxLock(() async {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _prefs;
       final list = _readOutbox(prefs)..add(entry);
       await prefs.setString(_outboxKey, jsonEncode(list));
       return list.length;
@@ -77,7 +82,7 @@ class LocalReviewStore {
   }
 
   Future<List<Map<String, dynamic>>> outbox() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await _prefs;
     return _readOutbox(prefs);
   }
 
@@ -87,12 +92,12 @@ class LocalReviewStore {
   Future<int> removeFirst(int count) {
     if (count <= 0) {
       return _withOutboxLock(() async {
-        final prefs = await SharedPreferences.getInstance();
+        final prefs = await _prefs;
         return _readOutbox(prefs).length;
       });
     }
     return _withOutboxLock(() async {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _prefs;
       final list = _readOutbox(prefs);
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
@@ -106,7 +111,7 @@ class LocalReviewStore {
   /// a shared browser can't see the previous user's cards/reviews).
   Future<void> clear() {
     return _withOutboxLock(() async {
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _prefs;
       await prefs.remove(_snapshotKey);
       await prefs.remove(_outboxKey);
     });

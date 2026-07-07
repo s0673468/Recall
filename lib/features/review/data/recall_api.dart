@@ -69,8 +69,12 @@ class RecallApi {
       newQ = newQ.eq('notes.deck_id', deckId);
     }
 
-    final dueRows = await dueQ.order('due', ascending: true).limit(500);
-    final newRows = await newQ.order('id', ascending: true).limit(newLimit);
+    final results = await Future.wait<List<Map<String, dynamic>>>([
+      dueQ.order('due', ascending: true).limit(500),
+      newQ.order('id', ascending: true).limit(newLimit),
+    ]);
+    final dueRows = results[0];
+    final newRows = results[1];
 
     return [
       for (final r in dueRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show AuthGate, AuthGateModel;
+    show AppScrollBehavior, AuthGate, AuthGateModel;
 
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
@@ -58,8 +58,12 @@ class _RecallBootstrapAppState extends State<RecallBootstrapApp> {
           title: UiBrand.appName,
           debugShowCheckedModeBanner: false,
           theme: buildRecallTheme(),
+          scrollBehavior: const AppScrollBehavior(),
           home: snapshot.hasError
-              ? _StartupError(error: snapshot.error!, stack: snapshot.stackTrace)
+              ? _StartupError(
+                  error: snapshot.error!,
+                  stack: snapshot.stackTrace,
+                )
               : const _Loading(),
         );
       },
@@ -78,6 +82,7 @@ class RecallApp extends StatelessWidget {
       title: UiBrand.appName,
       debugShowCheckedModeBanner: false,
       theme: buildRecallTheme(),
+      scrollBehavior: const AppScrollBehavior(),
       home: _RecallRoot(dependencies: dependencies),
     );
   }

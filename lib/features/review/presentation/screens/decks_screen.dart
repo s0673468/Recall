@@ -21,10 +21,10 @@ class DecksScreen extends StatefulWidget {
   });
 
   @override
-  State<DecksScreen> createState() => _DecksScreenState();
+  State<DecksScreen> createState() => DecksScreenState();
 }
 
-class _DecksScreenState extends State<DecksScreen> {
+class DecksScreenState extends State<DecksScreen> {
   late Future<Map<int, ({int due, int neu})>> _counts;
 
   @override
@@ -33,7 +33,7 @@ class _DecksScreenState extends State<DecksScreen> {
     _counts = widget.api.fetchDeckCounts();
   }
 
-  Future<void> _reload() async {
+  Future<void> reload() async {
     setState(() => _counts = widget.api.fetchDeckCounts());
     await _counts;
   }
@@ -45,7 +45,7 @@ class _DecksScreenState extends State<DecksScreen> {
       builder: (context, _) {
         final decks = widget.controller.state.decks;
         return RefreshIndicator(
-          onRefresh: _reload,
+          onRefresh: reload,
           child: FutureBuilder<Map<int, ({int due, int neu})>>(
             future: _counts,
             builder: (context, snap) {
