@@ -20,6 +20,8 @@ dependencies:
     path: ../health_shared
   health_flutter_shared:
     path: ../health_flutter_shared
+  local_auth: ^3.0.1
+  flutter_secure_storage: ^10.3.1
 
 dev_dependencies:
   flutter_test:

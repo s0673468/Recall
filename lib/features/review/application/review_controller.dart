@@ -24,12 +24,20 @@ class ReviewController extends ChangeNotifier {
   final RecallApi api;
   final FsrsEngine engine;
   final LocalReviewStore store;
+  final Future<void> Function({
+    required String email,
+    required String password,
+  })?
+  rememberCredentials;
+  final Future<void> Function()? forgetCredentials;
   StreamSubscription<AuthState>? _authSub;
 
   ReviewController({
     required this.api,
     required this.engine,
     required this.store,
+    this.rememberCredentials,
+    this.forgetCredentials,
   }) {
     // Supabase emits auth errors (e.g. an offline token refresh) as STREAM
     // errors; without onError they rethrow and can crash the app. Swallow them —
@@ -70,6 +78,7 @@ class ReviewController extends ChangeNotifier {
     _set(_state.copyWith(authSubmitting: true, error: null));
     try {
       await api.signIn(email: email, password: password);
+      await _rememberCredentials(email: email, password: password);
       // _onAuthChanged fires on success and loads the queue.
     } catch (e) {
       _set(_state.copyWith(authSubmitting: false, error: _authMessage(e)));
@@ -77,6 +86,7 @@ class ReviewController extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    await _forgetCredentials();
     // Best-effort: push any queued reviews before dropping the local cache.
     await _flushOutbox();
     // Don't leave one user's snapshot/outbox on disk for the next person on a
@@ -89,6 +99,25 @@ class ReviewController extends ChangeNotifier {
     final s = e.toString();
     if (s.contains('Invalid login')) return 'Wrong email or password.';
     return s;
+  }
+
+  Future<void> _rememberCredentials({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      await rememberCredentials?.call(email: email, password: password);
+    } catch (e) {
+      debugPrint('Recall: credential save failed (non-fatal): $e');
+    }
+  }
+
+  Future<void> _forgetCredentials() async {
+    try {
+      await forgetCredentials?.call();
+    } catch (e) {
+      debugPrint('Recall: credential clear failed (non-fatal): $e');
+    }
   }
 
   // --- Study ---

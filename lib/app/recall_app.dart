@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/health_flutter_shared.dart'
     show AppScrollBehavior, AuthGate, AuthGateModel;
 
+import '../features/review/application/review_controller.dart';
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_dependencies.dart';
@@ -89,17 +90,26 @@ class RecallApp extends StatelessWidget {
 }
 
 /// Shows the login gate until there's a signed-in user, then the app shell.
-class _RecallRoot extends StatelessWidget {
+class _RecallRoot extends StatefulWidget {
   final RecallDependencies dependencies;
   const _RecallRoot({required this.dependencies});
 
   @override
+  State<_RecallRoot> createState() => _RecallRootState();
+}
+
+class _RecallRootState extends State<_RecallRoot> {
+  bool _biometricAttempted = false;
+  bool _biometricInFlight = false;
+
+  @override
   Widget build(BuildContext context) {
-    final controller = dependencies.reviewController;
+    final controller = widget.dependencies.reviewController;
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
         if (controller.currentUser == null) {
+          _scheduleBiometricSignIn(controller);
           return AuthGate(
             model: AuthGateModel(
               source: controller,
@@ -111,9 +121,37 @@ class _RecallRoot extends StatelessWidget {
             subtitle: UiBrand.subtitle,
           );
         }
-        return AppShell(controller: controller, api: dependencies.api);
+        return AppShell(controller: controller, api: widget.dependencies.api);
       },
     );
+  }
+
+  void _scheduleBiometricSignIn(ReviewController controller) {
+    if (_biometricAttempted ||
+        _biometricInFlight ||
+        controller.state.authSubmitting) {
+      return;
+    }
+    _biometricAttempted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _tryBiometricSignIn(controller);
+    });
+  }
+
+  Future<void> _tryBiometricSignIn(ReviewController controller) async {
+    setState(() => _biometricInFlight = true);
+    final credentials = await widget.dependencies.biometricSignIn
+        .authenticateAndRead();
+    if (credentials != null && mounted && controller.currentUser == null) {
+      await controller.signIn(
+        email: credentials.email,
+        password: credentials.password,
+      );
+      if (controller.currentUser == null && controller.state.error != null) {
+        await widget.dependencies.biometricSignIn.clearCredentials();
+      }
+    }
+    if (mounted) setState(() => _biometricInFlight = false);
   }
 }
 
