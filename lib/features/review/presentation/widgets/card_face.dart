@@ -3,16 +3,24 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../theme/ui_tokens.dart';
+import '../../domain/cloze.dart';
 import '../../domain/inline_html.dart';
 
-/// Renders a note field. Anki content is light HTML, optionally with inline
-/// LaTeX delimited by `\( … \)`. The pipeline is:
+/// Renders a note field. Anki content is light HTML, optionally with cloze
+/// deletions and inline LaTeX delimited by `\( … \)`. The pipeline is:
 ///
-///   1. parse the supported inline-HTML subset ([parseInlineHtml]) into styled
-///      spans (bold/italic/underline/colour/code/sub-sup/lists/images);
-///   2. extract inline `\( … \)` math out of each text run and render it with
+///   1. split Anki cloze markup (`{{cN::…}}`) out first ([parseCloze]);
+///   2. for each non-cloze segment, parse the supported inline-HTML subset
+///      ([parseInlineHtml]) into styled spans (bold/italic/colour/lists/…);
+///   3. extract inline `\( … \)` math out of each text run and render it with
 ///      flutter_math_fork;
-///   3. compose everything into a single `SelectableText.rich`.
+///   4. compose everything into a single `SelectableText.rich`.
+///
+/// Cloze deletions render as accent pills: hidden (`[…]`/`[hint]`) when
+/// [revealCloze] is false (the front), revealed + highlighted when true (the
+/// back). The Recall pipeline collapses a cloze note to a single card with no
+/// per-index information, so *all* deletions are treated as active (Anki's
+/// single-cloze fallback).
 ///
 /// When a face carries display (block) math the client can't render inline, the
 /// server-side [ReviewCard.latexSvg] is drawn via flutter_svg instead — a
@@ -25,6 +33,9 @@ class CardFace extends StatelessWidget {
   /// Raw `<svg …>` markup for display-math faces (usually null).
   final String? latexSvg;
 
+  /// Reveal cloze deletions (the back face) instead of hiding them (the front).
+  final bool revealCloze;
+
   /// Stable key (e.g. `"$cardId:front"`) for the parse-tree memo. Null disables
   /// caching (tests / one-off renders).
   final String? cacheKey;
@@ -35,6 +46,7 @@ class CardFace extends StatelessWidget {
     required this.hasLatex,
     required this.style,
     this.latexSvg,
+    this.revealCloze = false,
     this.cacheKey,
   });
 
@@ -54,33 +66,11 @@ class CardFace extends StatelessWidget {
         final maxWidth = constraints.hasBoundedWidth
             ? constraints.maxWidth
             : double.infinity;
-        final nodes = parseInlineHtmlCached(html, cacheKey: cacheKey);
-        final spans = <InlineSpan>[];
-        var previousWasMath = false;
-
-        for (final node in nodes) {
-          switch (node) {
-            case HtmlText(:final text, :final style):
-              previousWasMath = _appendTextWithMath(
-                spans: spans,
-                text: text,
-                nodeStyle: style,
-                maxWidth: maxWidth,
-                previousWasMath: previousWasMath,
-              );
-            case HtmlBreak():
-              spans.add(const TextSpan(text: '\n'));
-              previousWasMath = false;
-            case final HtmlImage img:
-              spans.add(
-                WidgetSpan(
-                  alignment: PlaceholderAlignment.middle,
-                  child: _ImageFragment(node: img, style: style),
-                ),
-              );
-              previousWasMath = false;
-          }
-        }
+        // Cloze first (only when present), then HTML, then math. A face with no
+        // cloze markup takes the exact HTML+math path unchanged.
+        final spans = isCloze(html)
+            ? _buildClozeSpans(maxWidth)
+            : _buildHtmlSpans(html, maxWidth, cacheKey: cacheKey);
 
         return SelectableText.rich(
           TextSpan(style: style, children: _trimSpans(spans)),
@@ -88,6 +78,148 @@ class CardFace extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// Build spans for a plain (non-cloze) HTML string — the Spec-8 pipeline,
+  /// reused for each cloze plain segment too.
+  List<InlineSpan> _buildHtmlSpans(
+    String html,
+    double maxWidth, {
+    String? cacheKey,
+  }) {
+    final spans = <InlineSpan>[];
+    _appendHtmlSpans(spans, html, maxWidth, false, cacheKey: cacheKey);
+    return spans;
+  }
+
+  /// Append an HTML string's spans (HTML nodes → math per text run) into
+  /// [spans], threading [previousWasMath] so punctuation stays glued to math
+  /// across segment boundaries. Returns the new previousWasMath.
+  bool _appendHtmlSpans(
+    List<InlineSpan> spans,
+    String html,
+    double maxWidth,
+    bool previousWasMath, {
+    String? cacheKey,
+    bool trimEdges = true,
+    TextStyle? baseStyle,
+  }) {
+    // Cloze sub-segments (trimEdges:false) keep boundary breaks and aren't
+    // cached; the whole-face non-cloze path caches with trimmed edges.
+    final nodes = trimEdges
+        ? parseInlineHtmlCached(html, cacheKey: cacheKey)
+        : parseInlineHtml(html, trimEdges: false);
+    var prevMath = previousWasMath;
+    for (final node in nodes) {
+      switch (node) {
+        case HtmlText(:final text, :final style):
+          prevMath = _appendTextWithMath(
+            spans: spans,
+            text: text,
+            nodeStyle: style,
+            maxWidth: maxWidth,
+            previousWasMath: prevMath,
+            baseStyle: baseStyle,
+          );
+        case HtmlBreak():
+          spans.add(const TextSpan(text: '\n'));
+          prevMath = false;
+        case final HtmlImage img:
+          spans.add(
+            WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: _ImageFragment(node: img, style: style),
+            ),
+          );
+          prevMath = false;
+      }
+    }
+    return prevMath;
+  }
+
+  /// Build spans for a cloze face: split cloze deletions out, feed the plain
+  /// segments through the HTML+math pipeline, and render each deletion as a
+  /// pill (hidden or revealed per [revealCloze]).
+  ///
+  /// Each plain segment is HTML-parsed independently (the spec's "split cloze
+  /// first, then feed segments through the HTML path"), so an HTML tag that
+  /// *straddles* a deletion (e.g. `<b>before {{c1::x}} after</b>`) does not
+  /// carry its styling across the boundary. Real cards don't wrap formatting
+  /// around a deletion, so this is an accepted limitation of the composition.
+  List<InlineSpan> _buildClozeSpans(double maxWidth) {
+    final nodes = parseClozeCached(html, cacheKey: cacheKey);
+    final spans = <InlineSpan>[];
+    var prevMath = false;
+    for (final node in nodes) {
+      switch (node) {
+        case final ClozeText t:
+          // Plain segments are small (cache the whole cloze parse, not each)
+          // and keep boundary breaks so a <br> next to a deletion survives.
+          prevMath = _appendHtmlSpans(
+            spans,
+            t.text,
+            maxWidth,
+            prevMath,
+            trimEdges: false,
+          );
+        case final ClozeDeletion d:
+          spans.add(_clozePillSpan(d, maxWidth));
+          prevMath = false;
+      }
+    }
+    return spans;
+  }
+
+  /// A single cloze deletion as an accent pill.
+  InlineSpan _clozePillSpan(ClozeDeletion d, double maxWidth) {
+    final pillStyle = style.copyWith(color: UiColors.primary);
+
+    if (revealCloze) {
+      final content = <InlineSpan>[];
+      _appendClozeContent(content, d.content, maxWidth, pillStyle);
+      if (content.isNotEmpty) {
+        return WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: _ClozePill(
+            child: Text.rich(TextSpan(style: pillStyle, children: content)),
+          ),
+        );
+      }
+      // Empty deletion → fall through to the placeholder label.
+    }
+
+    final label = (d.hint != null) ? '[${d.hint}]' : '[…]';
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.middle,
+      child: _ClozePill(child: Text(label, style: pillStyle)),
+    );
+  }
+
+  /// Render a deletion's (recursively parsed) content, so a nested cloze shows
+  /// as a nested pill and inner HTML/math still resolves.
+  void _appendClozeContent(
+    List<InlineSpan> spans,
+    List<ClozeNode> content,
+    double maxWidth,
+    TextStyle pillStyle,
+  ) {
+    var prevMath = false;
+    for (final node in content) {
+      switch (node) {
+        case final ClozeText t:
+          prevMath = _appendHtmlSpans(
+            spans,
+            t.text,
+            maxWidth,
+            prevMath,
+            trimEdges: false,
+            baseStyle: pillStyle, // math inside the pill picks up the accent
+          );
+        case final ClozeDeletion nested:
+          spans.add(_clozePillSpan(nested, maxWidth));
+          prevMath = false;
+      }
+    }
   }
 
   /// Split one text run on inline math, appending styled `TextSpan`s and math
@@ -99,8 +231,10 @@ class CardFace extends StatelessWidget {
     required InlineStyle nodeStyle,
     required double maxWidth,
     required bool previousWasMath,
+    TextStyle? baseStyle,
   }) {
     final resolved = _resolveStyle(nodeStyle);
+    final mathBase = baseStyle ?? style;
     var last = 0;
     var prevMath = previousWasMath;
 
@@ -121,7 +255,7 @@ class CardFace extends StatelessWidget {
             expression: m.group(1)!,
             fallback: m.group(0)!,
             maxWidth: maxWidth,
-            style: style.merge(resolved),
+            style: mathBase.merge(resolved),
           ),
         ),
       );
@@ -209,6 +343,27 @@ class _MathFragment extends StatelessWidget {
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
+      child: child,
+    );
+  }
+}
+
+/// The accent-tinted pill wrapping a cloze deletion — a placeholder (`[…]` /
+/// `[hint]`) when hidden, or the revealed answer when shown. Recall's yellow
+/// accent (`UiAccents.recall`) at muted strength, per the design tokens.
+class _ClozePill extends StatelessWidget {
+  final Widget child;
+  const _ClozePill({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: UiColors.primaryMuted,
+        borderRadius: BorderRadius.circular(UiRadius.sm),
+        border: Border.all(color: UiColors.primary.withValues(alpha: 0.35)),
+      ),
       child: child,
     );
   }

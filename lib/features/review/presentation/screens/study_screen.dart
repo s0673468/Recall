@@ -188,6 +188,10 @@ class _CardPanel extends StatelessWidget {
               latexSvg: card.latexSvg,
               cacheKey: '${card.id}:front',
               style: style,
+              // The deleted answers live in the front's {{cN::…}} markup, so the
+              // front itself fills them in on flip (the back is the extra field
+              // and is often just a summary). A no-op for non-cloze fronts.
+              revealCloze: showBack,
             ),
             if (showBack) ...[
               const Padding(
@@ -203,6 +207,8 @@ class _CardPanel extends StatelessWidget {
                   color: UiColors.textSecondary,
                   fontWeight: FontWeight.w400,
                 ),
+                // The answer face reveals any cloze deletions it carries.
+                revealCloze: true,
               ),
             ],
             const SizedBox(height: UiSpacing.sm),

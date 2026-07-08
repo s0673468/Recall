@@ -341,13 +341,23 @@ class _Frame {
 }
 
 /// Parse [html] into a flat list of inline nodes. Never throws.
-List<InlineHtmlNode> parseInlineHtml(String html) {
+///
+/// [trimEdges] (default true) drops a leading/trailing block break so a face
+/// never opens or closes on a blank line. Cloze composition parses each
+/// sub-segment separately and passes false, so a `<br>` sitting at a cloze
+/// boundary (e.g. `…{{c1::a}}<br>2. {{c2::b}}`) still emits its line break; the
+/// caller trims the *assembled* face's edges instead.
+List<InlineHtmlNode> parseInlineHtml(String html, {bool trimEdges = true}) {
   final out = <InlineHtmlNode>[];
   final stack = <_Frame>[_Frame('', const InlineStyle())];
   InlineStyle style() => stack.last.style;
 
   void addBreak() {
-    if (out.isEmpty) return;
+    if (out.isEmpty) {
+      if (trimEdges) return; // trimmed mode: no leading break
+      out.add(const HtmlBreak()); // preserve a boundary break for cloze
+      return;
+    }
     if (out.last is HtmlBreak) return;
     out.add(const HtmlBreak());
   }
@@ -442,12 +452,15 @@ List<InlineHtmlNode> parseInlineHtml(String html) {
   }
   if (pos < html.length) addText(html.substring(pos));
 
-  // Trim leading/trailing structural breaks.
-  while (out.isNotEmpty && out.first is HtmlBreak) {
-    out.removeAt(0);
-  }
-  while (out.isNotEmpty && out.last is HtmlBreak) {
-    out.removeLast();
+  // Trim leading/trailing structural breaks (unless the caller assembles edges
+  // itself, e.g. cloze sub-segments).
+  if (trimEdges) {
+    while (out.isNotEmpty && out.first is HtmlBreak) {
+      out.removeAt(0);
+    }
+    while (out.isNotEmpty && out.last is HtmlBreak) {
+      out.removeLast();
+    }
   }
   return out;
 }

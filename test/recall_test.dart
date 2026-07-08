@@ -618,6 +618,44 @@ void main() {
       await tester.pump();
       expect(find.textContaining('eramos'), findsOneWidget);
     });
+
+    testWidgets('StudyScreen fills in the cloze on flip (plain-summary back)', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      // Real-data shape: the answer lives ONLY in the front's {{cN::}} markup;
+      // the back is a separate plain summary with no deletion.
+      // Distinct card id: the parse memo is a global static keyed by
+      // "$cardId:$face", so reusing the default id=1 would collide with the
+      // previous StudyScreen test's cached back.
+      final controller = ReviewController(
+        api: _FakeRecallApi([
+          _card(
+            id: 507,
+            front: '{{c1::mitochondria}} is the powerhouse',
+            back: 'A cell organelle.',
+          ),
+        ]),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+      );
+
+      // Question side: deletion hidden, answer nowhere on screen.
+      expect(find.textContaining('mitochondria'), findsNothing);
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pump();
+      // Answer side: the FRONT fills in its deletion (the back is just the
+      // summary), so the deleted word is now visible.
+      expect(find.textContaining('mitochondria'), findsOneWidget);
+      expect(find.textContaining('A cell organelle'), findsOneWidget);
+    });
   });
 
   group('Stats screen', () {
