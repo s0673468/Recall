@@ -1,7 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show MirrorMoodScope, MirrorWeeklyService;
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../features/review/application/review_controller.dart';
 import '../features/review/data/recall_api.dart';
@@ -28,18 +25,7 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-SupabaseClient? _supabaseClientOrNull() {
-  try {
-    return Supabase.instance.client;
-  } catch (_) {
-    return null;
-  }
-}
-
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
-  late final MirrorWeeklyService _mirrorService = MirrorWeeklyService.forClient(
-    _supabaseClientOrNull(),
-  );
   final _decksKey = GlobalKey<DecksScreenState>();
   final _statsKey = GlobalKey<StatsScreenState>();
   int _index = 0;
@@ -124,20 +110,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         }
       },
       child: Scaffold(
-        body: MirrorMoodScope(
-          service: _mirrorService,
-          child: Container(
-            decoration: const BoxDecoration(gradient: scaffoldGradient),
-            child: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  UiSpacing.sm,
-                  UiSpacing.sm,
-                  UiSpacing.sm,
-                  0,
-                ),
-                child: IndexedStack(index: _index, children: _pages),
+        body: Container(
+          decoration: const BoxDecoration(gradient: scaffoldGradient),
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                UiSpacing.sm,
+                UiSpacing.sm,
+                UiSpacing.sm,
+                0,
               ),
+              child: IndexedStack(index: _index, children: _pages),
             ),
           ),
         ),
