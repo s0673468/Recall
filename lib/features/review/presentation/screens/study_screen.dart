@@ -71,6 +71,10 @@ class StudyScreen extends StatelessWidget {
               offline: s.offline,
               pendingSync: s.pendingSync,
               onUndo: undoable ? controller.undo : null,
+              // Flagging is independent of the review flow and of undo — it
+              // only reports the current card, so it's live whenever a card
+              // is on screen (the header only renders with a current card).
+              onFlag: () => _showFlagSheet(context, controller),
               onOpenSettings: onOpenSettings,
             ),
             const SizedBox(height: UiSpacing.sm),
@@ -110,6 +114,9 @@ class _Header extends StatelessWidget {
 
   /// Reverts the last rating; null hides the undo button (nothing undoable).
   final VoidCallback? onUndo;
+
+  /// Opens the flag-card sheet; null hides the flag button.
+  final VoidCallback? onFlag;
   final VoidCallback? onOpenSettings;
   const _Header({
     required this.due,
@@ -118,6 +125,7 @@ class _Header extends StatelessWidget {
     required this.offline,
     required this.pendingSync,
     this.onUndo,
+    this.onFlag,
     this.onOpenSettings,
   });
 
@@ -146,6 +154,17 @@ class _Header extends StatelessWidget {
             tooltip: 'Undo last rating',
             icon: const Icon(Icons.undo, size: 20, color: UiColors.textMuted),
             onPressed: onUndo,
+          ),
+        if (onFlag != null)
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Flag card',
+            icon: const Icon(
+              Icons.flag_outlined,
+              size: 20,
+              color: UiColors.textMuted,
+            ),
+            onPressed: onFlag,
           ),
         if (onOpenSettings != null)
           IconButton(
@@ -236,6 +255,104 @@ class _CardPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The four flag reasons, in display order. The `reason` value maps to the
+/// note_flags CHECK constraint; the `label` is the sheet's tap target.
+const List<({String reason, String label})> _flagOptions = [
+  (reason: 'wrong', label: 'Wrong'),
+  (reason: 'confusing', label: 'Confusing'),
+  (reason: 'too_long', label: 'Too long'),
+  (reason: 'duplicate', label: 'Duplicate'),
+];
+
+/// An iOS-style bottom sheet listing the flag reasons. Selecting one enqueues
+/// the flag (durable, offline-safe), dismisses the sheet, and shows a brief
+/// confirmation. The review flow is left completely untouched — flagging never
+/// rates, skips, or advances the card. Cancel enqueues nothing.
+void _showFlagSheet(BuildContext context, ReviewController controller) {
+  // Capture the messenger before any async gap — the sheet's own context is
+  // gone by the time the confirmation fires.
+  final messenger = ScaffoldMessenger.of(context);
+  showModalBottomSheet<void>(
+    context: context,
+    backgroundColor: UiColors.panel,
+    showDragHandle: true,
+    builder: (sheetContext) {
+      // Scrollable + compact so the sheet fits small screens/landscape and
+      // never overflows; on a phone all options show without scrolling.
+      return SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(
+                  UiSpacing.lg,
+                  0,
+                  UiSpacing.lg,
+                  UiSpacing.xs,
+                ),
+                child: Text(
+                  'Flag this card',
+                  style: TextStyle(
+                    color: UiColors.textMuted,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              for (final option in _flagOptions)
+                ListTile(
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  leading: const Icon(
+                    Icons.flag_outlined,
+                    size: 20,
+                    color: UiColors.textSecondary,
+                  ),
+                  title: Text(
+                    option.label,
+                    style: const TextStyle(color: UiColors.textPrimary),
+                  ),
+                  onTap: () async {
+                    // The confirmation is a durability promise: a PWA can be
+                    // backgrounded/killed the moment the user sees it, so the
+                    // local enqueue must complete BEFORE we confirm. flag()
+                    // awaits only the SharedPreferences write (fast); the
+                    // network flush stays fire-and-forget inside it.
+                    // Capture the navigator pre-await — using sheetContext
+                    // across the gap trips use_build_context_synchronously.
+                    final navigator = Navigator.of(sheetContext);
+                    await controller.flag(option.reason);
+                    navigator.pop();
+                    messenger
+                      ..hideCurrentSnackBar()
+                      ..showSnackBar(
+                        const SnackBar(
+                          behavior: SnackBarBehavior.floating,
+                          content: Text('Card flagged'),
+                        ),
+                      );
+                  },
+                ),
+              ListTile(
+                dense: true,
+                visualDensity: VisualDensity.compact,
+                title: const Text(
+                  'Cancel',
+                  style: TextStyle(color: UiColors.textMuted),
+                ),
+                onTap: () => Navigator.of(sheetContext).pop(),
+              ),
+              const SizedBox(height: UiSpacing.xs),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 class _Message extends StatelessWidget {

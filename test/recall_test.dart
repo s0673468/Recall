@@ -163,6 +163,22 @@ class _FakeRecallApi implements RecallApi {
     return ++nextLogId;
   }
 
+  /// Every flag applyFlag delivered, in order.
+  final List<Map<String, dynamic>> flagged = [];
+
+  /// When true, applyFlag throws — simulates the note_flags table not existing.
+  bool failApplyFlag = false;
+
+  /// Awaited inside applyFlag — lets tests hold the flag flush open.
+  Future<void> Function()? beforeApplyFlag;
+
+  @override
+  Future<void> applyFlag(Map<String, dynamic> e) async {
+    await beforeApplyFlag?.call();
+    if (failApplyFlag) throw StateError('note_flags missing');
+    flagged.add(e);
+  }
+
   @override
   Future<void> undoReview(Map<String, dynamic> e) async {
     await beforeUndoReview?.call();
@@ -791,9 +807,31 @@ void main() {
         queue: [_card(id: 1)],
       );
       await store.enqueueReview({'card_id': 1, 'rating': 3});
+      await store.enqueueFlag({'card_id': 1, 'reason': 'wrong'});
       await store.clear();
       expect(await store.loadSnapshot(), isNull);
       expect(await store.outbox(), isEmpty);
+      expect(await store.flagOutbox(), isEmpty);
+    });
+
+    test('flag outbox enqueues, reads, and drains independently', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      // A flag write and a review write share the lock but stay separate lists.
+      expect(await store.enqueueReview({'card_id': 1, 'rating': 3}), 1);
+      expect(await store.enqueueFlag({'card_id': 1, 'reason': 'wrong'}), 1);
+      expect(await store.enqueueFlag({'card_id': 2, 'reason': 'too_long'}), 2);
+      expect((await store.flagOutbox()).length, 2);
+      expect((await store.outbox()).length, 1); // review list untouched
+
+      // Drain only the delivered prefix; a flag queued mid-flush survives.
+      expect(await store.removeFirstFlag(1), 1);
+      final left = await store.flagOutbox();
+      expect(left.single['card_id'], 2);
+      expect(left.single['reason'], 'too_long');
+      // removeFirstFlag(0) is a pure count read; the review outbox is intact.
+      expect(await store.removeFirstFlag(0), 1);
+      expect((await store.outbox()).single['card_id'], 1);
     });
   });
 
@@ -1370,6 +1408,146 @@ void main() {
     });
   });
 
+  group('ReviewController flag', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    ReviewController build(
+      _FakeRecallApi api, {
+      LocalReviewStore? store,
+      DateTime Function()? clock,
+    }) {
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store ?? LocalReviewStore(),
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      return controller;
+    }
+
+    test('flag enqueues reports with the card fields and unique client_ids',
+        () async {
+      final now = DateTime.utc(2026, 7, 10, 12);
+      final api = _FakeRecallApi([_card(id: 7)]);
+      api.failApplyFlag = true; // keep them queued so we can inspect
+      final store = LocalReviewStore();
+      final controller = build(api, store: store, clock: () => now);
+      await controller.load();
+
+      await controller.flag('wrong');
+      await controller.flag('too_long'); // same card twice is allowed
+      await controller.syncPending(); // flush attempted; fails; stays queued
+
+      final flags = await store.flagOutbox();
+      expect(flags.length, 2);
+      expect(flags[0]['card_id'], 7);
+      expect(flags[0]['guid'], 'g7');
+      expect(flags[0]['reason'], 'wrong');
+      expect(flags[1]['reason'], 'too_long');
+      expect(flags[0]['device'], 'test');
+      expect(flags[0]['flagged_at'], now.toIso8601String());
+      // Unique even under a fixed clock — the counter disambiguates.
+      expect(flags[0]['client_id'], isNot(flags[1]['client_id']));
+      // The review flow is completely untouched.
+      expect(controller.state.index, 0);
+      expect(controller.state.showBack, isFalse);
+      expect(controller.state.reviewedThisSession, 0);
+      expect(api.applied, isEmpty);
+    });
+
+    test('flag is a no-op for an unknown reason', () async {
+      final api = _FakeRecallApi([_card(id: 1)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.flag('bogus');
+      expect(await store.flagOutbox(), isEmpty);
+    });
+
+    test('flag is a no-op with no current card', () async {
+      final api = _FakeRecallApi(const []);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      expect(controller.state.current, isNull);
+      await controller.flag('wrong');
+      expect(await store.flagOutbox(), isEmpty);
+    });
+
+    test('a failing flag flush never blocks the review flush in the same cycle',
+        () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.failApplyFlag = true; // note_flags does not exist yet
+      // Hold review delivery until syncPending so both flushes run together.
+      final gate = Completer<void>();
+      api.beforeApplyReview = () => gate.future;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good); // review queued (card 1)
+      await controller.flag('wrong'); // flag queued (card 2, current)
+      expect(controller.state.pendingSync, 1);
+
+      gate.complete();
+      // One combined foreground sync: the flag insert throws, the review
+      // insert succeeds — fully isolated.
+      await controller.syncPending();
+
+      expect(api.applied.length, 1); // review delivered despite flag failure
+      expect(api.applied.single['card_id'], 1);
+      expect(controller.state.pendingSync, 0); // review outbox drained
+      expect(api.flagged, isEmpty); // flag never delivered
+      final left = await store.flagOutbox();
+      expect(left.single['card_id'], 2); // still queued for retry
+    });
+
+    test('a successful flag flush drains the flag outbox', () async {
+      final api = _FakeRecallApi([_card(id: 1)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      await controller.flag('confusing');
+      await controller.syncPending();
+
+      expect(api.flagged.length, 1);
+      expect(api.flagged.single['reason'], 'confusing');
+      expect(api.flagged.single['card_id'], 1);
+      expect(await store.flagOutbox(), isEmpty);
+    });
+
+    test('queued flags survive a store reload (simulated restart)', () async {
+      final api1 = _FakeRecallApi([_card(id: 3)]);
+      api1.failApplyFlag = true; // offline / table missing → stays queued
+      final store1 = LocalReviewStore();
+      final c1 = ReviewController(
+        api: api1,
+        engine: FsrsEngine(),
+        store: store1,
+      );
+      await c1.load();
+      await c1.flag('duplicate');
+      await c1.syncPending(); // fails; flag persists in shared_preferences
+      expect((await store1.flagOutbox()).length, 1);
+      c1.dispose();
+
+      // "Restart": brand-new store + controller over the same prefs, and the
+      // table is up now.
+      final api2 = _FakeRecallApi([_card(id: 3)]);
+      final store2 = LocalReviewStore();
+      final c2 = build(api2, store: store2);
+      await c2.load();
+      await c2.syncPending();
+
+      expect(api2.flagged.length, 1);
+      expect(api2.flagged.single['reason'], 'duplicate');
+      expect(await store2.flagOutbox(), isEmpty);
+    });
+  });
+
   group('Undo UI', () {
     testWidgets('StudyScreen undo returns to the previous card front', (
       tester,
@@ -1438,4 +1616,126 @@ void main() {
       expect(find.text('Show answer'), findsOneWidget);
     });
   });
+
+  group('Flag UI', () {
+    testWidgets('flagging a card from the sheet enqueues and confirms', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      final api = _FakeRecallApi([
+        _card(id: 701, front: 'a question', back: 'an answer'),
+      ]);
+      api.failApplyFlag = true; // keep the flag queued so we can assert on it
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+      );
+
+      // Open the sheet from the header flag icon; all four reasons present.
+      await tester.tap(find.byTooltip('Flag card'));
+      await tester.pumpAndSettle();
+      expect(find.text('Wrong'), findsOneWidget);
+      expect(find.text('Confusing'), findsOneWidget);
+      expect(find.text('Too long'), findsOneWidget);
+      expect(find.text('Duplicate'), findsOneWidget);
+
+      await tester.tap(find.text('Confusing'));
+      await tester.pumpAndSettle();
+
+      // Sheet dismissed, confirmation shown, flag queued, review untouched.
+      expect(find.text('Confusing'), findsNothing);
+      expect(find.text('Card flagged'), findsOneWidget);
+      final flags = await store.flagOutbox();
+      expect(flags.single['reason'], 'confusing');
+      expect(flags.single['card_id'], 701);
+      expect(controller.state.index, 0);
+      expect(controller.state.showBack, isFalse);
+    });
+
+    testWidgets('cancelling the flag sheet enqueues nothing', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      final controller = ReviewController(
+        api: _FakeRecallApi([_card(id: 702)]),
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+      );
+      await tester.tap(find.byTooltip('Flag card'));
+      await tester.pumpAndSettle();
+      expect(find.text('Wrong'), findsOneWidget);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Wrong'), findsNothing); // sheet closed
+      expect(await store.flagOutbox(), isEmpty);
+    });
+
+    testWidgets('the confirmation waits for the flag to be durably queued', (
+      tester,
+    ) async {
+      // A PWA can be backgrounded/killed the instant the user sees the
+      // confirmation — so "Card flagged" must never appear before the
+      // SharedPreferences write has completed. Gate the store's enqueue and
+      // assert the sheet stays up (no confirmation) until it lands.
+      SharedPreferences.setMockInitialValues({});
+      final store = _GatedFlagStore();
+      final api = _FakeRecallApi([_card(id: 703)]);
+      api.failApplyFlag = true; // keep the flag queued so we can assert on it
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+      );
+      await tester.tap(find.byTooltip('Flag card'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Wrong'));
+      await tester.pump();
+      await tester.pump();
+      // Enqueue still in flight: no confirmation, sheet still open.
+      expect(find.text('Card flagged'), findsNothing);
+      expect(find.text('Wrong'), findsOneWidget);
+
+      store.enqueueGate.complete();
+      await tester.pumpAndSettle();
+
+      // Now — and only now — dismissed and confirmed, with the flag queued.
+      expect(find.text('Wrong'), findsNothing);
+      expect(find.text('Card flagged'), findsOneWidget);
+      expect((await store.flagOutbox()).single['card_id'], 703);
+    });
+  });
+}
+
+/// A [LocalReviewStore] whose [enqueueFlag] blocks on [enqueueGate] — lets the
+/// widget test assert the flag-sheet confirmation waits for the durable write.
+class _GatedFlagStore extends LocalReviewStore {
+  final Completer<void> enqueueGate = Completer<void>();
+
+  @override
+  Future<int> enqueueFlag(Map<String, dynamic> entry) async {
+    await enqueueGate.future;
+    return super.enqueueFlag(entry);
+  }
 }

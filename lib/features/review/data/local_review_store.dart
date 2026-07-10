@@ -16,9 +16,16 @@ import 'models.dart';
 /// runs behind the UI, so an enqueue (new rating) can arrive while a flush is
 /// rewriting the list — unserialized, that read-modify-write race can
 /// resurrect an already-sent review (double-apply) or drop a fresh one.
+///
+/// Note flags (bad-card reports) live in their own [_flagOutboxKey] list with
+/// the same enqueue/read/remove shape as the review outbox, sharing the one
+/// lock so a flag write never races a review write. They flush through a
+/// separate loop in the controller so a flag delivery failure (e.g. the
+/// note_flags table not existing yet) can never stall the review sync.
 class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
   static const _outboxKey = 'recall_outbox_v1';
+  static const _flagOutboxKey = 'flag_outbox_v1';
 
   Future<void> _outboxTail = Future.value();
   Future<SharedPreferences>? _prefsFuture;
@@ -128,18 +135,67 @@ class LocalReviewStore {
     });
   }
 
-  /// Drop the cached snapshot + outbox (called on sign-out so the next user on
-  /// a shared browser can't see the previous user's cards/reviews).
+  // --- Flag outbox ---
+  //
+  // A bad-card report queued mid-review. Mirrors the review outbox exactly
+  // (append-only, oldest-first drain, shared lock) but is a wholly separate
+  // list so its flush is isolated from the review flush.
+
+  /// Append one flag; returns the new pending flag count.
+  Future<int> enqueueFlag(Map<String, dynamic> entry) {
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final list = _readList(prefs, _flagOutboxKey)..add(entry);
+      await prefs.setString(_flagOutboxKey, jsonEncode(list));
+      return list.length;
+    });
+  }
+
+  /// Read the queued flags (serialized through the shared outbox lock).
+  Future<List<Map<String, dynamic>>> flagOutbox() {
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      return _readList(prefs, _flagOutboxKey);
+    });
+  }
+
+  /// Drop the first [count] flags — the prefix a flag flush just delivered —
+  /// and return how many remain. Flags enqueued while the flush ran are
+  /// appended after that prefix, so they survive untouched.
+  Future<int> removeFirstFlag(int count) {
+    if (count <= 0) {
+      return _withOutboxLock(() async {
+        final prefs = await _prefs;
+        return _readList(prefs, _flagOutboxKey).length;
+      });
+    }
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final list = _readList(prefs, _flagOutboxKey);
+      final remaining = list.length <= count
+          ? <Map<String, dynamic>>[]
+          : list.sublist(count);
+      await prefs.setString(_flagOutboxKey, jsonEncode(remaining));
+      return remaining.length;
+    });
+  }
+
+  /// Drop the cached snapshot + outboxes (called on sign-out so the next user
+  /// on a shared browser can't see the previous user's cards/reviews/flags).
   Future<void> clear() {
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       await prefs.remove(_snapshotKey);
       await prefs.remove(_outboxKey);
+      await prefs.remove(_flagOutboxKey);
     });
   }
 
-  List<Map<String, dynamic>> _readOutbox(SharedPreferences prefs) {
-    final raw = prefs.getString(_outboxKey);
+  List<Map<String, dynamic>> _readOutbox(SharedPreferences prefs) =>
+      _readList(prefs, _outboxKey);
+
+  List<Map<String, dynamic>> _readList(SharedPreferences prefs, String key) {
+    final raw = prefs.getString(key);
     if (raw == null) return [];
     try {
       return [

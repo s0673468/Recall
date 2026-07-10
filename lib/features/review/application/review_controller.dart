@@ -142,8 +142,9 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> signOut() async {
     await _forgetCredentials();
-    // Best-effort: push any queued reviews before dropping the local cache.
-    await _flushOutbox();
+    // Best-effort: push any queued reviews + flags before dropping the local
+    // cache. Both swallow their own failures, so neither blocks sign-out.
+    await Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
     // Don't leave one user's snapshot/outbox on disk for the next person on a
     // shared browser — RLS protects the cloud, but the device cache is global.
     await store.clear();
@@ -243,6 +244,9 @@ class ReviewController extends ChangeNotifier {
     // The snapshot (if any) is already on screen, so this no longer delays
     // first paint the way it used to.
     await _flushOutbox();
+    // Flags have no bearing on the fetched queue, so drain them off the
+    // critical path — never let a flag flush delay the load.
+    unawaited(_flushFlagOutbox());
 
     final generationAtFetch = _interactionGeneration;
     try {
@@ -355,8 +359,11 @@ class ReviewController extends ChangeNotifier {
   Future<void> selectDeck(int? deckId) =>
       load(deckId: deckId, keepReviewed: false);
 
-  /// Flush queued reviews without reloading the queue — safe on foreground.
-  Future<void> syncPending() => _flushOutbox();
+  /// Flush queued reviews AND queued flags without reloading the queue — safe
+  /// on foreground/app-resume. The two loops run concurrently and each swallows
+  /// its own failures, so a stuck flag flush can never delay the review flush.
+  Future<void> syncPending() =>
+      Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
 
   void flip() {
     if (_state.current != null && !_state.showBack) {
@@ -433,6 +440,46 @@ class ReviewController extends ChangeNotifier {
     );
     // Sync behind the UI — the next card must never wait on the network.
     unawaited(_flushOutbox());
+  }
+
+  // --- Flag a bad card (report to the desktop revision pipeline) ---
+
+  /// Reasons a card can be flagged — the CHECK-constrained `reason` values the
+  /// note_flags table accepts.
+  static const Set<String> flagReasons = {
+    'wrong',
+    'confusing',
+    'too_long',
+    'duplicate',
+  };
+
+  int _flagSequence = 0;
+
+  /// Queue a bad-card report for the current card and kick off a flag flush.
+  /// Flagging is a pure side-channel: it never rates, skips, or advances the
+  /// card, and the review flow is left entirely untouched. Flagging the same
+  /// card twice is allowed (no client-side dedupe). A no-op with no current
+  /// card or an unrecognized reason.
+  ///
+  /// The record is durable: it lands in a separate flag outbox and, like a
+  /// review, survives an offline session. The [client_id] is clock-derived
+  /// (same scheme as undo) so it is unique across restarts — the flag outbox
+  /// persists in shared_preferences, and a bare counter would restart at 1.
+  Future<void> flag(String reason) async {
+    final card = _state.current;
+    if (card == null || !flagReasons.contains(reason)) return;
+    final entry = <String, dynamic>{
+      'card_id': card.id,
+      'guid': card.guid,
+      'reason': reason,
+      'flagged_at': clock().toUtc().toIso8601String(),
+      'device': api.device,
+      'client_id': '${clock().microsecondsSinceEpoch}-${++_flagSequence}',
+    };
+    await store.enqueueFlag(entry);
+    // Send behind the UI; a failure (e.g. table not created yet) just leaves
+    // the flag queued for the next flush.
+    unawaited(_flushFlagOutbox());
   }
 
   // --- Undo (single-level, session-only) ---
@@ -576,6 +623,53 @@ class ReviewController extends ChangeNotifier {
     if (_state.pendingSync != remaining) {
       _set(_state.copyWith(pendingSync: remaining));
     }
+  }
+
+  /// Single-flight flag flush, structurally identical to [_flushOutbox] but on
+  /// its own task so it can never interlock with the review flush. A flag
+  /// delivery failure breaks only THIS loop; the review flush (and vice versa)
+  /// is entirely unaffected — the two share no task, no state, and no lock hold
+  /// beyond the store's per-write serialization.
+  Future<void>? _flagFlushTask;
+  bool _flagFlushFollowUp = false;
+
+  Future<void> _flushFlagOutbox() {
+    final running = _flagFlushTask;
+    if (running != null) {
+      _flagFlushFollowUp = true;
+      return running;
+    }
+    final task = _runFlagFlushLoop().whenComplete(() => _flagFlushTask = null);
+    _flagFlushTask = task;
+    return task;
+  }
+
+  Future<void> _runFlagFlushLoop() async {
+    do {
+      _flagFlushFollowUp = false;
+      await _flushFlagsOnce();
+    } while (_flagFlushFollowUp);
+  }
+
+  /// Send queued flags oldest-first. Stops at the first failure (keeps the
+  /// rest queued) so a missing note_flags table or a flaky network never drops
+  /// a flag; only the delivered prefix is removed. Flags carry no UI badge, so
+  /// this makes no state change — it stays silent and out of the review path.
+  Future<void> _flushFlagsOnce() async {
+    final pending = await store.flagOutbox();
+    if (pending.isEmpty) return;
+
+    var sent = 0;
+    for (final entry in pending) {
+      try {
+        await api.applyFlag(entry);
+        sent++;
+      } catch (e) {
+        debugPrint('Recall: flag sync deferred (table missing?): $e');
+        break;
+      }
+    }
+    await store.removeFirstFlag(sent);
   }
 
   /// Background work (queue loads, outbox flushes) can finish after the

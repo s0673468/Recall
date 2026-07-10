@@ -227,6 +227,20 @@ class RecallApi {
     }
   }
 
+  /// Insert one queued note flag into `note_flags`. Builds the payload from
+  /// named keys (dropping the outbox-only `client_id`), mirroring [applyReview].
+  /// user_id/status default server-side. Throws if the row can't be inserted
+  /// (e.g. the table doesn't exist yet) — the caller keeps the flag queued.
+  Future<void> applyFlag(Map<String, dynamic> e) async {
+    await client.from('note_flags').insert({
+      'card_id': e['card_id'],
+      'guid': e['guid'],
+      'reason': e['reason'],
+      'flagged_at': e['flagged_at'],
+      'device': e['device'],
+    });
+  }
+
   /// Enriched review-log rows (local timestamp, rating, post-review state and
   /// scheduled due) for the Stats screen's heatmap + retention.
   Future<List<ReviewLogEntry>> fetchReviewLog({int days = 190}) async {
