@@ -58,6 +58,7 @@ ReviewCard _card({
   DateTime? due,
   DateTime? lastReview,
   bool hasLatex = false,
+  bool cloudSeen = false,
   String front = 'front',
   String back = 'back',
 }) => ReviewCard(
@@ -74,6 +75,7 @@ ReviewCard _card({
   reps: reps,
   lapses: lapses,
   lastReview: lastReview,
+  cloudSeen: cloudSeen,
 );
 
 class _FakeRecallApi implements RecallApi {
@@ -143,15 +145,49 @@ class _FakeRecallApi implements RecallApi {
   Future<void> saveRecallPrefs(Map<String, dynamic> value) async =>
       savedRecallPrefs.add(value);
 
+  /// Auto-incrementing review_log id handed back per delivery, so undo tests
+  /// can assert the flushed row is the one that gets deleted.
+  int nextLogId = 900;
+
+  /// Every restore entry undoReview received, in order.
+  final List<Map<String, dynamic>> undone = [];
+  bool failUndoReview = false;
+
+  /// Awaited inside undoReview — lets tests hold the cloud undo open.
+  Future<void> Function()? beforeUndoReview;
+
   @override
-  Future<void> applyReview(Map<String, dynamic> e) async {
+  Future<int?> applyReview(Map<String, dynamic> e) async {
     await beforeApplyReview?.call();
     applied.add(e);
+    return ++nextLogId;
   }
 
   @override
-  Map<String, dynamic> reviewEntry(ReviewCard card, ReviewOutcome o) => {
+  Future<void> undoReview(Map<String, dynamic> e) async {
+    await beforeUndoReview?.call();
+    if (failUndoReview) throw StateError('undo failed');
+    undone.add(e);
+  }
+
+  @override
+  Map<String, dynamic> reviewEntry(
+    ReviewCard card,
+    ReviewOutcome o, {
+    int? elapsedMs,
+  }) => {'card_id': card.id, 'rating': o.rating, 'elapsed_ms': elapsedMs};
+
+  @override
+  Map<String, dynamic> restoreEntry(ReviewCard card) => {
     'card_id': card.id,
+    'stability': card.stability,
+    'difficulty': card.difficulty,
+    'due': card.due?.toIso8601String(),
+    'state': card.state,
+    'reps': card.reps,
+    'lapses': card.lapses,
+    'last_review': card.lastReview?.toIso8601String(),
+    'cloud_seen': card.cloudSeen,
   };
 
   /// Fixtures + failure toggles for the stats screen.
@@ -730,6 +766,23 @@ void main() {
       expect(await store.removeFirst(0), 1);
     });
 
+    test('removeEntry drops only the matching queued review', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.enqueueReview({'card_id': 1, 'client_id': 11});
+      await store.enqueueReview({'card_id': 2, 'client_id': 22});
+
+      var result = await store.removeEntry(22);
+      expect(result.removed, isTrue);
+      expect(result.remaining, 1);
+      expect((await store.outbox()).single['client_id'], 11);
+
+      // Unknown id (already flushed): nothing removed, count untouched.
+      result = await store.removeEntry(99);
+      expect(result.removed, isFalse);
+      expect(result.remaining, 1);
+    });
+
     test('clear() drops snapshot + outbox (sign-out)', () async {
       SharedPreferences.setMockInitialValues({});
       final store = LocalReviewStore();
@@ -916,6 +969,473 @@ void main() {
       await prefs.update(const RecallPrefs(newLimitDefault: 5));
       await drainUntil(() => api.lastNewLimit == 5);
       expect(api.lastNewLimit, 5);
+    });
+  });
+
+  group('ReviewController elapsed time', () {
+    late DateTime now;
+
+    setUp(() {
+      SharedPreferences.setMockInitialValues({});
+      now = DateTime.utc(2026, 7, 10, 12);
+    });
+
+    ReviewController build(_FakeRecallApi api, {LocalReviewStore? store}) {
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store ?? LocalReviewStore(),
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+      return controller;
+    }
+
+    test('rate stamps elapsed_ms from card display to the rating tap', () async {
+      final api = _FakeRecallApi([_card(id: 1)]);
+      final controller = build(api);
+      await controller.load();
+
+      now = now.add(const Duration(seconds: 3));
+      controller.flip(); // revealing the answer must NOT reset the clock
+      now = now.add(const Duration(seconds: 2));
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+
+      expect(api.applied.single['elapsed_ms'], 5000);
+    });
+
+    test('elapsed_ms is capped at five minutes and floored at zero', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final controller = build(api);
+      await controller.load();
+
+      now = now.add(const Duration(minutes: 12)); // walked away mid-card
+      controller.flip();
+      await controller.rate(Rating.good);
+
+      now = now.subtract(const Duration(seconds: 30)); // clock skew backwards
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+
+      expect(api.applied[0]['elapsed_ms'], 300000);
+      expect(api.applied[1]['elapsed_ms'], 0);
+    });
+
+    test('the clock restarts on every advanced-to card', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final controller = build(api);
+      await controller.load();
+
+      now = now.add(const Duration(seconds: 5));
+      controller.flip();
+      await controller.rate(Rating.good);
+
+      now = now.add(const Duration(seconds: 7));
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+
+      expect(api.applied[0]['elapsed_ms'], 5000);
+      expect(api.applied[1]['elapsed_ms'], 7000);
+    });
+
+    test('an offline review carries the elapsed measured at review time', () async {
+      final api = _FakeRecallApi([_card(id: 1)]);
+      api.beforeApplyReview = () async => throw StateError('offline');
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      now = now.add(const Duration(seconds: 4));
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending(); // fails; the review stays queued
+      expect(api.applied, isEmpty);
+      expect(controller.state.pendingSync, 1);
+      expect((await store.outbox()).single['elapsed_ms'], 4000);
+
+      // Flushing hours later must deliver the value measured at review time.
+      now = now.add(const Duration(hours: 6));
+      api.beforeApplyReview = null;
+      await controller.syncPending();
+      expect(api.applied.single['elapsed_ms'], 4000);
+    });
+  });
+
+  group('ReviewController undo', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    ReviewCard scheduledCard() => _card(
+      id: 5,
+      state: 2,
+      stability: 10,
+      difficulty: 5,
+      reps: 3,
+      lapses: 1,
+      due: DateTime.utc(2026, 6, 1),
+      lastReview: DateTime.utc(2026, 5, 25),
+      cloudSeen: true,
+    );
+
+    ReviewController build(_FakeRecallApi api, {LocalReviewStore? store}) {
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store ?? LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      return controller;
+    }
+
+    test('nothing is undoable before the first rating', () async {
+      final api = _FakeRecallApi([_card(id: 1)]);
+      final controller = build(api);
+      await controller.load();
+      expect(controller.canUndo, isFalse);
+      await controller.undo(); // no-op
+      expect(controller.state.index, 0);
+      expect(api.undone, isEmpty);
+    });
+
+    test('undo of an unflushed review is pure local and empties the outbox', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.beforeApplyReview = () async => throw StateError('offline');
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      expect(controller.state.index, 1);
+      expect(controller.state.pendingSync, 1);
+      expect(controller.canUndo, isTrue);
+
+      await controller.undo();
+
+      // Back on the same card's front; nothing queued, nothing cloud-side.
+      expect(controller.state.index, 0);
+      expect(controller.state.showBack, isFalse);
+      expect(controller.state.reviewedThisSession, 0);
+      expect(controller.state.pendingSync, 0);
+      expect(await store.outbox(), isEmpty);
+      expect(api.undone, isEmpty);
+      expect(controller.canUndo, isFalse);
+
+      // And nothing left behind to double-flush later.
+      api.beforeApplyReview = null;
+      await controller.syncPending();
+      expect(api.applied, isEmpty);
+    });
+
+    test('undo of a flushed review restores the card and deletes the log row', () async {
+      final api = _FakeRecallApi([scheduledCard(), _card(id: 6)]);
+      final controller = build(api);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+      expect(api.applied.single['card_id'], 5);
+
+      await controller.undo();
+
+      final restore = api.undone.single;
+      expect(restore['card_id'], 5);
+      expect(restore['stability'], 10.0);
+      expect(restore['difficulty'], 5.0);
+      expect(restore['state'], 2);
+      expect(restore['reps'], 3);
+      expect(restore['lapses'], 1);
+      expect(
+        restore['last_review'],
+        DateTime.utc(2026, 5, 25).toIso8601String(),
+      );
+      expect(restore['cloud_seen'], isTrue);
+      expect(restore['review_log_id'], 901);
+      expect(controller.state.index, 0);
+      expect(controller.state.showBack, isFalse);
+      expect(controller.state.reviewedThisSession, 0);
+      expect(controller.canUndo, isFalse);
+    });
+
+    test('only the most recent rating can be undone, once', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+      final controller = build(api);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+
+      await controller.undo();
+      expect(controller.state.index, 1); // back on the second card only
+      expect(api.undone.single['card_id'], 2);
+      expect(controller.canUndo, isFalse);
+
+      await controller.undo(); // no second level
+      expect(controller.state.index, 1);
+      expect(api.undone, hasLength(1));
+    });
+
+    test('undo waits out an in-flight flush and deletes the row it produced', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final gate = Completer<void>();
+      api.beforeApplyReview = () => gate.future;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good); // flush starts, stuck on the gate
+
+      final undoing = controller.undo(); // must not treat it as unflushed
+      await Future<void>.delayed(Duration.zero);
+      expect(api.undone, isEmpty); // still waiting on the flush verdict
+
+      gate.complete();
+      await undoing;
+
+      expect(api.applied, hasLength(1));
+      expect(api.undone.single['review_log_id'], 901);
+      expect(await store.outbox(), isEmpty);
+      expect(controller.state.index, 0);
+      expect(controller.state.pendingSync, 0);
+    });
+
+    test('a failed cloud undo keeps the rating undoable', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final controller = build(api);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+
+      api.failUndoReview = true;
+      await controller.undo();
+      expect(controller.state.index, 1); // rating stands for now
+      expect(controller.canUndo, isTrue); // but the user can retry
+
+      api.failUndoReview = false;
+      await controller.undo();
+      expect(controller.state.index, 0);
+      expect(api.undone, hasLength(1));
+    });
+
+    test('a rating attempted while undo is in flight is ignored', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending(); // flushed → undo takes the cloud path
+
+      final gate = Completer<void>();
+      api.beforeUndoReview = () => gate.future;
+      final undoing = controller.undo(); // stuck inside api.undoReview
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.undoInFlight, isTrue);
+
+      // Mid-flight the user flips and rates the next card — the rating must
+      // be ignored, or completion would rewind the queue over it and the
+      // card would come back as unrated (double review).
+      controller.flip();
+      await controller.rate(Rating.good);
+      expect(await store.outbox(), isEmpty); // nothing enqueued
+      expect(controller.state.index, 1); // no advance
+
+      gate.complete();
+      await undoing;
+
+      // The undone card is front-up at its old position with a live badge.
+      expect(controller.undoInFlight, isFalse);
+      expect(api.undone, hasLength(1));
+      expect(controller.state.index, 0);
+      expect(controller.state.showBack, isFalse);
+      expect(controller.state.reviewedThisSession, 0);
+      expect(controller.state.pendingSync, 0);
+    });
+
+    test('undo never removes a persisted review with a colliding client_id', () async {
+      // An offline flush leaves outbox entries (client_id included) in
+      // shared_preferences across an app restart, while the undo sequence
+      // restarts from scratch. A stale entry must never be claimed by the
+      // fresh session's undo — its id has to be unique across sessions.
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.beforeApplyReview = () async => throw StateError('offline');
+      final store = LocalReviewStore();
+      // The previous session's first rating under a naive counter scheme.
+      await store.enqueueReview({'card_id': 99, 'rating': 3, 'client_id': 1});
+      final controller = build(api, store: store);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      expect(controller.state.pendingSync, 2);
+
+      await controller.undo();
+
+      // Only this session's review was taken back; the stale one is intact
+      // and still deliverable.
+      expect(controller.state.index, 0);
+      expect(controller.state.pendingSync, 1);
+      final left = await store.outbox();
+      expect(left.single['card_id'], 99);
+      api.beforeApplyReview = null;
+      await controller.syncPending();
+      expect(api.applied.single['card_id'], 99);
+    });
+
+    test('the flush hook ignores a delivered stale entry with a colliding id', () async {
+      // Partial flush: the stale (previous-session) entry goes out, this
+      // session's review does not. The undo record must NOT be marked
+      // flushed by the stale delivery — otherwise undo would delete the
+      // stale review's log row and restore state that doesn't match it.
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.beforeApplyReview = () async => throw StateError('offline');
+      final store = LocalReviewStore();
+      await store.enqueueReview({'card_id': 99, 'rating': 3, 'client_id': 1});
+      final controller = build(api, store: store);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good); // queued behind the stale entry
+      expect(controller.state.pendingSync, 2);
+
+      // Deliver exactly one entry (the stale one), then go offline again.
+      var deliveries = 0;
+      api.beforeApplyReview = () async {
+        if (++deliveries > 1) throw StateError('offline again');
+      };
+      await controller.syncPending();
+      expect(api.applied.single['card_id'], 99);
+
+      await controller.undo();
+
+      // Unflushed path: pure local removal, no review_log delete — the
+      // stale review's already-synced log row is left alone.
+      expect(api.undone, isEmpty);
+      expect(await store.outbox(), isEmpty);
+      expect(controller.state.index, 0);
+      expect(controller.state.pendingSync, 0);
+    });
+
+    test('a queue reload drops the pending undo', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final controller = build(api);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      expect(controller.canUndo, isTrue);
+
+      await controller.refresh();
+      expect(controller.canUndo, isFalse);
+      await controller.undo(); // no-op after the queue was rebuilt
+      expect(api.undone, isEmpty);
+    });
+
+    test('undo restarts the elapsed clock', () async {
+      var now = DateTime.utc(2026, 7, 10, 12);
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      now = now.add(const Duration(seconds: 5));
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+      expect(api.applied.single['elapsed_ms'], 5000);
+
+      now = now.add(const Duration(seconds: 100)); // dawdling on card 2
+      await controller.undo();
+
+      now = now.add(const Duration(seconds: 3));
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+      expect(api.applied.last['elapsed_ms'], 3000);
+    });
+  });
+
+  group('Undo UI', () {
+    testWidgets('StudyScreen undo returns to the previous card front', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: _FakeRecallApi([
+          _card(id: 601, front: 'first question', back: 'first answer'),
+          _card(id: 602, front: 'second question', back: 'second answer'),
+        ]),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+      );
+      expect(find.byTooltip('Undo last rating'), findsNothing);
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pump();
+      await tester.tap(find.text('Good'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('second question'), findsOneWidget);
+      expect(find.byTooltip('Undo last rating'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Undo last rating'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('first question'), findsOneWidget);
+      expect(find.text('Show answer'), findsOneWidget);
+      expect(find.byTooltip('Undo last rating'), findsNothing);
+    });
+
+    testWidgets('the all-caught-up screen still offers undo', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: _FakeRecallApi([
+          _card(id: 603, front: 'only question', back: 'only answer'),
+        ]),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+      );
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pump();
+      await tester.tap(find.text('Good'));
+      await tester.pumpAndSettle();
+
+      // Rated the last card straight into the done state — a mis-tap here
+      // must still be recoverable.
+      expect(find.text('All caught up'), findsOneWidget);
+      await tester.tap(find.text('Undo last rating'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('only question'), findsOneWidget);
+      expect(find.text('Show answer'), findsOneWidget);
     });
   });
 }

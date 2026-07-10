@@ -22,6 +22,9 @@ class StudyScreen extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         final s = controller.state;
+        // Hidden while nothing is undoable AND while an undo is completing
+        // (rate() is blocked then too — nothing may interleave the restore).
+        final undoable = controller.canUndo && !controller.undoInFlight;
 
         if (s.loading) {
           return const Center(child: CircularProgressIndicator());
@@ -45,6 +48,10 @@ class StudyScreen extends StatelessWidget {
                 : 'Nothing due right now.',
             action: 'Reload',
             onAction: controller.refresh,
+            // A mis-tap on the session's last card lands here — keep it
+            // recoverable (undo survives until the queue is reloaded).
+            secondaryAction: undoable ? 'Undo last rating' : null,
+            onSecondaryAction: undoable ? controller.undo : null,
           );
         }
 
@@ -63,6 +70,7 @@ class StudyScreen extends StatelessWidget {
               session: s.reviewedThisSession,
               offline: s.offline,
               pendingSync: s.pendingSync,
+              onUndo: undoable ? controller.undo : null,
               onOpenSettings: onOpenSettings,
             ),
             const SizedBox(height: UiSpacing.sm),
@@ -99,6 +107,9 @@ class _Header extends StatelessWidget {
   final int session;
   final bool offline;
   final int pendingSync;
+
+  /// Reverts the last rating; null hides the undo button (nothing undoable).
+  final VoidCallback? onUndo;
   final VoidCallback? onOpenSettings;
   const _Header({
     required this.due,
@@ -106,6 +117,7 @@ class _Header extends StatelessWidget {
     required this.session,
     required this.offline,
     required this.pendingSync,
+    this.onUndo,
     this.onOpenSettings,
   });
 
@@ -128,6 +140,13 @@ class _Header extends StatelessWidget {
           '$session done',
           style: const TextStyle(color: UiColors.textMuted, fontSize: 13),
         ),
+        if (onUndo != null)
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: 'Undo last rating',
+            icon: const Icon(Icons.undo, size: 20, color: UiColors.textMuted),
+            onPressed: onUndo,
+          ),
         if (onOpenSettings != null)
           IconButton(
             visualDensity: VisualDensity.compact,
@@ -225,12 +244,16 @@ class _Message extends StatelessWidget {
   final String subtitle;
   final String? action;
   final VoidCallback? onAction;
+  final String? secondaryAction;
+  final VoidCallback? onSecondaryAction;
   const _Message({
     required this.icon,
     required this.title,
     required this.subtitle,
     this.action,
     this.onAction,
+    this.secondaryAction,
+    this.onSecondaryAction,
   });
 
   @override
@@ -253,6 +276,16 @@ class _Message extends StatelessWidget {
             if (action != null) ...[
               const SizedBox(height: UiSpacing.lg),
               FilledButton(onPressed: onAction, child: Text(action!)),
+            ],
+            if (secondaryAction != null) ...[
+              const SizedBox(height: UiSpacing.sm),
+              TextButton(
+                onPressed: onSecondaryAction,
+                child: Text(
+                  secondaryAction!,
+                  style: const TextStyle(color: UiColors.textMuted),
+                ),
+              ),
             ],
           ],
         ),

@@ -13,7 +13,7 @@ class RecallApi {
 
   static const _cardSelect =
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
-      'notes!inner(front,back,has_latex,deck_id,latex_svg)';
+      'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg)';
 
   String get device => kIsWeb
       ? 'web'
@@ -128,7 +128,13 @@ class RecallApi {
 
   /// A self-contained, JSON-serializable record of one review — what the outbox
   /// stores and replays. Built locally so a review survives an offline session.
-  Map<String, dynamic> reviewEntry(ReviewCard card, ReviewOutcome o) => {
+  /// [elapsedMs] is the time the card was on screen (front shown → rating
+  /// tapped), measured at review time so an offline replay keeps the truth.
+  Map<String, dynamic> reviewEntry(
+    ReviewCard card,
+    ReviewOutcome o, {
+    int? elapsedMs,
+  }) => {
     'card_id': card.id,
     'guid': card.guid,
     'stability': o.stability,
@@ -139,12 +145,29 @@ class RecallApi {
     'lapses': o.lapses,
     'last_review': o.reviewedAt.toIso8601String(),
     'rating': o.rating,
+    'elapsed_ms': elapsedMs,
     'device': device,
   };
 
-  /// Replay one review entry against Supabase: advance the card's FSRS state and
-  /// append an immutable log row.
-  Future<void> applyReview(Map<String, dynamic> e) async {
+  /// The pre-rating scheduling state of a card, shaped like [reviewEntry], so
+  /// an undo can restore the cards row through the same update path a rating
+  /// uses (see [undoReview]).
+  Map<String, dynamic> restoreEntry(ReviewCard card) => {
+    'card_id': card.id,
+    'stability': card.stability,
+    'difficulty': card.difficulty,
+    'due': card.due?.toIso8601String(),
+    'state': card.state,
+    'reps': card.reps,
+    'lapses': card.lapses,
+    'last_review': card.lastReview?.toIso8601String(),
+    'cloud_seen': card.cloudSeen,
+  };
+
+  /// Replay one review entry against Supabase: advance the card's FSRS state
+  /// and append a log row. Returns the inserted review_log id so a later undo
+  /// can target exactly this row.
+  Future<int?> applyReview(Map<String, dynamic> e) async {
     await client
         .from('cards')
         .update({
@@ -159,17 +182,49 @@ class RecallApi {
         })
         .eq('id', e['card_id']);
 
-    await client.from('review_log').insert({
-      'card_id': e['card_id'],
-      'guid': e['guid'],
-      'rating': e['rating'],
-      'rating_at': e['last_review'],
-      'stability_after': e['stability'],
-      'difficulty_after': e['difficulty'],
-      'due_after': e['due'],
-      'state_after': e['state'],
-      'device': e['device'],
-    });
+    final inserted = await client
+        .from('review_log')
+        .insert({
+          'card_id': e['card_id'],
+          'guid': e['guid'],
+          'rating': e['rating'],
+          'rating_at': e['last_review'],
+          'stability_after': e['stability'],
+          'difficulty_after': e['difficulty'],
+          'due_after': e['due'],
+          'state_after': e['state'],
+          'elapsed_ms': e['elapsed_ms'],
+          'device': e['device'],
+        })
+        .select('id')
+        .single();
+    return (inserted['id'] as num?)?.toInt();
+  }
+
+  /// Undo one already-synced review: write the pre-rating scheduling state
+  /// back to the cards row (same columns [applyReview] touches, including the
+  /// snapshotted cloud_seen) and delete the review_log row it produced.
+  /// review_log is otherwise append-only — this single-row delete is the
+  /// accepted exception (single user; keeps retention stats clean).
+  Future<void> undoReview(Map<String, dynamic> e) async {
+    await client
+        .from('cards')
+        .update({
+          'stability': e['stability'],
+          'difficulty': e['difficulty'],
+          'due': e['due'],
+          'state': e['state'],
+          'reps': e['reps'],
+          'lapses': e['lapses'],
+          'last_review': e['last_review'],
+          'cloud_seen': e['cloud_seen'],
+        })
+        .eq('id', e['card_id']);
+
+    final logId = e['review_log_id'];
+    if (logId != null) {
+      await client.from('review_log').delete().eq('id', logId);
+    }
   }
 
   /// Enriched review-log rows (local timestamp, rating, post-review state and

@@ -81,9 +81,14 @@ class LocalReviewStore {
     });
   }
 
-  Future<List<Map<String, dynamic>>> outbox() async {
-    final prefs = await _prefs;
-    return _readOutbox(prefs);
+  /// Read the queued reviews. Serialized through the outbox lock so a flush
+  /// starting right after an undo's [removeEntry] can never read the stale
+  /// pre-removal list and deliver a review the user just took back.
+  Future<List<Map<String, dynamic>>> outbox() {
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      return _readOutbox(prefs);
+    });
   }
 
   /// Drop the first [count] entries — the prefix a flush just delivered —
@@ -104,6 +109,22 @@ class LocalReviewStore {
           : list.sublist(count);
       await prefs.setString(_outboxKey, jsonEncode(remaining));
       return remaining.length;
+    });
+  }
+
+  /// Drop the queued review whose `client_id` matches — the not-yet-flushed
+  /// rating the user just undid. Returns whether an entry was removed (false
+  /// means a flush already delivered it) and the new pending count.
+  Future<({bool removed, int remaining})> removeEntry(Object clientId) {
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final list = _readOutbox(prefs);
+      final before = list.length;
+      list.removeWhere((e) => e['client_id'] == clientId);
+      if (list.length != before) {
+        await prefs.setString(_outboxKey, jsonEncode(list));
+      }
+      return (removed: list.length != before, remaining: list.length);
     });
   }
 

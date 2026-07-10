@@ -58,6 +58,11 @@ class ReviewCard {
   final int lapses;
   final DateTime? lastReview;
 
+  /// Desktop-sync bookkeeping flag on the cards row. Carried through the
+  /// client so an undo can restore the exact pre-rating value (applyReview
+  /// forces it to true).
+  final bool cloudSeen;
+
   /// Server-side rendered SVG for display (block) LaTeX the client can't render
   /// inline. Empty in practice (the pipeline never populated it), so treated as
   /// an optional fallback — see [CardFace]. Extracted to raw `<svg …>` markup.
@@ -77,6 +82,7 @@ class ReviewCard {
     required this.reps,
     required this.lapses,
     required this.lastReview,
+    this.cloudSeen = false,
     this.latexSvg,
   });
 
@@ -98,6 +104,7 @@ class ReviewCard {
       reps: (m['reps'] as num?)?.toInt() ?? 0,
       lapses: (m['lapses'] as num?)?.toInt() ?? 0,
       lastReview: _parseTs(m['last_review']),
+      cloudSeen: (m['cloud_seen'] as bool?) ?? false,
       latexSvg: _svgString(note['latex_svg']),
     );
   }
@@ -117,6 +124,7 @@ class ReviewCard {
     'reps': reps,
     'lapses': lapses,
     'last_review': lastReview?.toIso8601String(),
+    'cloud_seen': cloudSeen,
     if (latexSvg != null) 'latex_svg': latexSvg,
   };
 
@@ -134,7 +142,8 @@ class ReviewCard {
     reps: (m['reps'] as num?)?.toInt() ?? 0,
     lapses: (m['lapses'] as num?)?.toInt() ?? 0,
     lastReview: _parseTs(m['last_review']),
-    // Tolerant: snapshots written before this field simply omit the key.
+    // Tolerant: snapshots written before these fields simply omit the keys.
+    cloudSeen: (m['cloud_seen'] as bool?) ?? false,
     latexSvg: m['latex_svg'] as String?,
   );
 }
