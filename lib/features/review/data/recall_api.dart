@@ -83,16 +83,21 @@ class RecallApi {
   }) async {
     final nowIso = DateTime.now().toUtc().toIso8601String();
 
+    // Suspended cards (cards.suspended = true, set one-way by the desktop
+    // importer) are dormant — never queued as due or new. Filtered server-side
+    // so the payload never carries them.
     PostgrestFilterBuilder<List<Map<String, dynamic>>> dueQ = client
         .from('cards')
         .select(_cardSelect)
         .eq('deleted', false)
+        .eq('suspended', false)
         .neq('state', 0)
         .lte('due', nowIso);
     PostgrestFilterBuilder<List<Map<String, dynamic>>> newQ = client
         .from('cards')
         .select(_cardSelect)
         .eq('deleted', false)
+        .eq('suspended', false)
         .eq('state', 0);
 
     if (deckId != null) {
@@ -267,12 +272,15 @@ class RecallApi {
   }
 
   /// Upcoming due dates (local) for scheduled (non-new) cards — powers the due
-  /// forecast. With ~1.2k cards a plain ranged select is well within limits.
+  /// forecast. Suspended cards are dormant and generate no upcoming workload,
+  /// so they're excluded here too. With ~1.2k cards a plain ranged select is
+  /// well within limits.
   Future<List<DateTime>> fetchDueDates() async {
     final rows = await client
         .from('cards')
         .select('due')
         .eq('deleted', false)
+        .eq('suspended', false)
         .neq('state', 0)
         .not('due', 'is', null)
         .limit(5000);

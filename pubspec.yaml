@@ -30,6 +30,10 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  # Test-only: MockClient (package:http/testing.dart) drives RecallApi against
+  # a fake REST transport so query-building tests can assert on the PostgREST
+  # query string. Already resolved transitively via supabase_flutter.
+  http: ^1.4.0
 
 flutter:
   uses-material-design: true
