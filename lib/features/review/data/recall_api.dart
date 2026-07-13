@@ -15,10 +15,8 @@ class RecallApi {
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
       'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg)';
 
-  String get device => recallDeviceLabel(
-    isWeb: kIsWeb,
-    targetPlatform: defaultTargetPlatform,
-  );
+  String get device =>
+      recallDeviceLabel(isWeb: kIsWeb, targetPlatform: defaultTargetPlatform);
 
   // --- Auth ---
   User? get currentUser => client.auth.currentUser;
@@ -171,6 +169,77 @@ class RecallApi {
   /// and append a log row. Returns the inserted review_log id so a later undo
   /// can target exactly this row.
   Future<int?> applyReview(Map<String, dynamic> e) async {
+    final eventId = e['client_id']?.toString();
+    if (eventId != null) {
+      try {
+        return await _applyReviewIdempotently(e, eventId);
+      } on PostgrestException catch (error) {
+        if (!_idempotencySchemaUnavailable(error)) rethrow;
+        // Rolling-deploy compatibility only. Once the checked-in migration is
+        // applied, every native review takes the server-enforced path above.
+        debugPrint(
+          'Recall: idempotency schema not deployed; using legacy replay',
+        );
+      }
+    }
+    return _applyReviewLegacy(e);
+  }
+
+  Future<int?> _applyReviewIdempotently(
+    Map<String, dynamic> e,
+    String eventId,
+  ) async {
+    final existing = await client
+        .from('review_log')
+        .select('id')
+        .eq('card_id', e['card_id'])
+        .eq('client_event_id', eventId)
+        .limit(1);
+    if (existing.isNotEmpty) {
+      return (existing.first['id'] as num?)?.toInt();
+    }
+
+    await _updateCard(e);
+    final inserted = await client
+        .from('review_log')
+        .upsert(
+          _reviewLogPayload(e, clientEventId: eventId),
+          onConflict: 'card_id,client_event_id',
+        )
+        .select('id')
+        .single();
+    return (inserted['id'] as num?)?.toInt();
+  }
+
+  Future<int?> _applyReviewLegacy(Map<String, dynamic> e) async {
+    // The local outbox is at-least-once: a network response or the on-device
+    // acknowledgement write can fail after Supabase committed the insert.
+    // rating_at is captured at the original tap and survives every replay, so
+    // this stable tuple prevents a retry from creating a second review/log or
+    // regressing a card that has since advanced.
+    final existing = await client
+        .from('review_log')
+        .select('id')
+        .eq('card_id', e['card_id'])
+        .eq('rating_at', e['last_review'])
+        .eq('device', e['device'])
+        .order('id', ascending: false)
+        .limit(1);
+    if (existing.isNotEmpty) {
+      return (existing.first['id'] as num?)?.toInt();
+    }
+
+    await _updateCard(e);
+
+    final inserted = await client
+        .from('review_log')
+        .insert(_reviewLogPayload(e))
+        .select('id')
+        .single();
+    return (inserted['id'] as num?)?.toInt();
+  }
+
+  Future<void> _updateCard(Map<String, dynamic> e) async {
     await client
         .from('cards')
         .update({
@@ -184,25 +253,24 @@ class RecallApi {
           'cloud_seen': true,
         })
         .eq('id', e['card_id']);
-
-    final inserted = await client
-        .from('review_log')
-        .insert({
-          'card_id': e['card_id'],
-          'guid': e['guid'],
-          'rating': e['rating'],
-          'rating_at': e['last_review'],
-          'stability_after': e['stability'],
-          'difficulty_after': e['difficulty'],
-          'due_after': e['due'],
-          'state_after': e['state'],
-          'elapsed_ms': e['elapsed_ms'],
-          'device': e['device'],
-        })
-        .select('id')
-        .single();
-    return (inserted['id'] as num?)?.toInt();
   }
+
+  Map<String, dynamic> _reviewLogPayload(
+    Map<String, dynamic> e, {
+    String? clientEventId,
+  }) => {
+    'card_id': e['card_id'],
+    'guid': e['guid'],
+    'rating': e['rating'],
+    'rating_at': e['last_review'],
+    'stability_after': e['stability'],
+    'difficulty_after': e['difficulty'],
+    'due_after': e['due'],
+    'state_after': e['state'],
+    'elapsed_ms': e['elapsed_ms'],
+    'device': e['device'],
+    'client_event_id': ?clientEventId,
+  };
 
   /// Undo one already-synced review: write the pre-rating scheduling state
   /// back to the cards row (same columns [applyReview] touches, including the
@@ -230,19 +298,43 @@ class RecallApi {
     }
   }
 
-  /// Insert one queued note flag into `note_flags`. Builds the payload from
-  /// named keys (dropping the outbox-only `client_id`), mirroring [applyReview].
+  /// Insert one queued note flag into `note_flags`. Its durable client event
+  /// id is protected by the same server uniqueness contract as reviews.
   /// user_id/status default server-side. Throws if the row can't be inserted
   /// (e.g. the table doesn't exist yet) — the caller keeps the flag queued.
   Future<void> applyFlag(Map<String, dynamic> e) async {
-    await client.from('note_flags').insert({
+    final eventId = e['client_id']?.toString();
+    final payload = <String, dynamic>{
       'card_id': e['card_id'],
       'guid': e['guid'],
       'reason': e['reason'],
       'flagged_at': e['flagged_at'],
       'device': e['device'],
-    });
+      'client_event_id': ?eventId,
+    };
+    if (eventId == null) {
+      await client.from('note_flags').insert(payload);
+      return;
+    }
+    try {
+      await client
+          .from('note_flags')
+          .upsert(
+            payload,
+            onConflict: 'card_id,client_event_id',
+            ignoreDuplicates: true,
+          );
+    } on PostgrestException catch (error) {
+      if (!_idempotencySchemaUnavailable(error)) rethrow;
+      payload.remove('client_event_id');
+      await client.from('note_flags').insert(payload);
+    }
   }
+
+  bool _idempotencySchemaUnavailable(PostgrestException error) =>
+      error.code == '42703' ||
+      error.code == '42P10' ||
+      error.code == 'PGRST204';
 
   /// Enriched review-log rows (local timestamp, rating, post-review state and
   /// scheduled due) for the Stats screen's heatmap + retention.

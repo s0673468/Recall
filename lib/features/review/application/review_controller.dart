@@ -4,12 +4,14 @@ import 'package:flutter/foundation.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:supabase_flutter/supabase_flutter.dart' show User, AuthState;
 
+import '../../../core/background/background_sync_coordinator.dart';
 import '../../settings/application/recall_prefs_controller.dart';
 import '../../settings/domain/recall_prefs.dart';
 import '../data/local_review_store.dart';
 import '../data/models.dart';
 import '../data/recall_api.dart';
 import 'fsrs_engine.dart';
+import 'review_haptics.dart';
 import 'review_state.dart';
 
 /// Owns auth + the study session: gates on the signed-in user, loads the queue
@@ -33,6 +35,7 @@ class ReviewController extends ChangeNotifier {
   final RecallApi api;
   final FsrsEngine engine;
   final LocalReviewStore store;
+  final ReviewHaptics haptics;
 
   /// Wall clock, injectable so tests can drive the elapsed-time stopwatch.
   final DateTime Function() clock;
@@ -46,6 +49,8 @@ class ReviewController extends ChangeNotifier {
   })?
   rememberCredentials;
   final Future<void> Function()? forgetCredentials;
+  final Future<void> Function()? afterSignOut;
+  final Future<void> Function()? afterSignIn;
   StreamSubscription<AuthState>? _authSub;
 
   ReviewController({
@@ -55,8 +60,12 @@ class ReviewController extends ChangeNotifier {
     this.prefs,
     this.rememberCredentials,
     this.forgetCredentials,
+    this.afterSignOut,
+    this.afterSignIn,
+    ReviewHaptics? haptics,
     DateTime Function()? clock,
-  }) : clock = clock ?? DateTime.now {
+  }) : haptics = haptics ?? ReviewHaptics.forPlatform(),
+       clock = clock ?? DateTime.now {
     // Supabase emits auth errors (e.g. an offline token refresh) as STREAM
     // errors; without onError they rethrow and can crash the app. Swallow them —
     // an active session going offline should fall back to the cache, not die.
@@ -123,9 +132,19 @@ class ReviewController extends ChangeNotifier {
       _set(const ReviewState(loading: false));
     } else if (_state.queue.isEmpty && !_state.loading) {
       // Signed in (or restored session) — load the queue.
-      load();
+      unawaited(_afterSignIn());
+      unawaited(_loadSafely());
     } else {
+      unawaited(_afterSignIn());
       notifyListeners();
+    }
+  }
+
+  Future<void> _afterSignIn() async {
+    try {
+      await afterSignIn?.call();
+    } catch (e) {
+      debugPrint('Recall: reminder re-arm failed (non-fatal): $e');
     }
   }
 
@@ -141,14 +160,27 @@ class ReviewController extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
-    await _forgetCredentials();
-    // Best-effort: push any queued reviews + flags before dropping the local
-    // cache. Both swallow their own failures, so neither blocks sign-out.
+    // Sign-out is deliberately fail-closed: an offline review is user data,
+    // not disposable cache. Flush first, then prove both durable outboxes are
+    // empty before credentials, reminders, or local state are removed.
     await Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
+    final pendingReviews = (await store.outbox()).length;
+    final pendingFlags = (await store.flagOutbox()).length;
+    if (pendingReviews + pendingFlags > 0) {
+      throw PendingSyncException(
+        pendingReviews: pendingReviews,
+        pendingFlags: pendingFlags,
+      );
+    }
     // Don't leave one user's snapshot/outbox on disk for the next person on a
     // shared browser — RLS protects the cloud, but the device cache is global.
     await store.clear();
+    await _forgetCredentials();
     await api.signOut(); // _onAuthChanged then resets in-memory state
+    // Native delivery is account-scoped. Cancel only after the cloud/auth
+    // session has actually been released; an offline/failed sign-out above
+    // keeps the reminder armed instead of silently disabling every channel.
+    await afterSignOut?.call();
   }
 
   String _authMessage(Object e) {
@@ -189,7 +221,23 @@ class ReviewController extends ChangeNotifier {
   /// the selected deck's filter over another deck's queue.
   int _loadSequence = 0;
 
-  Future<void> initialize() => load();
+  Future<void> initialize() => _loadSafely();
+
+  Future<void> _loadSafely({int? deckId}) async {
+    try {
+      await load(deckId: deckId);
+    } on LocalOutboxCorruptException catch (error) {
+      // Durable writes must fail closed, but malformed local storage must not
+      // become another startup crash. Stop the session and surface a stable
+      // recovery message without overwriting the damaged outbox.
+      _set(
+        _state.copyWith(
+          loading: false,
+          error: '$error Reinstall only after exporting or recovering it.',
+        ),
+      );
+    }
+  }
 
   /// True once at least one session-driven load() has run — gates prefs-change
   /// reloads so startup hydration doesn't reload before there's a session.
@@ -235,6 +283,8 @@ class ReviewController extends ChangeNotifier {
             index: 0,
             showBack: false,
             pendingSync: (await store.outbox()).length,
+            globalDueCount: snapshot.globalDueCount,
+            globalDueUpdatedAt: snapshot.globalDueUpdatedAt,
           ),
         );
       }
@@ -261,12 +311,21 @@ class ReviewController extends ChangeNotifier {
           newLimit: active.newLimitForDeck(_state.deckFilter),
           order: active.newOrder,
         ),
+        _fetchGlobalDueSnapshot(),
       ]);
       final decks = results[1] as List<DeckRow>;
       final queue = results[2] as List<ReviewCard>;
+      final fetchedDue = results[3] as ({int count, DateTime updatedAt})?;
       final pendingSync = (await store.outbox()).length;
       if (loadToken != _loadSequence) return; // superseded by a newer load
-      if (_interactionGeneration == generationAtFetch) {
+      final sessionUnchanged = _interactionGeneration == generationAtFetch;
+      final globalDueCount = sessionUnchanged && fetchedDue != null
+          ? fetchedDue.count
+          : _state.globalDueCount;
+      final globalDueUpdatedAt = sessionUnchanged && fetchedDue != null
+          ? fetchedDue.updatedAt
+          : _state.globalDueUpdatedAt;
+      if (sessionUnchanged) {
         _set(
           _state.copyWith(
             loading: false,
@@ -277,6 +336,8 @@ class ReviewController extends ChangeNotifier {
             index: 0,
             showBack: false,
             pendingSync: pendingSync,
+            globalDueCount: globalDueCount,
+            globalDueUpdatedAt: globalDueUpdatedAt,
           ),
         );
       } else {
@@ -289,12 +350,21 @@ class ReviewController extends ChangeNotifier {
             offline: false,
             decks: decks,
             pendingSync: pendingSync,
+            globalDueCount: globalDueCount,
+            globalDueUpdatedAt: globalDueUpdatedAt,
           ),
         );
       }
       _previewForCardId = null;
       // Persist off the critical path — the UI shouldn't wait on storage.
-      unawaited(_saveSnapshotQuietly(decks: decks, queue: queue));
+      unawaited(
+        _saveSnapshotQuietly(
+          decks: decks,
+          queue: queue,
+          globalDueCount: globalDueCount,
+          globalDueUpdatedAt: globalDueUpdatedAt,
+        ),
+      );
     } catch (e) {
       if (loadToken != _loadSequence) return; // superseded by a newer load
       if (_state.queue.isNotEmpty) {
@@ -314,6 +384,8 @@ class ReviewController extends ChangeNotifier {
             index: 0,
             showBack: false,
             pendingSync: (await store.outbox()).length,
+            globalDueCount: snapshot.globalDueCount,
+            globalDueUpdatedAt: snapshot.globalDueUpdatedAt,
           ),
         );
       } else {
@@ -325,11 +397,36 @@ class ReviewController extends ChangeNotifier {
   Future<void> _saveSnapshotQuietly({
     required List<DeckRow> decks,
     required List<ReviewCard> queue,
+    required int? globalDueCount,
+    required DateTime? globalDueUpdatedAt,
   }) async {
     try {
-      await store.saveSnapshot(decks: decks, queue: queue);
+      await store.saveSnapshot(
+        decks: decks,
+        queue: queue,
+        globalDueCount: globalDueCount,
+        globalDueUpdatedAt: globalDueUpdatedAt,
+      );
     } catch (e) {
       debugPrint('Recall: snapshot save failed (non-fatal): $e');
+    }
+  }
+
+  /// Widget metadata is useful but optional: an unavailable aggregate RPC
+  /// must never turn a healthy study queue into an offline/error screen.
+  Future<({int count, DateTime updatedAt})?> _fetchGlobalDueSnapshot() async {
+    try {
+      final deckCounts = await api.fetchDeckCounts();
+      return (
+        count: deckCounts.values.fold<int>(
+          0,
+          (total, count) => total + count.due,
+        ),
+        updatedAt: clock().toUtc(),
+      );
+    } catch (error) {
+      debugPrint('Recall: widget due count unavailable (non-fatal): $error');
+      return null;
     }
   }
 
@@ -356,6 +453,20 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> refresh() => load(deckId: _state.deckFilter);
 
+  /// Refreshes a stale aggregate after foregrounding without displacing an
+  /// active card. The outbox is flushed by [load] before the cloud count is
+  /// fetched, so the widget and queue reflect all locally completed reviews.
+  Future<void> refreshIfIdle({Duration maxAge = const Duration(minutes: 15)}) {
+    if (_state.loading || _state.current != null || api.currentUser == null) {
+      return Future<void>.value();
+    }
+    final updatedAt = _state.globalDueUpdatedAt;
+    if (updatedAt != null && clock().toUtc().difference(updatedAt) < maxAge) {
+      return Future<void>.value();
+    }
+    return _loadSafely(deckId: _state.deckFilter);
+  }
+
   Future<void> selectDeck(int? deckId) =>
       load(deckId: deckId, keepReviewed: false);
 
@@ -365,10 +476,27 @@ class ReviewController extends ChangeNotifier {
   Future<void> syncPending() =>
       Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
 
+  /// Flush durable study actions and summarize the result for iOS background
+  /// fetch. A failed network attempt leaves every undelivered entry in place.
+  Future<BackgroundSyncReport> syncPendingInBackground() async {
+    final beforeReviews = (await store.outbox()).length;
+    final beforeFlags = (await store.flagOutbox()).length;
+    final attempted = beforeReviews + beforeFlags;
+    await syncPending();
+    final pending =
+        (await store.outbox()).length + (await store.flagOutbox()).length;
+    return BackgroundSyncReport(
+      attempted: attempted,
+      delivered: (attempted - pending).clamp(0, attempted),
+      pending: pending,
+    );
+  }
+
   void flip() {
     if (_state.current != null && !_state.showBack) {
       _interactionGeneration++;
       _set(_state.copyWith(showBack: true));
+      haptics.reveal();
     }
   }
 
@@ -430,14 +558,22 @@ class ReviewController extends ChangeNotifier {
     // count so advancing doesn't re-read + re-decode the whole outbox.
     final pending = await store.enqueueReview(entry);
     _undo = undo; // replaces any previous record — undo is single-level
+    haptics.rating();
+    final globalDueCount = _state.globalDueCount;
     _set(
       _state.copyWith(
         index: _state.index + 1,
         showBack: false,
         reviewedThisSession: _state.reviewedThisSession + 1,
         pendingSync: pending,
+        globalDueCount: card.isNew || globalDueCount == null
+            ? globalDueCount
+            : (globalDueCount - 1).clamp(0, globalDueCount),
       ),
     );
+    if (_state.isDone) {
+      haptics.completion();
+    }
     // Sync behind the UI — the next card must never wait on the network.
     unawaited(_flushOutbox());
   }
@@ -552,16 +688,21 @@ class ReviewController extends ChangeNotifier {
         }
       }
       final reviewed = _state.reviewedThisSession;
+      final globalDueCount = _state.globalDueCount;
       _set(
         _state.copyWith(
           index: u.index,
           showBack: false,
           reviewedThisSession: reviewed > 0 ? reviewed - 1 : 0,
+          globalDueCount: u.card.isNew || globalDueCount == null
+              ? globalDueCount
+              : globalDueCount + 1,
           // Read after every await above, so the badge can't be restored to
           // a count captured before a concurrent flush updated it.
           pendingSync: pendingAfterRemove ?? _state.pendingSync,
         ),
       );
+      haptics.undo();
     } finally {
       _undoInFlight = false;
       notifyListeners(); // re-enable rating; also covers the early returns
@@ -691,6 +832,23 @@ class ReviewController extends ChangeNotifier {
     prefs?.removeListener(_onPrefsChanged);
     super.dispose();
   }
+}
+
+class PendingSyncException implements Exception {
+  final int pendingReviews;
+  final int pendingFlags;
+
+  const PendingSyncException({
+    required this.pendingReviews,
+    required this.pendingFlags,
+  });
+
+  int get total => pendingReviews + pendingFlags;
+
+  @override
+  String toString() =>
+      'Recall is keeping $total pending study ${total == 1 ? 'action' : 'actions'} '
+      'on this iPhone. Connect to the internet and try signing out again.';
 }
 
 /// Everything needed to revert the most recent rating: the pre-rating card

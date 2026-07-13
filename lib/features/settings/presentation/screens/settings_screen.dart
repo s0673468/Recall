@@ -1,9 +1,11 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/health_flutter_shared.dart'
     show SectionCard, SignOutButton, SignOutButtonVariant;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../../review/application/review_controller.dart';
+import '../../../reminders/application/study_reminder_controller.dart';
 import '../../application/recall_prefs_controller.dart';
 import '../../domain/recall_prefs.dart';
 
@@ -13,11 +15,15 @@ import '../../domain/recall_prefs.dart';
 class SettingsScreen extends StatefulWidget {
   final RecallPrefsController prefs;
   final ReviewController controller;
+  final StudyReminderController? reminder;
+  final bool nativeIos;
 
   const SettingsScreen({
     super.key,
     required this.prefs,
     required this.controller,
+    this.reminder,
+    this.nativeIos = false,
   });
 
   @override
@@ -52,6 +58,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.all(UiSpacing.sm),
               children: [
                 _schedulingCard(context),
+                if (widget.reminder != null) ...[
+                  const SizedBox(height: UiSpacing.lg),
+                  _reminderCard(context, widget.reminder!),
+                ],
                 const SizedBox(height: UiSpacing.lg),
                 _perDeckCard(context),
                 const SizedBox(height: UiSpacing.lg),
@@ -153,6 +163,116 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // ── Per-deck limits ──
 
+  Widget _reminderCard(BuildContext context, StudyReminderController reminder) {
+    return ListenableBuilder(
+      listenable: reminder,
+      builder: (context, _) {
+        final settings = reminder.value;
+        return SectionCard(
+          title: 'Study reminder',
+          subtitle: 'One gentle daily nudge, delivered by your iPhone.',
+          child: Column(
+            children: [
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Daily reminder'),
+                value: settings.enabled,
+                onChanged: (enabled) async {
+                  try {
+                    final applied = await reminder.setEnabled(enabled);
+                    if (!applied && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Notifications are off. Enable them in iPhone Settings to use reminders.',
+                          ),
+                        ),
+                      );
+                    }
+                  } catch (error) {
+                    if (context.mounted) _showError(context, '$error');
+                  }
+                },
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                enabled: settings.enabled,
+                title: const Text('Reminder time'),
+                trailing: TextButton(
+                  onPressed: settings.enabled
+                      ? () => _chooseReminderTime(context, reminder)
+                      : null,
+                  child: Text(settings.formattedTime),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _chooseReminderTime(
+    BuildContext context,
+    StudyReminderController reminder,
+  ) async {
+    final current = reminder.value;
+    TimeOfDay? selected;
+    if (widget.nativeIos) {
+      var draft = DateTime(2026, 1, 1, current.hour, current.minute);
+      selected = await showCupertinoModalPopup<TimeOfDay>(
+        context: context,
+        builder: (sheetContext) => Container(
+          height: 300,
+          color: CupertinoColors.systemBackground.resolveFrom(sheetContext),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              children: [
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: CupertinoButton(
+                    onPressed: () => Navigator.of(
+                      sheetContext,
+                    ).pop(TimeOfDay(hour: draft.hour, minute: draft.minute)),
+                    child: const Text('Done'),
+                  ),
+                ),
+                Expanded(
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.time,
+                    use24hFormat: true,
+                    initialDateTime: draft,
+                    onDateTimeChanged: (value) => draft = value,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } else {
+      selected = await showTimePicker(
+        context: context,
+        initialTime: TimeOfDay(hour: current.hour, minute: current.minute),
+      );
+    }
+    if (selected == null) return;
+    try {
+      await reminder.setTime(hour: selected.hour, minute: selected.minute);
+    } catch (error) {
+      if (context.mounted) _showError(context, '$error');
+    }
+  }
+
+  void _showError(BuildContext context, String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // ── Per-deck limits ──
+
   Widget _perDeckCard(BuildContext context) {
     return ListenableBuilder(
       listenable: widget.controller,
@@ -169,8 +289,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _deckOverrideRow(
                   name: deck.name.replaceAll('::', '  ›  '),
                   override: _prefs.perDeck[deck.deckId],
-                  onSet: (v) =>
-                      _apply(_prefs.withDeckOverride(deck.deckId, v)),
+                  onSet: (v) => _apply(_prefs.withDeckOverride(deck.deckId, v)),
                 ),
             ],
           ),
@@ -197,13 +316,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           if (active) ...[
-            _stepper(
-              value: override,
-              onChanged: (v) => onSet(v),
-            ),
+            _stepper(value: override, onChanged: (v) => onSet(v)),
             IconButton(
               tooltip: 'Use default',
-              icon: const Icon(Icons.close, size: 18, color: UiColors.textMuted),
+              icon: const Icon(
+                Icons.close,
+                size: 18,
+                color: UiColors.textMuted,
+              ),
               onPressed: () => onSet(null),
             ),
           ] else
@@ -225,8 +345,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         alignment: Alignment.centerLeft,
         child: SignOutButton(
           onSignOut: () async {
-            await widget.controller.signOut();
-            if (context.mounted) Navigator.of(context).maybePop();
+            try {
+              await widget.controller.signOut();
+              if (context.mounted) Navigator.of(context).maybePop();
+            } on PendingSyncException catch (error) {
+              if (context.mounted) _showError(context, '$error');
+            } catch (error) {
+              if (context.mounted) {
+                _showError(context, 'Could not sign out: $error');
+              }
+            }
           },
           email: widget.controller.currentUser?.email,
           variant: SignOutButtonVariant.text,

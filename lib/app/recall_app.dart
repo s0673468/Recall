@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/health_flutter_shared.dart'
     show AppScrollBehavior, AuthGate, AuthGateModel;
 
+import '../core/widgets/recall_widget_bridge.dart';
 import '../features/review/application/review_controller.dart';
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
@@ -108,9 +109,10 @@ class _RecallRootState extends State<_RecallRoot> {
     return ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
+        late final Widget content;
         if (controller.currentUser == null) {
           _scheduleBiometricSignIn(controller);
-          return AuthGate(
+          content = AuthGate(
             model: AuthGateModel(
               source: controller,
               submitting: () => controller.state.authSubmitting,
@@ -120,12 +122,15 @@ class _RecallRootState extends State<_RecallRoot> {
             appName: UiBrand.appName,
             subtitle: UiBrand.subtitle,
           );
+        } else {
+          content = AppShell(
+            controller: controller,
+            api: widget.dependencies.api,
+            prefs: widget.dependencies.recallPrefs,
+            reminder: widget.dependencies.studyReminder,
+          );
         }
-        return AppShell(
-          controller: controller,
-          api: widget.dependencies.api,
-          prefs: widget.dependencies.recallPrefs,
-        );
+        return RecallWidgetBridge(controller: controller, child: content);
       },
     );
   }

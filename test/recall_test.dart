@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart'
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
+import 'package:health_anki_flutter/features/review/application/review_haptics.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
@@ -81,6 +83,10 @@ ReviewCard _card({
 class _FakeRecallApi implements RecallApi {
   final List<ReviewCard> queue;
   final FsrsSettings? fsrsSettings;
+  User? user;
+  Map<int, ({int due, int neu})> deckCounts = const {};
+  bool failDeckCounts = false;
+  int queueFetches = 0;
 
   /// Awaited inside fetchQueue — lets tests hold the network fetch open
   /// while asserting on the snapshot-hydrated state.
@@ -106,7 +112,7 @@ class _FakeRecallApi implements RecallApi {
   SupabaseClient get client => throw UnimplementedError();
 
   @override
-  User? get currentUser => null;
+  User? get currentUser => user;
 
   @override
   String get device => 'test';
@@ -125,6 +131,7 @@ class _FakeRecallApi implements RecallApi {
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
   }) async {
+    queueFetches++;
     lastNewLimit = newLimit;
     lastOrder = order;
     await beforeQueue?.call();
@@ -152,6 +159,7 @@ class _FakeRecallApi implements RecallApi {
   /// Every restore entry undoReview received, in order.
   final List<Map<String, dynamic>> undone = [];
   bool failUndoReview = false;
+  bool signedOut = false;
 
   /// Awaited inside undoReview — lets tests hold the cloud undo open.
   Future<void> Function()? beforeUndoReview;
@@ -225,7 +233,10 @@ class _FakeRecallApi implements RecallApi {
   }
 
   @override
-  Future<Map<int, ({int due, int neu})>> fetchDeckCounts() async => const {};
+  Future<Map<int, ({int due, int neu})>> fetchDeckCounts() async {
+    if (failDeckCounts) throw StateError('deck count RPC unavailable');
+    return deckCounts;
+  }
 
   @override
   Future<void> signIn({
@@ -234,7 +245,7 @@ class _FakeRecallApi implements RecallApi {
   }) async {}
 
   @override
-  Future<void> signOut() async {}
+  Future<void> signOut() async => signedOut = true;
 }
 
 void main() {
@@ -340,6 +351,279 @@ void main() {
   });
 
   group('ReviewController', () {
+    test(
+      'a corrupt durable outbox becomes a recoverable startup error',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'recall_outbox_v1': '{not valid json',
+        });
+        final controller = ReviewController(
+          api: _FakeRecallApi([_card()]),
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.initialize();
+
+        expect(controller.state.loading, isFalse);
+        expect(controller.state.error, contains('pending study actions'));
+      },
+    );
+
+    test(
+      'offline sign-out preserves queued reviews and keeps the session',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final api = _FakeRecallApi([_card()]);
+        api.beforeApplyReview = () async => throw StateError('offline');
+        final store = LocalReviewStore();
+        var credentialsForgotten = false;
+        var reminderCancelled = false;
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+          forgetCredentials: () async => credentialsForgotten = true,
+          afterSignOut: () async => reminderCancelled = true,
+        );
+        addTearDown(controller.dispose);
+        await controller.load();
+        controller.flip();
+        await controller.rate(Rating.good);
+
+        await expectLater(
+          controller.signOut(),
+          throwsA(isA<PendingSyncException>()),
+        );
+
+        expect(await store.outbox(), hasLength(1));
+        expect(api.signedOut, isFalse);
+        expect(credentialsForgotten, isFalse);
+        expect(reminderCancelled, isFalse);
+      },
+    );
+
+    test(
+      'successful sign-out cancels reminders only after writes drain',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final api = _FakeRecallApi([_card()]);
+        final events = <String>[];
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+          forgetCredentials: () async => events.add('credentials'),
+          afterSignOut: () async => events.add('reminder'),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.signOut();
+
+        expect(api.signedOut, isTrue);
+        expect(events, ['credentials', 'reminder']);
+      },
+    );
+
+    test(
+      'load stores the global due count rather than the active queue',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final now = DateTime.utc(2026, 7, 13, 12);
+        final api = _FakeRecallApi([_card(state: 2)])
+          ..deckCounts = const {1: (due: 3, neu: 2), 2: (due: 4, neu: 9)};
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+          clock: () => now,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load(deckId: 1);
+
+        expect(controller.state.queue, hasLength(1));
+        expect(controller.state.globalDueCount, 7);
+        expect(controller.state.globalDueUpdatedAt, now);
+
+        controller.flip();
+        await controller.rate(Rating.good);
+        expect(controller.state.globalDueCount, 6);
+
+        await controller.undo();
+        expect(controller.state.globalDueCount, 7);
+      },
+    );
+
+    test('widget count failure never fails the study queue', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card()])..failDeckCounts = true;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(controller.state.current?.id, 1);
+      expect(controller.state.error, isNull);
+      expect(controller.state.offline, isFalse);
+      expect(controller.state.globalDueCount, isNull);
+    });
+
+    test('a cached-queue rating wins over an older count fetch', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      final now = DateTime.utc(2026, 7, 13, 12);
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+        queue: [_card(state: 2)],
+        globalDueCount: 10,
+        globalDueUpdatedAt: now.subtract(const Duration(minutes: 30)),
+      );
+      final queueStarted = Completer<void>();
+      final releaseQueue = Completer<void>();
+      final api = _FakeRecallApi([_card(state: 2)])
+        ..deckCounts = const {1: (due: 10, neu: 0)}
+        ..beforeQueue = () async {
+          queueStarted.complete();
+          await releaseQueue.future;
+        };
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      final loading = controller.load();
+      await queueStarted.future;
+      expect(controller.state.current?.id, 1);
+      controller.flip();
+      await controller.rate(Rating.good);
+      expect(controller.state.globalDueCount, 9);
+
+      releaseQueue.complete();
+      await loading;
+
+      expect(controller.state.globalDueCount, 9);
+      expect(
+        controller.state.globalDueUpdatedAt,
+        now.subtract(const Duration(minutes: 30)),
+      );
+    });
+
+    test('foreground refresh runs only when idle and stale', () async {
+      SharedPreferences.setMockInitialValues({});
+      var now = DateTime.utc(2026, 7, 13, 12);
+      final api = _FakeRecallApi(const [])
+        ..user = User(
+          id: 'user-1',
+          appMetadata: const {},
+          userMetadata: const {},
+          aud: 'authenticated',
+          createdAt: now.toIso8601String(),
+        );
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      expect(api.queueFetches, 1);
+
+      await controller.refreshIfIdle();
+      expect(api.queueFetches, 1);
+
+      now = now.add(const Duration(minutes: 16));
+      await controller.refreshIfIdle();
+      expect(api.queueFetches, 2);
+    });
+
+    test('foreground refresh never replaces an active card', () async {
+      SharedPreferences.setMockInitialValues({});
+      var now = DateTime.utc(2026, 7, 13, 12);
+      final api = _FakeRecallApi([_card()])
+        ..user = User(
+          id: 'user-1',
+          appMetadata: const {},
+          userMetadata: const {},
+          aud: 'authenticated',
+          createdAt: now.toIso8601String(),
+        );
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      now = now.add(const Duration(hours: 1));
+
+      await controller.refreshIfIdle();
+
+      expect(api.queueFetches, 1);
+      expect(controller.state.current?.id, 1);
+    });
+
+    test('successful study actions emit intentional native feedback', () async {
+      SharedPreferences.setMockInitialValues({});
+      final events = <String>[];
+      final controller = ReviewController(
+        api: _FakeRecallApi([_card()]),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        haptics: ReviewHaptics(
+          onReveal: () => events.add('reveal'),
+          onRating: () => events.add('rating'),
+          onUndo: () => events.add('undo'),
+          onCompletion: () => events.add('completion'),
+        ),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      controller.flip();
+      expect(events, ['reveal']);
+
+      await controller.rate(Rating.good);
+      expect(events, ['reveal', 'rating', 'completion']);
+
+      await controller.undo();
+      expect(events, ['reveal', 'rating', 'completion', 'undo']);
+    });
+
+    test('blocked study actions do not emit native feedback', () async {
+      SharedPreferences.setMockInitialValues({});
+      final events = <String>[];
+      final controller = ReviewController(
+        api: _FakeRecallApi(const []),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        haptics: ReviewHaptics(
+          onReveal: () => events.add('reveal'),
+          onRating: () => events.add('rating'),
+          onUndo: () => events.add('undo'),
+          onCompletion: () => events.add('completion'),
+        ),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.undo();
+
+      expect(events, isEmpty);
+    });
+
     test('load applies seeded FSRS settings before study', () async {
       SharedPreferences.setMockInitialValues({});
       final engine = FsrsEngine();
@@ -442,32 +726,35 @@ void main() {
       expect(controller.state.decks.single.name, 'Portuguese');
     });
 
-    test('rate advances to the next card without waiting on the sync', () async {
-      SharedPreferences.setMockInitialValues({});
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      final gate = Completer<void>();
-      final controller = ReviewController(
-        api: api,
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-      );
-      addTearDown(controller.dispose);
-      await controller.load();
+    test(
+      'rate advances to the next card without waiting on the sync',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        final gate = Completer<void>();
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+        await controller.load();
 
-      api.beforeApplyReview = () => gate.future;
-      controller.flip();
-      await controller.rate(Rating.good);
+        api.beforeApplyReview = () => gate.future;
+        controller.flip();
+        await controller.rate(Rating.good);
 
-      // Next card is up immediately; the review is queued, not yet delivered.
-      expect(controller.state.index, 1);
-      expect(controller.state.pendingSync, 1);
-      expect(api.applied, isEmpty);
+        // Next card is up immediately; the review is queued, not yet delivered.
+        expect(controller.state.index, 1);
+        expect(controller.state.pendingSync, 1);
+        expect(api.applied, isEmpty);
 
-      gate.complete();
-      await controller.syncPending();
-      expect(api.applied.length, 1);
-      expect(controller.state.pendingSync, 0);
-    });
+        gate.complete();
+        await controller.syncPending();
+        expect(api.applied.length, 1);
+        expect(controller.state.pendingSync, 0);
+      },
+    );
 
     test('a deck switch supersedes a still-in-flight load', () async {
       SharedPreferences.setMockInitialValues({});
@@ -504,39 +791,41 @@ void main() {
       expect(controller.state.queue.single.id, 2);
     });
 
-    test('a rating enqueued mid-flush is delivered by the follow-up pass',
-        () async {
-      SharedPreferences.setMockInitialValues({});
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
-      final controller = ReviewController(
-        api: api,
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-      );
-      addTearDown(controller.dispose);
-      await controller.load();
+    test(
+      'a rating enqueued mid-flush is delivered by the follow-up pass',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+        await controller.load();
 
-      // Hold the first flush open on its first delivery, rate a second card
-      // while it is stuck, then release it.
-      final gate = Completer<void>();
-      var deliveries = 0;
-      api.beforeApplyReview = () {
-        deliveries++;
-        return deliveries == 1 ? gate.future : Future.value();
-      };
+        // Hold the first flush open on its first delivery, rate a second card
+        // while it is stuck, then release it.
+        final gate = Completer<void>();
+        var deliveries = 0;
+        api.beforeApplyReview = () {
+          deliveries++;
+          return deliveries == 1 ? gate.future : Future.value();
+        };
 
-      controller.flip();
-      await controller.rate(Rating.good); // flush starts, blocks on gate
-      controller.flip();
-      await controller.rate(Rating.good); // enqueued while flush is stuck
-      expect(controller.state.pendingSync, 2);
+        controller.flip();
+        await controller.rate(Rating.good); // flush starts, blocks on gate
+        controller.flip();
+        await controller.rate(Rating.good); // enqueued while flush is stuck
+        expect(controller.state.pendingSync, 2);
 
-      gate.complete();
-      await controller.syncPending();
-      expect(api.applied.length, 2);
-      expect(controller.state.pendingSync, 0);
-      expect(controller.state.index, 2);
-    });
+        gate.complete();
+        await controller.syncPending();
+        expect(api.applied.length, 2);
+        expect(controller.state.pendingSync, 0);
+        expect(controller.state.index, 2);
+      },
+    );
   });
 
   group('UI widgets', () {
@@ -710,7 +999,9 @@ void main() {
       await controller.load();
 
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
       );
 
       // Question side: deletion hidden, answer nowhere on screen.
@@ -756,11 +1047,37 @@ void main() {
   });
 
   group('Offline store', () {
+    test(
+      'corrupt review outbox fails closed instead of looking empty',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'recall_outbox_v1': '{not valid json',
+        });
+
+        await expectLater(
+          LocalReviewStore().outbox(),
+          throwsA(isA<LocalOutboxCorruptException>()),
+        );
+      },
+    );
+
+    test('corrupt flag outbox fails closed instead of looking empty', () async {
+      SharedPreferences.setMockInitialValues({'flag_outbox_v1': '[broken'});
+
+      await expectLater(
+        LocalReviewStore().flagOutbox(),
+        throwsA(isA<LocalOutboxCorruptException>()),
+      );
+    });
+
     test('snapshot round-trips decks + queue', () async {
       SharedPreferences.setMockInitialValues({});
       final store = LocalReviewStore();
+      final dueUpdatedAt = DateTime.utc(2026, 7, 13, 12, 30);
       await store.saveSnapshot(
         decks: const [DeckRow(deckId: 1, name: 'ML')],
+        globalDueCount: 12,
+        globalDueUpdatedAt: dueUpdatedAt,
         queue: [
           _card(
             id: 7,
@@ -779,6 +1096,8 @@ void main() {
       expect(snap.queue.single.id, 7);
       expect(snap.queue.single.hasLatex, isTrue);
       expect(snap.queue.single.stability, 5);
+      expect(snap.globalDueCount, 12);
+      expect(snap.globalDueUpdatedAt, dueUpdatedAt);
     });
 
     test('outbox enqueues and drains', () async {
@@ -940,10 +1259,7 @@ void main() {
     test('cloud prefs drive limit + retention', () async {
       SharedPreferences.setMockInitialValues({});
       final api = _FakeRecallApi([_card()]);
-      api.recallPrefsRow = {
-        'new_limit_default': 7,
-        'desired_retention': 0.85,
-      };
+      api.recallPrefsRow = {'new_limit_default': 7, 'desired_retention': 0.85};
       final prefs = RecallPrefsController(api: api);
       await prefs.load();
       final engine = FsrsEngine();
@@ -967,7 +1283,9 @@ void main() {
       ]);
       api.recallPrefsRow = {
         'new_limit_default': 20,
-        'per_deck': {'2': {'new_limit': 7}},
+        'per_deck': {
+          '2': {'new_limit': 7},
+        },
       };
       final prefs = RecallPrefsController(api: api);
       await prefs.load();
@@ -1044,19 +1362,22 @@ void main() {
       return controller;
     }
 
-    test('rate stamps elapsed_ms from card display to the rating tap', () async {
-      final api = _FakeRecallApi([_card(id: 1)]);
-      final controller = build(api);
-      await controller.load();
+    test(
+      'rate stamps elapsed_ms from card display to the rating tap',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1)]);
+        final controller = build(api);
+        await controller.load();
 
-      now = now.add(const Duration(seconds: 3));
-      controller.flip(); // revealing the answer must NOT reset the clock
-      now = now.add(const Duration(seconds: 2));
-      await controller.rate(Rating.good);
-      await controller.syncPending();
+        now = now.add(const Duration(seconds: 3));
+        controller.flip(); // revealing the answer must NOT reset the clock
+        now = now.add(const Duration(seconds: 2));
+        await controller.rate(Rating.good);
+        await controller.syncPending();
 
-      expect(api.applied.single['elapsed_ms'], 5000);
-    });
+        expect(api.applied.single['elapsed_ms'], 5000);
+      },
+    );
 
     test('elapsed_ms is capped at five minutes and floored at zero', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
@@ -1094,27 +1415,30 @@ void main() {
       expect(api.applied[1]['elapsed_ms'], 7000);
     });
 
-    test('an offline review carries the elapsed measured at review time', () async {
-      final api = _FakeRecallApi([_card(id: 1)]);
-      api.beforeApplyReview = () async => throw StateError('offline');
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
+    test(
+      'an offline review carries the elapsed measured at review time',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1)]);
+        api.beforeApplyReview = () async => throw StateError('offline');
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
 
-      now = now.add(const Duration(seconds: 4));
-      controller.flip();
-      await controller.rate(Rating.good);
-      await controller.syncPending(); // fails; the review stays queued
-      expect(api.applied, isEmpty);
-      expect(controller.state.pendingSync, 1);
-      expect((await store.outbox()).single['elapsed_ms'], 4000);
+        now = now.add(const Duration(seconds: 4));
+        controller.flip();
+        await controller.rate(Rating.good);
+        await controller.syncPending(); // fails; the review stays queued
+        expect(api.applied, isEmpty);
+        expect(controller.state.pendingSync, 1);
+        expect((await store.outbox()).single['elapsed_ms'], 4000);
 
-      // Flushing hours later must deliver the value measured at review time.
-      now = now.add(const Duration(hours: 6));
-      api.beforeApplyReview = null;
-      await controller.syncPending();
-      expect(api.applied.single['elapsed_ms'], 4000);
-    });
+        // Flushing hours later must deliver the value measured at review time.
+        now = now.add(const Duration(hours: 6));
+        api.beforeApplyReview = null;
+        await controller.syncPending();
+        expect(api.applied.single['elapsed_ms'], 4000);
+      },
+    );
   });
 
   group('ReviewController undo', () {
@@ -1152,66 +1476,72 @@ void main() {
       expect(api.undone, isEmpty);
     });
 
-    test('undo of an unflushed review is pure local and empties the outbox', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      api.beforeApplyReview = () async => throw StateError('offline');
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
+    test(
+      'undo of an unflushed review is pure local and empties the outbox',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        api.beforeApplyReview = () async => throw StateError('offline');
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
 
-      controller.flip();
-      await controller.rate(Rating.good);
-      expect(controller.state.index, 1);
-      expect(controller.state.pendingSync, 1);
-      expect(controller.canUndo, isTrue);
+        controller.flip();
+        await controller.rate(Rating.good);
+        expect(controller.state.index, 1);
+        expect(controller.state.pendingSync, 1);
+        expect(controller.canUndo, isTrue);
 
-      await controller.undo();
+        await controller.undo();
 
-      // Back on the same card's front; nothing queued, nothing cloud-side.
-      expect(controller.state.index, 0);
-      expect(controller.state.showBack, isFalse);
-      expect(controller.state.reviewedThisSession, 0);
-      expect(controller.state.pendingSync, 0);
-      expect(await store.outbox(), isEmpty);
-      expect(api.undone, isEmpty);
-      expect(controller.canUndo, isFalse);
+        // Back on the same card's front; nothing queued, nothing cloud-side.
+        expect(controller.state.index, 0);
+        expect(controller.state.showBack, isFalse);
+        expect(controller.state.reviewedThisSession, 0);
+        expect(controller.state.pendingSync, 0);
+        expect(await store.outbox(), isEmpty);
+        expect(api.undone, isEmpty);
+        expect(controller.canUndo, isFalse);
 
-      // And nothing left behind to double-flush later.
-      api.beforeApplyReview = null;
-      await controller.syncPending();
-      expect(api.applied, isEmpty);
-    });
+        // And nothing left behind to double-flush later.
+        api.beforeApplyReview = null;
+        await controller.syncPending();
+        expect(api.applied, isEmpty);
+      },
+    );
 
-    test('undo of a flushed review restores the card and deletes the log row', () async {
-      final api = _FakeRecallApi([scheduledCard(), _card(id: 6)]);
-      final controller = build(api);
-      await controller.load();
+    test(
+      'undo of a flushed review restores the card and deletes the log row',
+      () async {
+        final api = _FakeRecallApi([scheduledCard(), _card(id: 6)]);
+        final controller = build(api);
+        await controller.load();
 
-      controller.flip();
-      await controller.rate(Rating.good);
-      await controller.syncPending();
-      expect(api.applied.single['card_id'], 5);
+        controller.flip();
+        await controller.rate(Rating.good);
+        await controller.syncPending();
+        expect(api.applied.single['card_id'], 5);
 
-      await controller.undo();
+        await controller.undo();
 
-      final restore = api.undone.single;
-      expect(restore['card_id'], 5);
-      expect(restore['stability'], 10.0);
-      expect(restore['difficulty'], 5.0);
-      expect(restore['state'], 2);
-      expect(restore['reps'], 3);
-      expect(restore['lapses'], 1);
-      expect(
-        restore['last_review'],
-        DateTime.utc(2026, 5, 25).toIso8601String(),
-      );
-      expect(restore['cloud_seen'], isTrue);
-      expect(restore['review_log_id'], 901);
-      expect(controller.state.index, 0);
-      expect(controller.state.showBack, isFalse);
-      expect(controller.state.reviewedThisSession, 0);
-      expect(controller.canUndo, isFalse);
-    });
+        final restore = api.undone.single;
+        expect(restore['card_id'], 5);
+        expect(restore['stability'], 10.0);
+        expect(restore['difficulty'], 5.0);
+        expect(restore['state'], 2);
+        expect(restore['reps'], 3);
+        expect(restore['lapses'], 1);
+        expect(
+          restore['last_review'],
+          DateTime.utc(2026, 5, 25).toIso8601String(),
+        );
+        expect(restore['cloud_seen'], isTrue);
+        expect(restore['review_log_id'], 901);
+        expect(controller.state.index, 0);
+        expect(controller.state.showBack, isFalse);
+        expect(controller.state.reviewedThisSession, 0);
+        expect(controller.canUndo, isFalse);
+      },
+    );
 
     test('only the most recent rating can be undone, once', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
@@ -1234,30 +1564,33 @@ void main() {
       expect(api.undone, hasLength(1));
     });
 
-    test('undo waits out an in-flight flush and deletes the row it produced', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      final gate = Completer<void>();
-      api.beforeApplyReview = () => gate.future;
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
+    test(
+      'undo waits out an in-flight flush and deletes the row it produced',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        final gate = Completer<void>();
+        api.beforeApplyReview = () => gate.future;
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
 
-      controller.flip();
-      await controller.rate(Rating.good); // flush starts, stuck on the gate
+        controller.flip();
+        await controller.rate(Rating.good); // flush starts, stuck on the gate
 
-      final undoing = controller.undo(); // must not treat it as unflushed
-      await Future<void>.delayed(Duration.zero);
-      expect(api.undone, isEmpty); // still waiting on the flush verdict
+        final undoing = controller.undo(); // must not treat it as unflushed
+        await Future<void>.delayed(Duration.zero);
+        expect(api.undone, isEmpty); // still waiting on the flush verdict
 
-      gate.complete();
-      await undoing;
+        gate.complete();
+        await undoing;
 
-      expect(api.applied, hasLength(1));
-      expect(api.undone.single['review_log_id'], 901);
-      expect(await store.outbox(), isEmpty);
-      expect(controller.state.index, 0);
-      expect(controller.state.pendingSync, 0);
-    });
+        expect(api.applied, hasLength(1));
+        expect(api.undone.single['review_log_id'], 901);
+        expect(await store.outbox(), isEmpty);
+        expect(controller.state.index, 0);
+        expect(controller.state.pendingSync, 0);
+      },
+    );
 
     test('a failed cloud undo keeps the rating undoable', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
@@ -1315,69 +1648,75 @@ void main() {
       expect(controller.state.pendingSync, 0);
     });
 
-    test('undo never removes a persisted review with a colliding client_id', () async {
-      // An offline flush leaves outbox entries (client_id included) in
-      // shared_preferences across an app restart, while the undo sequence
-      // restarts from scratch. A stale entry must never be claimed by the
-      // fresh session's undo — its id has to be unique across sessions.
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      api.beforeApplyReview = () async => throw StateError('offline');
-      final store = LocalReviewStore();
-      // The previous session's first rating under a naive counter scheme.
-      await store.enqueueReview({'card_id': 99, 'rating': 3, 'client_id': 1});
-      final controller = build(api, store: store);
-      await controller.load();
+    test(
+      'undo never removes a persisted review with a colliding client_id',
+      () async {
+        // An offline flush leaves outbox entries (client_id included) in
+        // shared_preferences across an app restart, while the undo sequence
+        // restarts from scratch. A stale entry must never be claimed by the
+        // fresh session's undo — its id has to be unique across sessions.
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        api.beforeApplyReview = () async => throw StateError('offline');
+        final store = LocalReviewStore();
+        // The previous session's first rating under a naive counter scheme.
+        await store.enqueueReview({'card_id': 99, 'rating': 3, 'client_id': 1});
+        final controller = build(api, store: store);
+        await controller.load();
 
-      controller.flip();
-      await controller.rate(Rating.good);
-      expect(controller.state.pendingSync, 2);
+        controller.flip();
+        await controller.rate(Rating.good);
+        expect(controller.state.pendingSync, 2);
 
-      await controller.undo();
+        await controller.undo();
 
-      // Only this session's review was taken back; the stale one is intact
-      // and still deliverable.
-      expect(controller.state.index, 0);
-      expect(controller.state.pendingSync, 1);
-      final left = await store.outbox();
-      expect(left.single['card_id'], 99);
-      api.beforeApplyReview = null;
-      await controller.syncPending();
-      expect(api.applied.single['card_id'], 99);
-    });
+        // Only this session's review was taken back; the stale one is intact
+        // and still deliverable.
+        expect(controller.state.index, 0);
+        expect(controller.state.pendingSync, 1);
+        final left = await store.outbox();
+        expect(left.single['card_id'], 99);
+        api.beforeApplyReview = null;
+        await controller.syncPending();
+        expect(api.applied.single['card_id'], 99);
+      },
+    );
 
-    test('the flush hook ignores a delivered stale entry with a colliding id', () async {
-      // Partial flush: the stale (previous-session) entry goes out, this
-      // session's review does not. The undo record must NOT be marked
-      // flushed by the stale delivery — otherwise undo would delete the
-      // stale review's log row and restore state that doesn't match it.
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      api.beforeApplyReview = () async => throw StateError('offline');
-      final store = LocalReviewStore();
-      await store.enqueueReview({'card_id': 99, 'rating': 3, 'client_id': 1});
-      final controller = build(api, store: store);
-      await controller.load();
+    test(
+      'the flush hook ignores a delivered stale entry with a colliding id',
+      () async {
+        // Partial flush: the stale (previous-session) entry goes out, this
+        // session's review does not. The undo record must NOT be marked
+        // flushed by the stale delivery — otherwise undo would delete the
+        // stale review's log row and restore state that doesn't match it.
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        api.beforeApplyReview = () async => throw StateError('offline');
+        final store = LocalReviewStore();
+        await store.enqueueReview({'card_id': 99, 'rating': 3, 'client_id': 1});
+        final controller = build(api, store: store);
+        await controller.load();
 
-      controller.flip();
-      await controller.rate(Rating.good); // queued behind the stale entry
-      expect(controller.state.pendingSync, 2);
+        controller.flip();
+        await controller.rate(Rating.good); // queued behind the stale entry
+        expect(controller.state.pendingSync, 2);
 
-      // Deliver exactly one entry (the stale one), then go offline again.
-      var deliveries = 0;
-      api.beforeApplyReview = () async {
-        if (++deliveries > 1) throw StateError('offline again');
-      };
-      await controller.syncPending();
-      expect(api.applied.single['card_id'], 99);
+        // Deliver exactly one entry (the stale one), then go offline again.
+        var deliveries = 0;
+        api.beforeApplyReview = () async {
+          if (++deliveries > 1) throw StateError('offline again');
+        };
+        await controller.syncPending();
+        expect(api.applied.single['card_id'], 99);
 
-      await controller.undo();
+        await controller.undo();
 
-      // Unflushed path: pure local removal, no review_log delete — the
-      // stale review's already-synced log row is left alone.
-      expect(api.undone, isEmpty);
-      expect(await store.outbox(), isEmpty);
-      expect(controller.state.index, 0);
-      expect(controller.state.pendingSync, 0);
-    });
+        // Unflushed path: pure local removal, no review_log delete — the
+        // stale review's already-synced log row is left alone.
+        expect(api.undone, isEmpty);
+        expect(await store.outbox(), isEmpty);
+        expect(controller.state.index, 0);
+        expect(controller.state.pendingSync, 0);
+      },
+    );
 
     test('a queue reload drops the pending undo', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
@@ -1441,35 +1780,37 @@ void main() {
       return controller;
     }
 
-    test('flag enqueues reports with the card fields and unique client_ids',
-        () async {
-      final now = DateTime.utc(2026, 7, 10, 12);
-      final api = _FakeRecallApi([_card(id: 7)]);
-      api.failApplyFlag = true; // keep them queued so we can inspect
-      final store = LocalReviewStore();
-      final controller = build(api, store: store, clock: () => now);
-      await controller.load();
+    test(
+      'flag enqueues reports with the card fields and unique client_ids',
+      () async {
+        final now = DateTime.utc(2026, 7, 10, 12);
+        final api = _FakeRecallApi([_card(id: 7)]);
+        api.failApplyFlag = true; // keep them queued so we can inspect
+        final store = LocalReviewStore();
+        final controller = build(api, store: store, clock: () => now);
+        await controller.load();
 
-      await controller.flag('wrong');
-      await controller.flag('too_long'); // same card twice is allowed
-      await controller.syncPending(); // flush attempted; fails; stays queued
+        await controller.flag('wrong');
+        await controller.flag('too_long'); // same card twice is allowed
+        await controller.syncPending(); // flush attempted; fails; stays queued
 
-      final flags = await store.flagOutbox();
-      expect(flags.length, 2);
-      expect(flags[0]['card_id'], 7);
-      expect(flags[0]['guid'], 'g7');
-      expect(flags[0]['reason'], 'wrong');
-      expect(flags[1]['reason'], 'too_long');
-      expect(flags[0]['device'], 'test');
-      expect(flags[0]['flagged_at'], now.toIso8601String());
-      // Unique even under a fixed clock — the counter disambiguates.
-      expect(flags[0]['client_id'], isNot(flags[1]['client_id']));
-      // The review flow is completely untouched.
-      expect(controller.state.index, 0);
-      expect(controller.state.showBack, isFalse);
-      expect(controller.state.reviewedThisSession, 0);
-      expect(api.applied, isEmpty);
-    });
+        final flags = await store.flagOutbox();
+        expect(flags.length, 2);
+        expect(flags[0]['card_id'], 7);
+        expect(flags[0]['guid'], 'g7');
+        expect(flags[0]['reason'], 'wrong');
+        expect(flags[1]['reason'], 'too_long');
+        expect(flags[0]['device'], 'test');
+        expect(flags[0]['flagged_at'], now.toIso8601String());
+        // Unique even under a fixed clock — the counter disambiguates.
+        expect(flags[0]['client_id'], isNot(flags[1]['client_id']));
+        // The review flow is completely untouched.
+        expect(controller.state.index, 0);
+        expect(controller.state.showBack, isFalse);
+        expect(controller.state.reviewedThisSession, 0);
+        expect(api.applied, isEmpty);
+      },
+    );
 
     test('flag is a no-op for an unknown reason', () async {
       final api = _FakeRecallApi([_card(id: 1)]);
@@ -1490,34 +1831,36 @@ void main() {
       expect(await store.flagOutbox(), isEmpty);
     });
 
-    test('a failing flag flush never blocks the review flush in the same cycle',
-        () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      api.failApplyFlag = true; // note_flags does not exist yet
-      // Hold review delivery until syncPending so both flushes run together.
-      final gate = Completer<void>();
-      api.beforeApplyReview = () => gate.future;
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
+    test(
+      'a failing flag flush never blocks the review flush in the same cycle',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        api.failApplyFlag = true; // note_flags does not exist yet
+        // Hold review delivery until syncPending so both flushes run together.
+        final gate = Completer<void>();
+        api.beforeApplyReview = () => gate.future;
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
 
-      controller.flip();
-      await controller.rate(Rating.good); // review queued (card 1)
-      await controller.flag('wrong'); // flag queued (card 2, current)
-      expect(controller.state.pendingSync, 1);
+        controller.flip();
+        await controller.rate(Rating.good); // review queued (card 1)
+        await controller.flag('wrong'); // flag queued (card 2, current)
+        expect(controller.state.pendingSync, 1);
 
-      gate.complete();
-      // One combined foreground sync: the flag insert throws, the review
-      // insert succeeds — fully isolated.
-      await controller.syncPending();
+        gate.complete();
+        // One combined foreground sync: the flag insert throws, the review
+        // insert succeeds — fully isolated.
+        await controller.syncPending();
 
-      expect(api.applied.length, 1); // review delivered despite flag failure
-      expect(api.applied.single['card_id'], 1);
-      expect(controller.state.pendingSync, 0); // review outbox drained
-      expect(api.flagged, isEmpty); // flag never delivered
-      final left = await store.flagOutbox();
-      expect(left.single['card_id'], 2); // still queued for retry
-    });
+        expect(api.applied.length, 1); // review delivered despite flag failure
+        expect(api.applied.single['card_id'], 1);
+        expect(controller.state.pendingSync, 0); // review outbox drained
+        expect(api.flagged, isEmpty); // flag never delivered
+        final left = await store.flagOutbox();
+        expect(left.single['card_id'], 2); // still queued for retry
+      },
+    );
 
     test('a successful flag flush drains the flag outbox', () async {
       final api = _FakeRecallApi([_card(id: 1)]);
@@ -1580,7 +1923,9 @@ void main() {
       await controller.load();
 
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
       );
       expect(find.byTooltip('Undo last rating'), findsNothing);
 
@@ -1613,7 +1958,9 @@ void main() {
       await controller.load();
 
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
       );
 
       await tester.tap(find.text('Show answer'));
@@ -1633,6 +1980,34 @@ void main() {
   });
 
   group('Flag UI', () {
+    testWidgets('native iOS presents flag reasons as an action sheet', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: _FakeRecallApi([_card(id: 700)]),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StudyScreen(controller: controller, nativeIos: true),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byTooltip('Flag card'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CupertinoActionSheet), findsOneWidget);
+      expect(find.byType(BottomSheet), findsNothing);
+      expect(find.text('Wrong'), findsOneWidget);
+    });
+
     testWidgets('flagging a card from the sheet enqueues and confirms', (
       tester,
     ) async {
@@ -1651,7 +2026,9 @@ void main() {
       await controller.load();
 
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
       );
 
       // Open the sheet from the header flag icon; all four reasons present.
@@ -1687,7 +2064,9 @@ void main() {
       await controller.load();
 
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
       );
       await tester.tap(find.byTooltip('Flag card'));
       await tester.pumpAndSettle();
@@ -1720,7 +2099,9 @@ void main() {
       await controller.load();
 
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: StudyScreen(controller: controller))),
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
       );
       await tester.tap(find.byTooltip('Flag card'));
       await tester.pumpAndSettle();

@@ -1,8 +1,10 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/health_flutter_shared.dart'
     show scopedPanelColor;
 
 import '../../../../theme/ui_tokens.dart';
+import '../../../../core/platform/recall_platform.dart';
 import '../../application/review_controller.dart';
 import '../../data/models.dart';
 import '../widgets/card_face.dart';
@@ -13,8 +15,14 @@ class StudyScreen extends StatelessWidget {
 
   /// Opens the settings screen from the header gear. Null hides the gear.
   final VoidCallback? onOpenSettings;
+  final bool? nativeIos;
 
-  const StudyScreen({super.key, required this.controller, this.onOpenSettings});
+  const StudyScreen({
+    super.key,
+    required this.controller,
+    this.onOpenSettings,
+    this.nativeIos,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -74,7 +82,11 @@ class StudyScreen extends StatelessWidget {
               // Flagging is independent of the review flow and of undo — it
               // only reports the current card, so it's live whenever a card
               // is on screen (the header only renders with a current card).
-              onFlag: () => _showFlagSheet(context, controller),
+              onFlag: () => _showFlagSheet(
+                context,
+                controller,
+                nativeIos: nativeIos ?? recallRunsAsNativeIos(),
+              ),
               onOpenSettings: onOpenSettings,
             ),
             const SizedBox(height: UiSpacing.sm),
@@ -266,14 +278,64 @@ const List<({String reason, String label})> _flagOptions = [
   (reason: 'duplicate', label: 'Duplicate'),
 ];
 
-/// An iOS-style bottom sheet listing the flag reasons. Selecting one enqueues
-/// the flag (durable, offline-safe), dismisses the sheet, and shows a brief
-/// confirmation. The review flow is left completely untouched — flagging never
-/// rates, skips, or advances the card. Cancel enqueues nothing.
-void _showFlagSheet(BuildContext context, ReviewController controller) {
+/// A platform-appropriate sheet listing the flag reasons: Cupertino actions on
+/// native iOS, the existing Material bottom sheet on web. Selecting one
+/// enqueues the flag (durable, offline-safe), dismisses the sheet, and shows a
+/// brief confirmation. The review flow is left completely untouched —
+/// flagging never rates, skips, or advances the card. Cancel enqueues nothing.
+void _showFlagSheet(
+  BuildContext context,
+  ReviewController controller, {
+  required bool nativeIos,
+}) {
   // Capture the messenger before any async gap — the sheet's own context is
   // gone by the time the confirmation fires.
   final messenger = ScaffoldMessenger.of(context);
+
+  Future<void> selectReason(BuildContext sheetContext, String reason) async {
+    // Capture the navigator pre-await — using sheetContext across the gap
+    // trips use_build_context_synchronously.
+    final navigator = Navigator.of(sheetContext);
+    await controller.flag(reason);
+    navigator.pop();
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text('Card flagged'),
+        ),
+      );
+  }
+
+  if (nativeIos) {
+    showCupertinoModalPopup<void>(
+      context: context,
+      builder: (sheetContext) => CupertinoTheme(
+        data: CupertinoTheme.of(context).copyWith(
+          brightness: Brightness.dark,
+          primaryColor: Theme.of(context).colorScheme.primary,
+          barBackgroundColor: UiColors.panel.withValues(alpha: 0.82),
+        ),
+        child: CupertinoActionSheet(
+          title: const Text('Flag this card'),
+          actions: [
+            for (final option in _flagOptions)
+              CupertinoActionSheetAction(
+                onPressed: () => selectReason(sheetContext, option.reason),
+                child: Text(option.label),
+              ),
+          ],
+          cancelButton: CupertinoActionSheetAction(
+            onPressed: () => Navigator.of(sheetContext).pop(),
+            child: const Text('Cancel'),
+          ),
+        ),
+      ),
+    );
+    return;
+  }
+
   showModalBottomSheet<void>(
     context: context,
     backgroundColor: UiColors.panel,
@@ -316,25 +378,13 @@ void _showFlagSheet(BuildContext context, ReviewController controller) {
                     option.label,
                     style: const TextStyle(color: UiColors.textPrimary),
                   ),
-                  onTap: () async {
+                  onTap: () {
                     // The confirmation is a durability promise: a PWA can be
                     // backgrounded/killed the moment the user sees it, so the
                     // local enqueue must complete BEFORE we confirm. flag()
                     // awaits only the SharedPreferences write (fast); the
                     // network flush stays fire-and-forget inside it.
-                    // Capture the navigator pre-await — using sheetContext
-                    // across the gap trips use_build_context_synchronously.
-                    final navigator = Navigator.of(sheetContext);
-                    await controller.flag(option.reason);
-                    navigator.pop();
-                    messenger
-                      ..hideCurrentSnackBar()
-                      ..showSnackBar(
-                        const SnackBar(
-                          behavior: SnackBarBehavior.floating,
-                          content: Text('Card flagged'),
-                        ),
-                      );
+                    selectReason(sheetContext, option.reason);
                   },
                 ),
               ListTile(

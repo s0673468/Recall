@@ -52,10 +52,25 @@ Safari/PWA storage and the iOS app sandbox are separate. Before switching:
    snapshot cannot migrate into the app automatically.
 4. Confirm a review, undo, and card flag reach the existing cloud account.
 
-Do not sign out while offline with pending work. The current shared Recall
-sign-out path performs a best-effort flush and then clears the local cache. A
-transactional/idempotent cloud-write hardening is tracked separately from this
-runner restoration.
+Recall now fails sign-out closed. It flushes and verifies both durable outboxes
+before clearing the local cache, credentials, or the account's reminder. If the
+phone is offline or local outbox storage is malformed, sign-out stops and shows
+the recovery error while preserving the pending work. Review replay uses a
+stable event identity so a lost cloud acknowledgement does not create a second
+review-log row.
+
+Daily study reminders are stored per Supabase user and are released only after
+that user's sign-out succeeds. Foreground and iOS background sync drain the
+same durable review/flag outboxes; neither path deletes an entry that did not
+reach Supabase. The WidgetKit bridge publishes only the verified all-decks due
+count and its cloud refresh time. See `ios/RecallWidget/README.md` for App Group
+signing and the guarded Personal Team fallback.
+
+Before releasing the idempotent native outbox path, apply
+`scripts/supabase_migrate_recall_idempotency.sql` to the Recall Supabase
+project. It adds nullable event IDs plus unique indexes; existing rows are not
+rewritten. The client retains a rolling-deploy fallback for an older schema,
+but server-enforced duplicate protection begins only after this migration.
 
 ## Required iPhone 15 Pro Max checks
 
@@ -66,12 +81,17 @@ runner restoration.
 - airplane-mode launch from a cached queue, queued ratings, reconnect, and
   foreground sync
 - terminate/reopen around an offline review and verify no duplicate cloud log
+- daily reminder permission, time change, tap-to-Study, and account switching
+- background an offline rating, reconnect, and verify the outbox drains
+- widget all-decks count, stale timestamp, and Start Study App Intent
 - app icon, display name, ProMotion scrolling, and release signing
 
 ## Regenerate the app icons
 
-Recall's iOS and web icons share the geometric mark in
-`health-apps/tool/render_launcher_icons.py`. From the repository root:
+Recall's iOS and web icons share the constructed geometric R in
+`health-apps/tool/render_launcher_icons.py`. Its stem and leg end on the same
+baseline, and the renderer reads every required size from the iOS asset
+catalog. From the repository root:
 
 ```bash
 python3 health-apps/tool/render_ios_icon_sets.py --app recall

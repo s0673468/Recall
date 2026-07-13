@@ -43,19 +43,30 @@ class LocalReviewStore {
   Future<void> saveSnapshot({
     required List<DeckRow> decks,
     required List<ReviewCard> queue,
+    int? globalDueCount,
+    DateTime? globalDueUpdatedAt,
   }) async {
     final prefs = await _prefs;
     await prefs.setString(
       _snapshotKey,
       jsonEncode({
         'savedAt': DateTime.now().toUtc().toIso8601String(),
+        'globalDueCount': globalDueCount,
+        'globalDueUpdatedAt': globalDueUpdatedAt?.toUtc().toIso8601String(),
         'decks': [for (final d in decks) d.toJson()],
         'queue': [for (final c in queue) c.toJson()],
       }),
     );
   }
 
-  Future<({List<DeckRow> decks, List<ReviewCard> queue})?>
+  Future<
+    ({
+      List<DeckRow> decks,
+      List<ReviewCard> queue,
+      int? globalDueCount,
+      DateTime? globalDueUpdatedAt,
+    })?
+  >
   loadSnapshot() async {
     final prefs = await _prefs;
     final raw = prefs.getString(_snapshotKey);
@@ -71,6 +82,10 @@ class LocalReviewStore {
           for (final c in (m['queue'] as List))
             ReviewCard.fromJson(Map<String, dynamic>.from(c as Map)),
         ],
+        globalDueCount: (m['globalDueCount'] as num?)?.toInt(),
+        globalDueUpdatedAt: m['globalDueUpdatedAt'] == null
+            ? null
+            : DateTime.tryParse(m['globalDueUpdatedAt'] as String),
       );
     } catch (_) {
       return null;
@@ -83,7 +98,7 @@ class LocalReviewStore {
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       final list = _readOutbox(prefs)..add(entry);
-      await prefs.setString(_outboxKey, jsonEncode(list));
+      await _writeList(prefs, _outboxKey, list);
       return list.length;
     });
   }
@@ -114,7 +129,7 @@ class LocalReviewStore {
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
           : list.sublist(count);
-      await prefs.setString(_outboxKey, jsonEncode(remaining));
+      await _writeList(prefs, _outboxKey, remaining);
       return remaining.length;
     });
   }
@@ -129,7 +144,7 @@ class LocalReviewStore {
       final before = list.length;
       list.removeWhere((e) => e['client_id'] == clientId);
       if (list.length != before) {
-        await prefs.setString(_outboxKey, jsonEncode(list));
+        await _writeList(prefs, _outboxKey, list);
       }
       return (removed: list.length != before, remaining: list.length);
     });
@@ -146,7 +161,7 @@ class LocalReviewStore {
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       final list = _readList(prefs, _flagOutboxKey)..add(entry);
-      await prefs.setString(_flagOutboxKey, jsonEncode(list));
+      await _writeList(prefs, _flagOutboxKey, list);
       return list.length;
     });
   }
@@ -175,7 +190,7 @@ class LocalReviewStore {
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
           : list.sublist(count);
-      await prefs.setString(_flagOutboxKey, jsonEncode(remaining));
+      await _writeList(prefs, _flagOutboxKey, remaining);
       return remaining.length;
     });
   }
@@ -202,8 +217,40 @@ class LocalReviewStore {
         for (final e in (jsonDecode(raw) as List))
           Map<String, dynamic>.from(e as Map),
       ];
-    } catch (_) {
-      return [];
+    } catch (error) {
+      // A malformed durable outbox is not the same as an empty one. Failing
+      // closed keeps sign-out and sync from silently deleting study actions
+      // that need recovery.
+      throw LocalOutboxCorruptException(key, error);
     }
   }
+
+  Future<void> _writeList(
+    SharedPreferences prefs,
+    String key,
+    List<Map<String, dynamic>> list,
+  ) async {
+    final written = await prefs.setString(key, jsonEncode(list));
+    if (!written) {
+      throw LocalOutboxWriteException(key);
+    }
+  }
+}
+
+class LocalOutboxCorruptException implements Exception {
+  final String key;
+  final Object cause;
+  const LocalOutboxCorruptException(this.key, this.cause);
+
+  @override
+  String toString() =>
+      'Recall could not read the pending study actions ($key).';
+}
+
+class LocalOutboxWriteException implements Exception {
+  final String key;
+  const LocalOutboxWriteException(this.key);
+
+  @override
+  String toString() => 'Recall could not save the pending study action ($key).';
 }
