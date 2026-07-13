@@ -69,6 +69,12 @@ class FsrsEngine {
     return Card(
       cardId: c.id,
       state: _stateFromInt(c.state),
+      // Recall's cloud row predates fsrs.dart's transient `step` field. The
+      // package restores learning cards to step 0 itself, but relearning cards
+      // otherwise keep a null step and crash as soon as rating previews build.
+      // Recall uses the package's single 10-minute relearning step, so step 0
+      // is the exact durable reconstruction for a persisted relearning card.
+      step: c.state == 3 ? 0 : null,
       stability: c.stability,
       difficulty: c.difficulty,
       due: c.due ?? DateTime.now().toUtc(),

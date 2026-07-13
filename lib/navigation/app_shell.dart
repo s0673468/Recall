@@ -153,11 +153,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           decoration: const BoxDecoration(gradient: scaffoldGradient),
           child: SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(
+              padding: EdgeInsets.fromLTRB(
                 UiSpacing.sm,
                 UiSpacing.sm,
                 UiSpacing.sm,
-                0,
+                _nativeIos ? UiSpacing.sm : 0,
               ),
               child: IndexedStack(index: _index, children: _pages),
             ),

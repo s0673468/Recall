@@ -24,6 +24,9 @@ import 'package:health_anki_flutter/features/review/presentation/screens/study_s
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/rating_bar.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/review_heatmap.dart';
+import 'package:health_anki_flutter/navigation/app_shell.dart';
+import 'package:health_anki_flutter/navigation/recall_deep_links.dart';
+import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
 const _desktopFsrsParameters = [
   0.98086613,
@@ -248,6 +251,14 @@ class _FakeRecallApi implements RecallApi {
   Future<void> signOut() async => signedOut = true;
 }
 
+class _SilentLinkSource implements RecallLinkSource {
+  @override
+  Future<Uri?> getInitialLink() async => null;
+
+  @override
+  Stream<Uri> get links => const Stream.empty();
+}
+
 void main() {
   test('review events identify the native iOS client', () {
     expect(
@@ -300,6 +311,24 @@ void main() {
       expect(p.keys.toSet(), Rating.values.toSet());
       expect(!p[Rating.again]!.isAfter(p[Rating.good]!), isTrue);
       expect(!p[Rating.good]!.isAfter(p[Rating.easy]!), isTrue);
+    });
+
+    test('preview restores a persisted relearning card without its step', () {
+      final p = engine.preview(
+        _card(
+          id: 3,
+          state: 3,
+          stability: 3,
+          difficulty: 6,
+          reps: 3,
+          lapses: 1,
+          due: now.subtract(const Duration(minutes: 1)),
+          lastReview: now.subtract(const Duration(minutes: 11)),
+        ),
+        now: now,
+      );
+
+      expect(p.keys.toSet(), Rating.values.toSet());
     });
 
     test('can be configured from seeded FSRS settings', () {
@@ -1013,6 +1042,46 @@ void main() {
       // summary), so the deleted word is now visible.
       expect(find.textContaining('mitochondria'), findsOneWidget);
       expect(find.textContaining('A cell organelle'), findsOneWidget);
+    });
+
+    testWidgets('native rating controls stay clear of the iOS tab bar', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card()]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      final prefs = RecallPrefsController(api: api);
+      addTearDown(controller.dispose);
+      addTearDown(prefs.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppShell(
+            controller: controller,
+            api: api,
+            prefs: prefs,
+            linkSource: _SilentLinkSource(),
+            nativeIos: true,
+          ),
+        ),
+      );
+      await tester.tap(find.text('Show answer'));
+      await tester.pump();
+
+      final ratingBottom = tester.getRect(find.byType(RatingBar)).bottom;
+      final tabBarTop = tester.getRect(find.byType(CupertinoTabBar)).top;
+      expect(tabBarTop - ratingBottom, greaterThanOrEqualTo(UiSpacing.sm));
+      expect(tester.takeException(), isNull);
     });
   });
 
