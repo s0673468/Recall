@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -36,5 +37,15 @@ void main() {
     );
     expect(pbxproj, contains('IPHONEOS_DEPLOYMENT_TARGET = 16.0;'));
     expect(icon.existsSync(), isTrue, reason: 'branded app icon is required');
+  });
+
+  test('iOS marketing icon is opaque and full resolution', () {
+    final bytes = icon.readAsBytesSync();
+    final data = ByteData.sublistView(bytes);
+
+    expect(data.getUint32(16, Endian.big), 1024);
+    expect(data.getUint32(20, Endian.big), 1024);
+    expect(bytes[24], 8, reason: 'The source icon should use 8-bit channels.');
+    expect(bytes[25], 2, reason: 'PNG color type 2 is opaque RGB.');
   });
 }

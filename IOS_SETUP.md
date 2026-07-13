@@ -67,3 +67,13 @@ runner restoration.
   foreground sync
 - terminate/reopen around an offline review and verify no duplicate cloud log
 - app icon, display name, ProMotion scrolling, and release signing
+
+## Regenerate the app icons
+
+Recall's iOS and web icons share the geometric mark in
+`health-apps/tool/render_launcher_icons.py`. From the repository root:
+
+```bash
+python3 health-apps/tool/render_ios_icon_sets.py --app recall
+python3 health-apps/tool/render_web_icon_sets.py --app recall
+```
