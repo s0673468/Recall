@@ -238,6 +238,21 @@ class _FakeRecallApi implements RecallApi {
 }
 
 void main() {
+  test('review events identify the native iOS client', () {
+    expect(
+      recallDeviceLabel(isWeb: false, targetPlatform: TargetPlatform.iOS),
+      'ios',
+    );
+    expect(
+      recallDeviceLabel(isWeb: false, targetPlatform: TargetPlatform.android),
+      'android',
+    );
+    expect(
+      recallDeviceLabel(isWeb: true, targetPlatform: TargetPlatform.iOS),
+      'web',
+    );
+  });
+
   group('FsrsEngine', () {
     final engine = FsrsEngine();
     final now = DateTime.utc(2026, 6, 26, 12);

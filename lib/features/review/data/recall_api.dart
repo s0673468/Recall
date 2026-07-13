@@ -15,12 +15,10 @@ class RecallApi {
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
       'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg)';
 
-  String get device => kIsWeb
-      ? 'web'
-      : switch (defaultTargetPlatform) {
-          TargetPlatform.android => 'android',
-          _ => 'desktop',
-        };
+  String get device => recallDeviceLabel(
+    isWeb: kIsWeb,
+    targetPlatform: defaultTargetPlatform,
+  );
 
   // --- Auth ---
   User? get currentUser => client.auth.currentUser;
@@ -302,4 +300,16 @@ class RecallApi {
         ),
     };
   }
+}
+
+String recallDeviceLabel({
+  required bool isWeb,
+  required TargetPlatform targetPlatform,
+}) {
+  if (isWeb) return 'web';
+  return switch (targetPlatform) {
+    TargetPlatform.iOS => 'ios',
+    TargetPlatform.android => 'android',
+    _ => 'desktop',
+  };
 }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_anki_flutter/features/auth/application/biometric_sign_in_service.dart';
 
@@ -40,6 +41,30 @@ class _FakePrompt implements RecallBiometricPrompt {
 }
 
 void main() {
+  test('native biometric support includes iPhone but excludes web', () {
+    expect(
+      supportsRecallBiometrics(
+        isWeb: false,
+        targetPlatform: TargetPlatform.iOS,
+      ),
+      isTrue,
+    );
+    expect(
+      supportsRecallBiometrics(
+        isWeb: true,
+        targetPlatform: TargetPlatform.iOS,
+      ),
+      isFalse,
+    );
+    expect(
+      supportsRecallBiometrics(
+        isWeb: false,
+        targetPlatform: TargetPlatform.macOS,
+      ),
+      isFalse,
+    );
+  });
+
   test('saves and returns credentials after biometric auth succeeds', () async {
     final vault = _FakeVault();
     final prompt = _FakePrompt();

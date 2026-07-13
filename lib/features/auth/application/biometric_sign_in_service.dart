@@ -86,7 +86,7 @@ class LocalAuthRecallBiometricPrompt implements RecallBiometricPrompt {
   Future<bool> authenticate() async {
     try {
       return _auth.authenticate(
-        localizedReason: 'Unlock Recall with your fingerprint',
+        localizedReason: 'Unlock Recall with Face ID or biometrics',
         biometricOnly: true,
         persistAcrossBackgrounding: true,
       );
@@ -108,10 +108,12 @@ class BiometricSignInService {
     bool Function()? isSupportedPlatform,
   }) : _vault = vault,
        _prompt = prompt ?? LocalAuthRecallBiometricPrompt(),
-       _isSupportedPlatform = isSupportedPlatform ?? _isAndroidApp;
-
-  static bool _isAndroidApp() =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+       _isSupportedPlatform =
+           isSupportedPlatform ??
+           (() => supportsRecallBiometrics(
+             isWeb: kIsWeb,
+             targetPlatform: defaultTargetPlatform,
+           ));
 
   Future<void> saveCredentials({
     required String email,
@@ -131,3 +133,14 @@ class BiometricSignInService {
 
   Future<void> clearCredentials() => _vault.clearCredentials();
 }
+
+/// Face ID/fingerprint convenience sign-in belongs only to the native phone
+/// apps. Web keeps the browser session flow; desktop builds must not start a
+/// biometric prompt merely because the host happens to support one.
+bool supportsRecallBiometrics({
+  required bool isWeb,
+  required TargetPlatform targetPlatform,
+}) =>
+    !isWeb &&
+    (targetPlatform == TargetPlatform.iOS ||
+        targetPlatform == TargetPlatform.android);
