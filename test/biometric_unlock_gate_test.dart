@@ -94,6 +94,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('private recall data'), findsNothing);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(prompt.promptCount, 1);
+    expect(find.text('private recall data'), findsNothing);
+
     await tester.tap(find.text('Unlock Recall'));
     await tester.pumpAndSettle();
 
@@ -101,10 +109,10 @@ void main() {
     expect(find.text('private recall data'), findsOneWidget);
   });
 
-  testWidgets('backgrounding relocks without losing mounted study state', (
+  testWidgets('app switching uses a privacy cover without prompting again', (
     tester,
   ) async {
-    final prompt = _FakeBiometricPrompt(results: [true, true]);
+    final prompt = _FakeBiometricPrompt(results: [true]);
     await tester.pumpWidget(
       MaterialApp(
         home: BiometricUnlockGate(prompt: prompt, child: const _CounterView()),
@@ -117,16 +125,20 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
     expect(find.text('count 1'), findsNothing);
+    expect(find.byKey(const Key('recall_privacy_cover')), findsOneWidget);
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
 
-    expect(prompt.promptCount, 2);
+    expect(prompt.promptCount, 1);
     expect(find.text('count 1'), findsOneWidget);
+    expect(find.byKey(const Key('recall_privacy_cover')), findsNothing);
   });
 
-  testWidgets('locking clears focus from hidden Recall inputs', (tester) async {
-    final prompt = _FakeBiometricPrompt(results: [true, true]);
+  testWidgets('background privacy cover clears focus from Recall inputs', (
+    tester,
+  ) async {
+    final prompt = _FakeBiometricPrompt(results: [true]);
     final focusNode = FocusNode();
     addTearDown(focusNode.dispose);
     await tester.pumpWidget(
@@ -147,6 +159,7 @@ void main() {
 
     expect(focusNode.hasFocus, isFalse);
     expect(find.byType(TextField), findsNothing);
+    expect(find.byKey(const Key('recall_privacy_cover')), findsOneWidget);
   });
 
   testWidgets('unavailable device auth never exposes Recall data', (

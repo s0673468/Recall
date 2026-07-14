@@ -78,6 +78,11 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
   bool _promptCancelled = false;
   String? _signOutError;
 
+  // App switching hides study data from the native task-switcher snapshot, but
+  // does not reset [_locked]. A fresh process/gate still starts locked and
+  // requires one successful device authentication.
+  bool _privacyCovered = false;
+
   @override
   void initState() {
     super.initState();
@@ -94,18 +99,20 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_authenticating) return;
+    if (_authenticating) {
+      return;
+    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
-      if (!_locked && mounted) {
+      if (!_locked && !_privacyCovered && mounted) {
         FocusManager.instance.primaryFocus?.unfocus();
-        setState(() => _locked = true);
+        setState(() => _privacyCovered = true);
       }
       return;
     }
-    if (state == AppLifecycleState.resumed && _locked) {
-      unawaited(_unlock());
+    if (state == AppLifecycleState.resumed && _privacyCovered && mounted) {
+      setState(() => _privacyCovered = false);
     }
   }
 
@@ -131,6 +138,7 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
       _authenticating = false;
       _authenticationAvailable = true;
       _locked = !unlocked;
+      _privacyCovered = false;
       _promptCancelled = !unlocked;
     });
   }
@@ -153,13 +161,22 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
 
   @override
   Widget build(BuildContext context) {
+    final hideRecallData = _locked || _privacyCovered;
     return Stack(
       fit: StackFit.expand,
       children: [
         ExcludeFocus(
-          excluding: _locked,
-          child: Offstage(offstage: _locked, child: widget.child),
+          excluding: hideRecallData,
+          child: Offstage(offstage: hideRecallData, child: widget.child),
         ),
+        if (_privacyCovered && !_locked)
+          const Scaffold(
+            key: Key('recall_privacy_cover'),
+            body: DecoratedBox(
+              decoration: BoxDecoration(gradient: scaffoldGradient),
+              child: SizedBox.expand(),
+            ),
+          ),
         if (_locked)
           Scaffold(
             body: Container(
