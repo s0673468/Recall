@@ -1,10 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:health_flutter_shared/health_flutter_shared.dart'
     show AppScrollBehavior, AuthGate, AuthGateModel;
 
 import '../core/widgets/recall_widget_bridge.dart';
-import '../features/review/application/review_controller.dart';
+import '../features/auth/presentation/widgets/biometric_unlock_gate.dart';
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_dependencies.dart';
@@ -100,9 +101,6 @@ class _RecallRoot extends StatefulWidget {
 }
 
 class _RecallRootState extends State<_RecallRoot> {
-  bool _biometricAttempted = false;
-  bool _biometricInFlight = false;
-
   @override
   Widget build(BuildContext context) {
     final controller = widget.dependencies.reviewController;
@@ -111,7 +109,6 @@ class _RecallRootState extends State<_RecallRoot> {
       builder: (context, _) {
         late final Widget content;
         if (controller.currentUser == null) {
-          _scheduleBiometricSignIn(controller);
           content = AuthGate(
             model: AuthGateModel(
               source: controller,
@@ -123,44 +120,27 @@ class _RecallRootState extends State<_RecallRoot> {
             subtitle: UiBrand.subtitle,
           );
         } else {
-          content = AppShell(
+          final appShell = AppShell(
             controller: controller,
             api: widget.dependencies.api,
             prefs: widget.dependencies.recallPrefs,
             reminder: widget.dependencies.studyReminder,
           );
+          content =
+              supportsRecallBiometricUnlock(
+                isWeb: kIsWeb,
+                targetPlatform: defaultTargetPlatform,
+              )
+              ? BiometricUnlockGate(
+                  key: ValueKey('recall-unlock-${controller.currentUser!.id}'),
+                  onSignOut: controller.signOut,
+                  child: appShell,
+                )
+              : appShell;
         }
         return RecallWidgetBridge(controller: controller, child: content);
       },
     );
-  }
-
-  void _scheduleBiometricSignIn(ReviewController controller) {
-    if (_biometricAttempted ||
-        _biometricInFlight ||
-        controller.state.authSubmitting) {
-      return;
-    }
-    _biometricAttempted = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _tryBiometricSignIn(controller);
-    });
-  }
-
-  Future<void> _tryBiometricSignIn(ReviewController controller) async {
-    setState(() => _biometricInFlight = true);
-    final credentials = await widget.dependencies.biometricSignIn
-        .authenticateAndRead();
-    if (credentials != null && mounted && controller.currentUser == null) {
-      await controller.signIn(
-        email: credentials.email,
-        password: credentials.password,
-      );
-      if (controller.currentUser == null && controller.state.error != null) {
-        await widget.dependencies.biometricSignIn.clearCredentials();
-      }
-    }
-    if (mounted) setState(() => _biometricInFlight = false);
   }
 }
 

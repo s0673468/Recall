@@ -408,13 +408,11 @@ void main() {
         final api = _FakeRecallApi([_card()]);
         api.beforeApplyReview = () async => throw StateError('offline');
         final store = LocalReviewStore();
-        var credentialsForgotten = false;
         var reminderCancelled = false;
         final controller = ReviewController(
           api: api,
           engine: FsrsEngine(),
           store: store,
-          forgetCredentials: () async => credentialsForgotten = true,
           afterSignOut: () async => reminderCancelled = true,
         );
         addTearDown(controller.dispose);
@@ -429,7 +427,6 @@ void main() {
 
         expect(await store.outbox(), hasLength(1));
         expect(api.signedOut, isFalse);
-        expect(credentialsForgotten, isFalse);
         expect(reminderCancelled, isFalse);
       },
     );
@@ -444,15 +441,17 @@ void main() {
           api: api,
           engine: FsrsEngine(),
           store: LocalReviewStore(),
-          forgetCredentials: () async => events.add('credentials'),
-          afterSignOut: () async => events.add('reminder'),
+          afterSignOut: () async {
+            expect(api.signedOut, isTrue);
+            events.add('reminder');
+          },
         );
         addTearDown(controller.dispose);
 
         await controller.signOut();
 
         expect(api.signedOut, isTrue);
-        expect(events, ['credentials', 'reminder']);
+        expect(events, ['reminder']);
       },
     );
 

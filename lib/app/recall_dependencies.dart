@@ -1,8 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/background/background_sync_coordinator.dart';
 import '../core/config/recall_config.dart';
-import '../features/auth/application/biometric_sign_in_service.dart';
+import '../features/auth/data/secure_session_storage.dart';
 import '../features/reminders/application/study_reminder_controller.dart';
 import '../features/review/application/fsrs_engine.dart';
 import '../features/review/application/review_controller.dart';
@@ -15,7 +16,6 @@ import '../features/settings/domain/recall_prefs.dart';
 class RecallDependencies {
   final ReviewController reviewController;
   final RecallApi api;
-  final BiometricSignInService biometricSignIn;
   final RecallPrefsController recallPrefs;
   final BackgroundSyncCoordinator backgroundSync;
   final StudyReminderController studyReminder;
@@ -23,7 +23,6 @@ class RecallDependencies {
   const RecallDependencies({
     required this.reviewController,
     required this.api,
-    required this.biometricSignIn,
     required this.recallPrefs,
     required this.backgroundSync,
     required this.studyReminder,
@@ -35,11 +34,25 @@ class RecallDependencies {
       throw const RecallConfigException();
     }
 
-    final client = await _client(config);
+    final secureSessionStorage =
+        supportsRecallSecureSession(
+          isWeb: kIsWeb,
+          targetPlatform: defaultTargetPlatform,
+        )
+        ? SecureRecallSupabaseLocalStorage.forSupabaseUrl(config.url)
+        : null;
+    final client = await _client(
+      config,
+      secureSessionStorage: secureSessionStorage,
+    );
 
-    final api = RecallApi(client);
+    final api = RecallApi(
+      client,
+      persistSession: secureSessionStorage?.persistSessionStrict,
+      removePersistedSession:
+          secureSessionStorage?.removePersistedSessionStrict,
+    );
     final engine = FsrsEngine(desiredRetention: RecallPrefs.defaultRetention);
-    final biometricSignIn = BiometricSignInService();
     final prefs = RecallPrefsController(api: api);
     final studyReminder = StudyReminderController();
     await studyReminder.initialize(ownerId: api.currentUser?.id);
@@ -50,8 +63,6 @@ class RecallDependencies {
       engine: engine,
       store: LocalReviewStore(),
       prefs: prefs,
-      rememberCredentials: biometricSignIn.saveCredentials,
-      forgetCredentials: biometricSignIn.clearCredentials,
       afterSignOut: studyReminder.releaseOwner,
       afterSignIn: () async {
         final owner = api.currentUser;
@@ -70,20 +81,25 @@ class RecallDependencies {
     return RecallDependencies(
       reviewController: controller,
       api: api,
-      biometricSignIn: biometricSignIn,
       recallPrefs: prefs,
       backgroundSync: backgroundSync,
       studyReminder: studyReminder,
     );
   }
 
-  static Future<SupabaseClient> _client(RecallConfig config) async {
+  static Future<SupabaseClient> _client(
+    RecallConfig config, {
+    SecureRecallSupabaseLocalStorage? secureSessionStorage,
+  }) async {
     try {
       return Supabase.instance.client;
     } catch (_) {
       await Supabase.initialize(
         url: config.url,
         publishableKey: config.anonKey,
+        authOptions: FlutterAuthClientOptions(
+          localStorage: secureSessionStorage,
+        ),
       );
       return Supabase.instance.client;
     }

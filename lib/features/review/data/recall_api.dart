@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -9,7 +11,15 @@ import 'models.dart';
 /// user, so no explicit user_id filter is needed.
 class RecallApi {
   final SupabaseClient client;
-  const RecallApi(this.client);
+  final Future<void> Function(String)? _persistSession;
+  final Future<void> Function()? _removePersistedSession;
+
+  const RecallApi(
+    this.client, {
+    Future<void> Function(String)? persistSession,
+    Future<void> Function()? removePersistedSession,
+  }) : _persistSession = persistSession,
+       _removePersistedSession = removePersistedSession;
 
   static const _cardSelect =
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
@@ -21,9 +31,46 @@ class RecallApi {
   // --- Auth ---
   User? get currentUser => client.auth.currentUser;
   Stream<AuthState> get onAuthStateChange => client.auth.onAuthStateChange;
-  Future<void> signIn({required String email, required String password}) =>
-      client.auth.signInWithPassword(email: email, password: password);
-  Future<void> signOut() => client.auth.signOut();
+  Future<void> signIn({required String email, required String password}) async {
+    final response = await client.auth.signInWithPassword(
+      email: email,
+      password: password,
+    );
+    final persistSession = _persistSession;
+    if (persistSession == null) return;
+    final session = response.session ?? client.auth.currentSession;
+    if (session == null) {
+      await client.auth.signOut();
+      await _removePersistedSession?.call();
+      throw StateError('Recall sign-in returned no session.');
+    }
+    try {
+      await persistSession(jsonEncode(session.toJson()));
+    } catch (_) {
+      try {
+        await client.auth.signOut();
+      } finally {
+        await _removePersistedSession?.call();
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> signOut() async {
+    try {
+      await client.auth.signOut();
+    } catch (error) {
+      if (client.auth.currentSession != null) rethrow;
+      // GoTrue can report a remote logout failure after it has already cleared
+      // the local auth state. Complete that explicit user sign-out rather than
+      // reporting a failure while leaving Recall visibly signed out.
+      debugPrint(
+        'Recall: remote sign-out failed after local session cleared; '
+        'completing local sign-out: $error',
+      );
+    }
+    await _removePersistedSession?.call();
+  }
 
   Future<List<DeckRow>> fetchDecks() async {
     final rows = await client

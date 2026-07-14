@@ -43,12 +43,6 @@ class ReviewController extends ChangeNotifier {
   /// Study preferences (new-card limit, retention, ordering). Optional so the
   /// existing test harness can construct the controller without one.
   final RecallPrefsController? prefs;
-  final Future<void> Function({
-    required String email,
-    required String password,
-  })?
-  rememberCredentials;
-  final Future<void> Function()? forgetCredentials;
   final Future<void> Function()? afterSignOut;
   final Future<void> Function()? afterSignIn;
   StreamSubscription<AuthState>? _authSub;
@@ -58,8 +52,6 @@ class ReviewController extends ChangeNotifier {
     required this.engine,
     required this.store,
     this.prefs,
-    this.rememberCredentials,
-    this.forgetCredentials,
     this.afterSignOut,
     this.afterSignIn,
     ReviewHaptics? haptics,
@@ -152,7 +144,6 @@ class ReviewController extends ChangeNotifier {
     _set(_state.copyWith(authSubmitting: true, error: null));
     try {
       await api.signIn(email: email, password: password);
-      await _rememberCredentials(email: email, password: password);
       // _onAuthChanged fires on success and loads the queue.
     } catch (e) {
       _set(_state.copyWith(authSubmitting: false, error: _authMessage(e)));
@@ -162,7 +153,7 @@ class ReviewController extends ChangeNotifier {
   Future<void> signOut() async {
     // Sign-out is deliberately fail-closed: an offline review is user data,
     // not disposable cache. Flush first, then prove both durable outboxes are
-    // empty before credentials, reminders, or local state are removed.
+    // empty before the session, reminders, or local state are removed.
     await Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
     final pendingReviews = (await store.outbox()).length;
     final pendingFlags = (await store.flagOutbox()).length;
@@ -175,7 +166,6 @@ class ReviewController extends ChangeNotifier {
     // Don't leave one user's snapshot/outbox on disk for the next person on a
     // shared browser — RLS protects the cloud, but the device cache is global.
     await store.clear();
-    await _forgetCredentials();
     await api.signOut(); // _onAuthChanged then resets in-memory state
     // Native delivery is account-scoped. Cancel only after the cloud/auth
     // session has actually been released; an offline/failed sign-out above
@@ -187,25 +177,6 @@ class ReviewController extends ChangeNotifier {
     final s = e.toString();
     if (s.contains('Invalid login')) return 'Wrong email or password.';
     return s;
-  }
-
-  Future<void> _rememberCredentials({
-    required String email,
-    required String password,
-  }) async {
-    try {
-      await rememberCredentials?.call(email: email, password: password);
-    } catch (e) {
-      debugPrint('Recall: credential save failed (non-fatal): $e');
-    }
-  }
-
-  Future<void> _forgetCredentials() async {
-    try {
-      await forgetCredentials?.call();
-    } catch (e) {
-      debugPrint('Recall: credential clear failed (non-fatal): $e');
-    }
   }
 
   // --- Study ---

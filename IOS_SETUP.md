@@ -12,8 +12,8 @@ logic stay in Dart so the two surfaces cannot drift.
 - minimum version: iOS 16
 - device family: iPhone
 - orientation: portrait
-- credentials: interactive Supabase sign-in; optional Face ID convenience
-  unlock stores credentials in the iOS Keychain
+- authentication: interactive Supabase sign-in once; the revocable session is
+  stored in the iOS Keychain and Face ID or the device passcode unlocks Recall
 
 No account password, service-role key, signing identity, or provisioning profile
 belongs in the repository. The build input may contain only `SUPABASE_URL` and
@@ -53,9 +53,9 @@ Safari/PWA storage and the iOS app sandbox are separate. Before switching:
 4. Confirm a review, undo, and card flag reach the existing cloud account.
 
 Recall now fails sign-out closed. It flushes and verifies both durable outboxes
-before clearing the local cache, credentials, or the account's reminder. If the
-phone is offline or local outbox storage is malformed, sign-out stops and shows
-the recovery error while preserving the pending work. Review replay uses a
+before clearing the local cache, secure session, or the account's reminder. If
+the phone is offline or local outbox storage is malformed, sign-out stops and
+shows the recovery error while preserving the pending work. Review replay uses a
 stable event identity so a lost cloud acknowledgement does not create a second
 review-log row.
 
