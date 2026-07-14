@@ -17,6 +17,7 @@ export 'package:health_flutter_shared/ui_tokens_canonical.dart'
         UiMood,
         buildPanelDecoration,
         buildHeroPanelDecoration,
+        uiReadingSerif,
         buildHealthTheme;
 
 abstract final class UiBrand {
@@ -29,22 +30,22 @@ abstract final class UiBrand {
 /// accent is yellow (`UiAccents.recall`, its designated registry hue); only
 /// `primary` / `primaryMuted` differ from the canonical emerald.
 abstract final class UiColors {
-  static const canvas = Color(0xFF1B1B29);
-  static const sidebar = Color(0xFF202030);
-  static const panel = Color(0xFF252540);
-  static const panelRaised = Color(0xFF181824);
+  static const canvas = Color(0xFF111319);
+  static const sidebar = Color(0xFF151821);
+  static const panel = Color(0xFF1A1E27);
+  static const panelRaised = Color(0xFF0E1016);
   static const bgCanvas = canvas;
   static const bgCard = panel;
-  static const border = Color(0xFF33345A);
-  static const borderSubtle = Color(0x4D33345A);
-  static const textPrimary = Color(0xFFF0F0F5);
-  static const textSecondary = Color(0xFFA0A8BD);
-  static const textMuted = Color(0xFF95919E);
+  static const border = Color(0xFF2A303B);
+  static const borderSubtle = Color(0x4D2A303B);
+  static const textPrimary = Color(0xFFF2F4F7);
+  static const textSecondary = Color(0xFFB4BAC5);
+  static const textMuted = Color(0xFF9198A4);
   // Recall's primary is yellow (UiAccents.recall #FDE047); mobile/Lift are
   // indigo, the dashboard keeps emerald (#10B981).
   static const primary = Color(0xFFFDE047);
   static const primaryMuted = Color(0x26FDE047);
-  static const secondary = Color(0xFF2D2D44);
+  static const secondary = Color(0xFF20242D);
   static const chartYellow = Color(0xFFFDE047);
   static const chartBlue = Color(0xFF5B8FF9);
   static const chartPurple = Color(0xFF8B5CF6);
@@ -60,8 +61,8 @@ abstract final class UiColors {
   static const foodYellow = chartYellow;
   static const foodRed = chartOrange;
   static const foodEmpty = Color(0xFF6B7280);
-  static const sleepGradientStart = Color(0xFF1E2040);
-  static const sleepGradientEnd = Color(0xFF1B2A30);
+  static const sleepGradientStart = Color(0xFF1B2230);
+  static const sleepGradientEnd = Color(0xFF17231F);
   static const scoreExcellent = Color(0xFF10B981);
   static const scoreGood = chartTeal;
   static const scoreFair = chartYellow;

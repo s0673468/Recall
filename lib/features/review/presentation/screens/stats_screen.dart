@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show AppSwitcher, HealthWebApp, scopedPanelColor;
+    show AppSwitcher, HealthWebApp;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
@@ -71,15 +71,11 @@ class StatsScreenState extends State<StatsScreen> {
             listenable: widget.controller,
             builder: (context, _) {
               final s = widget.controller.state;
-              return Row(
-                children: [
-                  _tile('This session', '${s.reviewedThisSession}'),
-                  const SizedBox(width: UiSpacing.sm),
-                  _tile('Due now', '${s.dueRemaining}'),
-                  const SizedBox(width: UiSpacing.sm),
-                  _tile('New left', '${s.newRemaining}'),
-                ],
-              );
+              return _metricStrip(const Key('recall_stats_session_strip'), [
+                ('This session', '${s.reviewedThisSession}'),
+                ('Due now', '${s.dueRemaining}'),
+                ('New left', '${s.newRemaining}'),
+              ]);
             },
           ),
           const SizedBox(height: UiSpacing.sm),
@@ -89,15 +85,11 @@ class StatsScreenState extends State<StatsScreen> {
             future: _reviewLog,
             builder: (log) {
               final t = StatsService.tileStats(log, today: today);
-              return Row(
-                children: [
-                  _tile('Recall · 30d', t.recall),
-                  const SizedBox(width: UiSpacing.sm),
-                  _tile('Streak', '${t.streak}${t.streak == 1 ? ' day' : ' days'}'),
-                  const SizedBox(width: UiSpacing.sm),
-                  _tile('Reviews · 30d', '${t.reviews}'),
-                ],
-              );
+              return _metricStrip(const Key('recall_stats_history_strip'), [
+                ('Recall · 30d', t.recall),
+                ('Streak', '${t.streak}${t.streak == 1 ? ' day' : ' days'}'),
+                ('Reviews · 30d', '${t.reviews}'),
+              ]);
             },
           ),
           const SizedBox(height: UiSpacing.lg),
@@ -168,10 +160,8 @@ class StatsScreenState extends State<StatsScreen> {
           return Container(
             width: double.infinity,
             padding: const EdgeInsets.all(UiSpacing.md),
-            decoration: BoxDecoration(
-              color: scopedPanelColor(context),
-              borderRadius: BorderRadius.circular(UiRadius.lg),
-              border: Border.all(color: UiColors.border),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: UiColors.borderSubtle)),
             ),
             child: Text(
               'Could not load ${label ?? 'section'}.',
@@ -184,35 +174,58 @@ class StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  Widget _tile(String label, String value) => Expanded(
-    child: Container(
-      padding: const EdgeInsets.symmetric(
-        vertical: UiSpacing.md,
-        horizontal: UiSpacing.sm,
+  Widget _metricStrip(Key key, List<(String, String)> metrics) => Container(
+    key: key,
+    decoration: const BoxDecoration(
+      border: Border(
+        top: BorderSide(color: UiColors.borderSubtle),
+        bottom: BorderSide(color: UiColors.borderSubtle),
       ),
-      decoration: BoxDecoration(
-        color: scopedPanelColor(context),
-        borderRadius: BorderRadius.circular(UiRadius.lg),
-        border: Border.all(color: UiColors.border),
-      ),
-      child: Column(
+    ),
+    child: IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          FittedBox(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: UiColors.primary,
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
+          for (var i = 0; i < metrics.length; i++) ...[
+            if (i > 0)
+              const SizedBox(
+                width: 1,
+                child: ColoredBox(color: UiColors.borderSubtle),
+              ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: UiSpacing.md,
+                  horizontal: UiSpacing.xs,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FittedBox(
+                      child: Text(
+                        metrics[i].$2,
+                        style: const TextStyle(
+                          color: UiColors.textPrimary,
+                          fontFamily: 'monospace',
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      metrics[i].$1,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: UiColors.textMuted,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
-          ),
+          ],
         ],
       ),
     ),

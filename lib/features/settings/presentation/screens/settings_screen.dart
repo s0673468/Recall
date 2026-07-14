@@ -44,13 +44,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return Scaffold(
       backgroundColor: UiColors.canvas,
       appBar: AppBar(
-        backgroundColor: UiColors.panel,
+        backgroundColor: UiColors.sidebar,
         foregroundColor: UiColors.textPrimary,
         elevation: 0,
         title: const Text('Settings'),
       ),
-      body: Container(
-        decoration: const BoxDecoration(gradient: scaffoldGradient),
+      body: ColoredBox(
+        color: UiColors.canvas,
         child: SafeArea(
           child: ListenableBuilder(
             listenable: widget.prefs,
@@ -81,6 +81,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final retention = _dragRetention ?? _prefs.desiredRetention;
     final mult = retentionWorkloadMultiplier(retention);
     return SectionCard(
+      flat: true,
       title: 'Scheduling',
       subtitle: 'How Recall paces reviews and introduces new cards.',
       child: Column(
@@ -169,6 +170,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context, _) {
         final settings = reminder.value;
         return SectionCard(
+          flat: true,
           title: 'Study reminder',
           subtitle: 'One gentle daily nudge, delivered by your iPhone.',
           child: Column(
@@ -279,6 +281,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context, _) {
         final decks = widget.controller.state.decks;
         return SectionCard(
+          flat: true,
           title: 'Per-deck new-card limits',
           subtitle: decks.isEmpty
               ? 'Deck list loads after your first sync.'
@@ -340,6 +343,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Widget _accountCard(BuildContext context) {
     return SectionCard(
+      flat: true,
       title: 'Account',
       child: Align(
         alignment: Alignment.centerLeft,

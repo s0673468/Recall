@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show UiScore, scopedPanelColor;
+import 'package:health_flutter_shared/health_flutter_shared.dart' show UiScore;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
@@ -24,8 +23,8 @@ class RetentionPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(UiSpacing.md),
       decoration: BoxDecoration(
-        color: scopedPanelColor(context),
-        borderRadius: BorderRadius.circular(UiRadius.lg),
+        color: UiColors.panel,
+        borderRadius: BorderRadius.circular(UiRadii.group),
         border: Border.all(color: UiColors.border),
       ),
       child: Column(
@@ -74,9 +73,16 @@ class RetentionPanel extends StatelessWidget {
               Row(
                 children: [
                   Expanded(
-                    child: _cohort('Young', summary.youngRate, summary.youngTotal),
+                    child: _cohort(
+                      'Young',
+                      summary.youngRate,
+                      summary.youngTotal,
+                    ),
                   ),
-                  const SizedBox(width: UiSpacing.sm),
+                  const SizedBox(
+                    height: 56,
+                    child: VerticalDivider(color: UiColors.borderSubtle),
+                  ),
                   Expanded(
                     child: _cohort(
                       'Mature',
@@ -102,22 +108,43 @@ class RetentionPanel extends StatelessWidget {
 
   Widget _overall() {
     final rate = summary.overallRate ?? 0;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.baseline,
-      textBaseline: TextBaseline.alphabetic,
+    final color = UiScore.ratioTier(rate);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          '${(rate * 100).round()}%',
-          style: TextStyle(
-            color: UiScore.ratioTier(rate),
-            fontSize: 34,
-            fontWeight: FontWeight.w700,
-          ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              '${(rate * 100).round()}%',
+              style: TextStyle(
+                color: color,
+                fontFamily: 'monospace',
+                fontSize: 34,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(width: UiSpacing.sm),
+            Expanded(
+              child: Text(
+                'recalled · ${summary.passed}/${summary.total} reviews',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: UiSpacing.sm),
-        Text(
-          'recalled · ${summary.passed}/${summary.total} reviews',
-          style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+        const SizedBox(height: UiSpacing.sm),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(UiRadii.pill),
+          child: LinearProgressIndicator(
+            key: const Key('recall_retention_meter'),
+            value: rate.clamp(0, 1),
+            minHeight: 6,
+            backgroundColor: UiColors.secondary,
+            color: color,
+          ),
         ),
       ],
     );
@@ -125,15 +152,10 @@ class RetentionPanel extends StatelessWidget {
 
   Widget _cohort(String label, double? rate, int total) {
     final value = rate == null ? '—' : '${(rate * 100).round()}%';
-    return Container(
+    return Padding(
       padding: const EdgeInsets.symmetric(
         vertical: UiSpacing.sm,
         horizontal: UiSpacing.md,
-      ),
-      decoration: BoxDecoration(
-        color: UiColors.canvas.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(UiRadius.md),
-        border: Border.all(color: UiColors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -146,7 +168,9 @@ class RetentionPanel extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
-              color: rate == null ? UiColors.textMuted : UiScore.ratioTier(rate),
+              color: rate == null
+                  ? UiColors.textMuted
+                  : UiScore.ratioTier(rate),
               fontSize: 20,
               fontWeight: FontWeight.w700,
             ),

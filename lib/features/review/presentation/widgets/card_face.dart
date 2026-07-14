@@ -52,13 +52,15 @@ class CardFace extends StatelessWidget {
 
   static final _mathRe = RegExp(r'\\\((.+?)\\\)', dotAll: true);
 
+  TextStyle get _readingStyle => style.merge(uiReadingSerif());
+
   @override
   Widget build(BuildContext context) {
     // Display-math fallback: a LaTeX face with no inline `\( … \)` the client
     // can render, but a server-rendered SVG available. Empty in practice.
     final svg = latexSvg;
     if (hasLatex && svg != null && !html.contains(r'\(')) {
-      return _SvgFace(svg: svg, style: style);
+      return _SvgFace(svg: svg, style: _readingStyle);
     }
 
     return LayoutBuilder(
@@ -73,7 +75,7 @@ class CardFace extends StatelessWidget {
             : _buildHtmlSpans(html, maxWidth, cacheKey: cacheKey);
 
         return SelectableText.rich(
-          TextSpan(style: style, children: _trimSpans(spans)),
+          TextSpan(style: _readingStyle, children: _trimSpans(spans)),
           textAlign: TextAlign.center,
         );
       },
@@ -172,7 +174,7 @@ class CardFace extends StatelessWidget {
 
   /// A single cloze deletion as an accent pill.
   InlineSpan _clozePillSpan(ClozeDeletion d, double maxWidth) {
-    final pillStyle = style.copyWith(color: UiColors.primary);
+    final pillStyle = _readingStyle.copyWith(color: UiColors.primary);
 
     if (revealCloze) {
       final content = <InlineSpan>[];
@@ -234,7 +236,7 @@ class CardFace extends StatelessWidget {
     TextStyle? baseStyle,
   }) {
     final resolved = _resolveStyle(nodeStyle);
-    final mathBase = baseStyle ?? style;
+    final mathBase = baseStyle ?? _readingStyle;
     var last = 0;
     var prevMath = previousWasMath;
 
@@ -390,12 +392,18 @@ class _ImageFragment extends StatelessWidget {
         ),
       );
     }
-    return _chip(icon: Icons.image_not_supported_outlined, label: 'media not synced');
+    return _chip(
+      icon: Icons.image_not_supported_outlined,
+      label: 'media not synced',
+    );
   }
 
   Widget _chip({required IconData icon, required String label}) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs, vertical: 4),
+      padding: const EdgeInsets.symmetric(
+        horizontal: UiSpacing.xs,
+        vertical: 4,
+      ),
       decoration: BoxDecoration(
         color: UiColors.secondary,
         borderRadius: BorderRadius.circular(UiRadii.pill),

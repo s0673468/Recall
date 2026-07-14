@@ -67,7 +67,7 @@ class StudyScreen extends StatelessWidget {
         final style = Theme.of(context).textTheme.titleLarge!.copyWith(
           color: UiColors.textPrimary,
           height: 1.4,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w400,
         );
 
         return Column(
@@ -143,65 +143,109 @@ class _Header extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _pill('$due due', UiColors.primary),
-        const SizedBox(width: UiSpacing.xs),
-        _pill('$neu new', UiColors.chartBlue),
-        if (offline) ...[
-          const SizedBox(width: UiSpacing.xs),
-          _pill('offline', UiColors.warning),
-        ] else if (pendingSync > 0) ...[
-          const SizedBox(width: UiSpacing.xs),
-          _pill('$pendingSync syncing', UiColors.textMuted),
-        ],
-        const Spacer(),
-        Text(
-          '$session done',
-          style: const TextStyle(color: UiColors.textMuted, fontSize: 13),
+        Row(
+          children: [
+            Text(
+              'STUDY',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: UiColors.textMuted,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.4,
+              ),
+            ),
+            if (offline || pendingSync > 0) ...[
+              const SizedBox(width: UiSpacing.sm),
+              Text(
+                offline ? 'offline' : '$pendingSync syncing',
+                style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+              ),
+            ],
+            const Spacer(),
+            if (onUndo != null)
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Undo last rating',
+                icon: const Icon(
+                  Icons.undo,
+                  size: 20,
+                  color: UiColors.textMuted,
+                ),
+                onPressed: onUndo,
+              ),
+            if (onFlag != null)
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Flag card',
+                icon: const Icon(
+                  Icons.flag_outlined,
+                  size: 20,
+                  color: UiColors.textMuted,
+                ),
+                onPressed: onFlag,
+              ),
+            if (onOpenSettings != null)
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                tooltip: 'Settings',
+                icon: const Icon(
+                  Icons.settings_outlined,
+                  size: 20,
+                  color: UiColors.textMuted,
+                ),
+                onPressed: onOpenSettings,
+              ),
+          ],
         ),
-        if (onUndo != null)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Undo last rating',
-            icon: const Icon(Icons.undo, size: 20, color: UiColors.textMuted),
-            onPressed: onUndo,
-          ),
-        if (onFlag != null)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Flag card',
-            icon: const Icon(
-              Icons.flag_outlined,
-              size: 20,
-              color: UiColors.textMuted,
+        Container(
+          key: const Key('recall_queue_strip'),
+          decoration: const BoxDecoration(
+            border: Border(
+              top: BorderSide(color: UiColors.borderSubtle),
+              bottom: BorderSide(color: UiColors.borderSubtle),
             ),
-            onPressed: onFlag,
           ),
-        if (onOpenSettings != null)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Settings',
-            icon: const Icon(
-              Icons.settings_outlined,
-              size: 20,
-              color: UiColors.textMuted,
-            ),
-            onPressed: onOpenSettings,
+          child: Row(
+            children: [
+              Expanded(child: _readout('Due', '$due')),
+              const SizedBox(
+                height: 34,
+                child: VerticalDivider(width: 1, color: UiColors.borderSubtle),
+              ),
+              Expanded(child: _readout('New', '$neu')),
+              const SizedBox(
+                height: 34,
+                child: VerticalDivider(width: 1, color: UiColors.borderSubtle),
+              ),
+              Expanded(child: _readout('Done', '$session')),
+            ],
           ),
+        ),
       ],
     );
   }
 
-  Widget _pill(String label, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: UiSpacing.sm, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.15),
-      borderRadius: BorderRadius.circular(UiRadii.pill),
-    ),
-    child: Text(
-      label,
-      style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+  Widget _readout(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            color: UiColors.textPrimary,
+            fontFamily: 'monospace',
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        Text(
+          label,
+          style: const TextStyle(color: UiColors.textMuted, fontSize: 11),
+        ),
+      ],
     ),
   );
 }
@@ -219,11 +263,12 @@ class _CardPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      key: const Key('recall_study_card'),
       width: double.infinity,
       padding: const EdgeInsets.all(UiSpacing.lg),
       decoration: BoxDecoration(
         color: scopedPanelColor(context),
-        borderRadius: BorderRadius.circular(UiRadius.xl),
+        borderRadius: BorderRadius.circular(UiRadii.group),
         border: Border.all(color: UiColors.border),
       ),
       child: SingleChildScrollView(

@@ -7,7 +7,9 @@ import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 
 Widget _host(Widget child) => MaterialApp(
-  home: Scaffold(body: Center(child: SizedBox(width: 320, child: child))),
+  home: Scaffold(
+    body: Center(child: SizedBox(width: 320, child: child)),
+  ),
 );
 
 void main() {
@@ -76,7 +78,7 @@ void main() {
           const CardFace(
             html: 'What is backprop?',
             hasLatex: false,
-            style: TextStyle(),
+            style: TextStyle(fontFamily: 'Outfit'),
           ),
         ),
       );
@@ -84,6 +86,7 @@ void main() {
         find.byType(SelectableText),
       );
       expect(selectable.textSpan!.toPlainText(), 'What is backprop?');
+      expect(selectable.textSpan!.style?.fontFamily, 'Georgia');
       expect(tester.takeException(), isNull);
     });
   });
@@ -187,7 +190,8 @@ void main() {
       await tester.pumpWidget(
         _host(
           const CardFace(
-            html: 'axes: {{c1::parameters}}, {{c2::training time}}, '
+            html:
+                'axes: {{c1::parameters}}, {{c2::training time}}, '
                 '{{c3::dataset size}}',
             hasLatex: false,
             style: TextStyle(fontSize: 16),
@@ -243,7 +247,8 @@ void main() {
       await tester.pumpWidget(
         _host(
           const CardFace(
-            html: 'axes: {{c1::parameters}}, {{c2::training time}}, '
+            html:
+                'axes: {{c1::parameters}}, {{c2::training time}}, '
                 '{{c3::dataset size}}',
             hasLatex: false,
             style: TextStyle(fontSize: 16),
@@ -294,7 +299,8 @@ void main() {
       InlineSpan? bold;
       void visit(InlineSpan s) {
         if (s is TextSpan) {
-          if (s.text == 'powerhouse' && s.style?.fontWeight == FontWeight.w700) {
+          if (s.text == 'powerhouse' &&
+              s.style?.fontWeight == FontWeight.w700) {
             bold = s;
           }
           s.children?.forEach(visit);
@@ -336,9 +342,7 @@ void main() {
         }
 
         visit(
-          tester
-              .widget<SelectableText>(find.byType(SelectableText))
-              .textSpan!,
+          tester.widget<SelectableText>(find.byType(SelectableText)).textSpan!,
         );
         return found;
       }

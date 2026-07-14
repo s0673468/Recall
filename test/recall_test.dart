@@ -19,6 +19,7 @@ import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
 import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
+import 'package:health_anki_flutter/features/review/presentation/screens/decks_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/stats_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
@@ -991,6 +992,8 @@ void main() {
         ),
       );
 
+      expect(find.byKey(const Key('recall_queue_strip')), findsOneWidget);
+      expect(find.byKey(const Key('recall_study_card')), findsOneWidget);
       expect(find.text('Tap to reveal'), findsNothing);
       expect(find.text('Show answer'), findsOneWidget);
       expect(find.textContaining('eramos'), findsNothing);
@@ -1075,6 +1078,10 @@ void main() {
           ),
         ),
       );
+      final canvas = tester.widget<ColoredBox>(
+        find.byKey(const Key('recall_flat_canvas')),
+      );
+      expect(canvas.color, UiColors.canvas);
       await tester.tap(find.text('Show answer'));
       await tester.pump();
 
@@ -1082,6 +1089,53 @@ void main() {
       final tabBarTop = tester.getRect(find.byType(CupertinoTabBar)).top;
       expect(tabBarTop - ratingBottom, greaterThanOrEqualTo(UiSpacing.sm));
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('Decks screen', () {
+    testWidgets('renders decks as flat ruled rows with explicit counts', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card()])
+        ..deckCounts = const {1: (due: 3, neu: 2)};
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DecksScreen(
+              controller: controller,
+              api: api,
+              onStudyDeck: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('recall_deck_row_All decks')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('recall_deck_row_Portuguese')),
+        findsOneWidget,
+      );
+      expect(find.text('3 due'), findsNWidgets(2));
+      expect(find.text('2 new'), findsNWidgets(2));
+      final row = tester.widget<Container>(
+        find.byKey(const Key('recall_deck_row_Portuguese')),
+      );
+      final decoration = row.decoration! as BoxDecoration;
+      expect(decoration.color, isNull);
+      expect(decoration.border, isA<Border>());
     });
   });
 
@@ -1110,6 +1164,14 @@ void main() {
       await tester.pumpAndSettle();
 
       // Heatmap (review-log query) rendered; forecast (due query) isolated.
+      expect(
+        find.byKey(const Key('recall_stats_session_strip')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('recall_stats_history_strip')),
+        findsOneWidget,
+      );
       expect(find.byType(ReviewHeatmap), findsOneWidget);
       expect(find.text('Could not load forecast.'), findsOneWidget);
     });

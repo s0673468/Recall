@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show scopedPanelColor;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
@@ -101,64 +99,56 @@ class DecksScreenState extends State<DecksScreen> {
     required int neu,
     required VoidCallback onTap,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: UiSpacing.xs,
-        vertical: 5,
-      ),
-      child: Material(
-        color: scopedPanelColor(context),
-        borderRadius: BorderRadius.circular(UiRadius.lg),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(UiRadius.lg),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: UiSpacing.md,
-              vertical: UiSpacing.md,
-            ),
-            child: Row(
-              children: [
-                Icon(icon, color: UiColors.primary, size: 22),
-                const SizedBox(width: UiSpacing.md),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      color: UiColors.textPrimary,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                    ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          key: ValueKey('recall_deck_row_$label'),
+          constraints: const BoxConstraints(minHeight: 56),
+          padding: const EdgeInsets.symmetric(horizontal: UiSpacing.md),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: UiColors.borderSubtle)),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: UiColors.textMuted, size: 20),
+              const SizedBox(width: UiSpacing.md),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: UiColors.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                if (due > 0) _count('$due', UiColors.primary),
-                if (neu > 0) ...[
-                  const SizedBox(width: 6),
-                  _count('$neu', UiColors.chartBlue),
-                ],
+              ),
+              if (due > 0) _count('$due due', UiColors.primary),
+              if (neu > 0) ...[
                 const SizedBox(width: UiSpacing.sm),
-                const Icon(
-                  Icons.chevron_right,
-                  color: UiColors.textMuted,
-                  size: 20,
-                ),
+                _count('$neu new', UiColors.chartBlue),
               ],
-            ),
+              const SizedBox(width: UiSpacing.xs),
+              const Icon(
+                Icons.chevron_right,
+                color: UiColors.textMuted,
+                size: 20,
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _count(String n, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.15),
-      borderRadius: BorderRadius.circular(UiRadii.pill),
-    ),
-    child: Text(
-      n,
-      style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+  Widget _count(String n, Color color) => Text(
+    n,
+    style: TextStyle(
+      color: color,
+      fontFamily: 'monospace',
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
     ),
   );
 }

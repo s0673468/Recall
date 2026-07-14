@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart'
-    show scopedPanelColor;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
@@ -28,10 +26,11 @@ class ReviewHeatmap extends StatelessWidget {
     final weeks = (days.length / 7).ceil();
     return Container(
       padding: const EdgeInsets.all(UiSpacing.md),
-      decoration: BoxDecoration(
-        color: scopedPanelColor(context),
-        borderRadius: BorderRadius.circular(UiRadius.lg),
-        border: Border.all(color: UiColors.border),
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: UiColors.borderSubtle),
+          bottom: BorderSide(color: UiColors.borderSubtle),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

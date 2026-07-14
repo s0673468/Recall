@@ -149,8 +149,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         }
       },
       child: Scaffold(
-        body: Container(
-          decoration: const BoxDecoration(gradient: scaffoldGradient),
+        backgroundColor: UiColors.canvas,
+        body: ColoredBox(
+          key: const Key('recall_flat_canvas'),
+          color: UiColors.canvas,
           child: SafeArea(
             child: Padding(
               padding: EdgeInsets.fromLTRB(
@@ -224,35 +226,62 @@ class RecallBottomNavigation extends StatelessWidget {
         onTap: onDestinationSelected,
         activeColor: accent,
         inactiveColor: UiColors.textSecondary,
-        backgroundColor: UiColors.panel.withValues(alpha: 0.78),
+        backgroundColor: UiColors.sidebar.withValues(alpha: 0.82),
         border: const Border(
           top: BorderSide(color: UiColors.borderSubtle, width: 0.5),
         ),
         items: _items,
       );
     }
-    return NavigationBar(
-      backgroundColor: UiColors.panel,
-      indicatorColor: accent.withValues(alpha: 0.15),
-      selectedIndex: selectedIndex,
-      onDestinationSelected: onDestinationSelected,
-      destinations: const [
-        NavigationDestination(
-          icon: Icon(Icons.style_outlined),
-          selectedIcon: Icon(Icons.style),
-          label: 'Study',
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: UiColors.sidebar,
+        border: Border(top: BorderSide(color: UiColors.borderSubtle)),
+      ),
+      child: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: Colors.transparent,
+          indicatorColor: Colors.transparent,
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            return IconThemeData(
+              color: states.contains(WidgetState.selected)
+                  ? accent
+                  : UiColors.textMuted,
+            );
+          }),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            return Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: states.contains(WidgetState.selected)
+                  ? accent
+                  : UiColors.textMuted,
+              fontWeight: states.contains(WidgetState.selected)
+                  ? FontWeight.w700
+                  : FontWeight.w500,
+            );
+          }),
         ),
-        NavigationDestination(
-          icon: Icon(Icons.folder_outlined),
-          selectedIcon: Icon(Icons.folder),
-          label: 'Decks',
+        child: NavigationBar(
+          selectedIndex: selectedIndex,
+          onDestinationSelected: onDestinationSelected,
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.style_outlined),
+              selectedIcon: Icon(Icons.style),
+              label: 'Study',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.folder_outlined),
+              selectedIcon: Icon(Icons.folder),
+              label: 'Decks',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.bar_chart_outlined),
+              selectedIcon: Icon(Icons.bar_chart),
+              label: 'Stats',
+            ),
+          ],
         ),
-        NavigationDestination(
-          icon: Icon(Icons.bar_chart_outlined),
-          selectedIcon: Icon(Icons.bar_chart),
-          label: 'Stats',
-        ),
-      ],
+      ),
     );
   }
 }
