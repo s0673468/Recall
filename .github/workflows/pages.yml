@@ -1,0 +1,86 @@
+name: Deploy Recall to Pages
+
+# Manual-only on purpose. Recall is a PRIVATE org repo, and GitHub Pages for
+# private repos requires a paid plan the S067-experiment-org free plan does not
+# have — so this workflow is NOT wired to `push` and will not auto-deploy or
+# show up as a failing required check. Until Pages is enabled for this repo, the
+# live Recall PWA is still served from the Health site (/Health/recall/); this
+# workflow is the correct, ready-to-arm standalone deploy for after cutover.
+# Trigger it by hand from the Actions tab once Pages is available.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, m1-hub]
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-flutter
+
+      # config/supabase.local.json is git-ignored; CI materializes it from repo
+      # secrets. Publishable URL + anon key ONLY — RLS gates all data behind
+      # interactive auth, and the AUTO_LOGIN_* creds must never ship to web.
+      # Recall runs on its OWN Supabase project, so it reads ANKI_SUPABASE_*.
+      - name: Write Recall config
+        env:
+          ANKI_SUPABASE_URL: ${{ secrets.ANKI_SUPABASE_URL }}
+          ANKI_SUPABASE_ANON_KEY: ${{ secrets.ANKI_SUPABASE_ANON_KEY }}
+        run: |
+          mkdir -p config
+          printf '{"SUPABASE_URL":"%s","SUPABASE_ANON_KEY":"%s"}\n' \
+            "$ANKI_SUPABASE_URL" "$ANKI_SUPABASE_ANON_KEY" > config/supabase.local.json
+
+      - name: Build Recall web
+        run: |
+          flutter pub get
+          # Project Pages site serves at /<repo>/, so base-href is /Recall/.
+          # --no-web-resources-cdn pins local canvaskit; config is compiled in via
+          # --dart-define (String.fromEnvironment), never bundled as a secret asset.
+          flutter build web --release --base-href /Recall/ \
+            --no-web-resources-cdn --pwa-strategy=none \
+            --dart-define-from-file=config/supabase.local.json
+
+      - uses: actions/configure-pages@v5
+
+      # actions/upload-pages-artifact shells out to `gtar --hard-dereference`,
+      # which BSD tar on the macOS runner does not support. Shim it to /usr/bin/tar.
+      - name: Provide gtar for Pages upload (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          shim_dir="$RUNNER_TEMP/gtar-shim"
+          mkdir -p "$shim_dir"
+          cat > "$shim_dir/gtar" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          args=()
+          for arg in "$@"; do
+            if [[ "$arg" == "--hard-dereference" ]]; then
+              continue
+            fi
+            args+=("$arg")
+          done
+          exec /usr/bin/tar "${args[@]}"
+          EOF
+          chmod +x "$shim_dir/gtar"
+          echo "$shim_dir" >> "$GITHUB_PATH"
+          "$shim_dir/gtar" --version
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

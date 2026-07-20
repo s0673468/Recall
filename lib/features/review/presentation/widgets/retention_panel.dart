@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart' show UiScore;
+import 'package:health_anki_flutter/vendored/health_flutter_shared.dart' show UiScore;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';

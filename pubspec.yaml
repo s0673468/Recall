@@ -20,10 +20,11 @@ dependencies:
   # Small, web+Android-safe SVG renderer for the server-side `latex_svg`
   # display-math fallback (already resolved transitively; promoted to direct).
   flutter_svg: ^2.0.0
-  health_shared:
-    path: ../health_shared
-  health_flutter_shared:
-    path: ../health_flutter_shared
+  # Used by the vendored AppSwitcher platform channels (lib/vendored/src/
+  # navigation/) — promoted from transitive to direct after the move out of
+  # Health, where they arrived via the health_flutter_shared path package.
+  url_launcher: ^6.3.2
+  web: ^1.1.1
   local_auth: ^3.0.1
   flutter_secure_storage: ^10.3.1
 

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
-import 'package:health_flutter_shared/ui_tokens_canonical.dart' as canon;
+import 'package:health_anki_flutter/vendored/ui_tokens_canonical.dart' as canon;
 
 /// Compile-time mirror of the Python `canonical_ui_token_drifts` check: every
 /// non-accent UiColors token must equal the canonical shared source. Recall's

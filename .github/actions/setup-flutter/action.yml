@@ -1,0 +1,98 @@
+name: Setup Flutter
+description: >
+  Provision Flutter for a job. On the self-hosted M1 org runner, reuse the
+  pre-installed ~/flutter — subosito/flutter-action cache-misses there and
+  re-downloads the ~4GB SDK every run. On github-hosted runners, fall back to
+  subosito. Vendored verbatim from the Health repo when Recall moved out
+  (slim phase 2); keep the flutter-version pinned to the local toolchain.
+
+inputs:
+  flutter-version:
+    description: >
+      Flutter version for github-hosted runners. Ignored on self-hosted, which
+      uses whatever is pinned at ~/flutter. Keep in sync with the local toolchain.
+    required: false
+    default: "3.44.2"
+
+runs:
+  using: composite
+  steps:
+    # Self-hosted M1 org runner: Flutter is pre-installed at ~/flutter, so jobs
+    # reuse it instead of re-downloading the ~4GB SDK every run.
+    - name: Use pre-installed Flutter (self-hosted)
+      if: runner.environment == 'self-hosted'
+      shell: bash
+      run: |
+        ci_home="$RUNNER_TEMP/flutter-home"
+        shim_dir="$RUNNER_TEMP/flutter-shims"
+        mkdir -p "$ci_home"
+        mkdir -p "$shim_dir"
+        cat > "$ci_home/.flutter_settings" <<'JSON'
+        {
+          "enable-ios": false,
+          "enable-macos-desktop": false,
+          "enable-android": true,
+          "enable-web": true
+        }
+        JSON
+        cat > "$shim_dir/xcrun" <<'SH'
+        #!/usr/bin/env bash
+        set -euo pipefail
+        original_args=("$@")
+        sdk=""
+        show_sdk_path=false
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --show-sdk-path)
+              show_sdk_path=true
+              shift
+              ;;
+            --sdk)
+              sdk="${2:-}"
+              shift 2
+              ;;
+            --sdk=*)
+              sdk="${1#--sdk=}"
+              shift
+              ;;
+            *)
+              shift
+              ;;
+          esac
+        done
+        if [[ "$show_sdk_path" == true ]]; then
+          case "$sdk" in
+            macosx)
+              echo "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk"
+              exit 0
+              ;;
+            iphonesimulator)
+              echo "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk"
+              exit 0
+              ;;
+            iphoneos)
+              echo "/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
+              exit 0
+              ;;
+          esac
+        fi
+        exec /usr/bin/xcrun "${original_args[@]}"
+        SH
+        chmod +x "$shim_dir/xcrun"
+        echo "$shim_dir" >> "$GITHUB_PATH"
+        echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+        echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+        echo "HOME=$ci_home" >> "$GITHUB_ENV"
+        echo "PUB_CACHE=$RUNNER_TEMP/pub-cache" >> "$GITHUB_ENV"
+        echo "DEVELOPER_DIR=/Library/Developer/CommandLineTools" >> "$GITHUB_ENV"
+
+    - name: Install Flutter (github-hosted)
+      if: runner.environment == 'github-hosted'
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        # Pin to the local dev toolchain. Unpinned stable drifts ahead and fails
+        # `flutter analyze` on deprecations that don't exist locally (infos are
+        # fatal). Bump together with local Flutter upgrades.
+        flutter-version: ${{ inputs.flutter-version }}
+        cache: true
