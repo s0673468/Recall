@@ -13,9 +13,9 @@ concurrency:
 
 jobs:
   flutter:
-    # Org policy: private repos run on the shared self-hosted M1 org runner pool.
-    # NEVER ubuntu-latest here (hosted minutes are budget-zero for private repos).
-    runs-on: [self-hosted, m1-hub]
+    # Public repo: GitHub-hosted runners are free & unlimited. Self-hosted must
+    # NEVER run on a public repo (fork PRs would execute on the M1 hub).
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
