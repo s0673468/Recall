@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  flutter:
+    # Org policy: private repos run on the shared self-hosted M1 org runner pool.
+    # NEVER ubuntu-latest here (hosted minutes are budget-zero for private repos).
+    runs-on: [self-hosted, m1-hub]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-flutter
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      # analyze_options treats infos/warnings as fatal, matching the local gate.
+      - name: flutter analyze
+        run: flutter analyze
+
+      - name: flutter test
+        run: flutter test --reporter=failures-only

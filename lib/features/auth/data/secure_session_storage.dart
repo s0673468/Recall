@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart';
+import 'package:health_anki_flutter/vendored/health_flutter_shared.dart';
 
 abstract class SessionSecretStore implements SecureStringStore {}
 

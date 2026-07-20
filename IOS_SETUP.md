@@ -22,7 +22,7 @@ the public `SUPABASE_ANON_KEY`.
 ## Build
 
 ```bash
-cd health-apps/health_anki_flutter
+# From the repository root.
 flutter pub get
 flutter analyze --no-pub
 flutter test --no-pub --reporter=failures-only
@@ -88,12 +88,17 @@ but server-enforced duplicate protection begins only after this migration.
 
 ## Regenerate the app icons
 
-Recall's iOS and web icons share the constructed geometric R in
-`health-apps/tool/render_launcher_icons.py`. Its stem and leg end on the same
-baseline, and the renderer reads every required size from the iOS asset
-catalog. From the repository root:
+Recall's iOS and web icons share the constructed geometric R rendered by the
+`render_launcher_icons.py` / `render_ios_icon_sets.py` / `render_web_icon_sets.py`
+tooling. That icon tooling was **not** moved out of Health in slim phase 2 — it
+still lives under `health-apps/tool/` in the Health repo and is shared across the
+Health app icons. To regenerate Recall's icons, run it from a Health checkout:
 
 ```bash
+# from a Health checkout
 python3 health-apps/tool/render_ios_icon_sets.py --app recall
 python3 health-apps/tool/render_web_icon_sets.py --app recall
 ```
+
+The already-rendered icon assets are committed in this repo, so a rebuild only
+needs the tooling when the mark itself changes.

@@ -1,6 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/health_flutter_shared.dart'
+import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show SectionCard, SignOutButton, SignOutButtonVariant;
 
 import '../../../../theme/ui_tokens.dart';

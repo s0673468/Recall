@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:health_flutter_shared/ui_tokens_canonical.dart' hide UiColors;
+import 'package:health_anki_flutter/vendored/ui_tokens_canonical.dart' hide UiColors;
 
 /// Recall reuses the Health design system verbatim — Outfit + DM Sans, the dark
 /// navy-violet surfaces, and the yellow Recall accent.
 /// Only the brand name and the accent split are app-local (mirrors how
 /// mobile/Lift do it).
-export 'package:health_flutter_shared/ui_tokens_canonical.dart'
+export 'package:health_anki_flutter/vendored/ui_tokens_canonical.dart'
     show
         UiSpacing,
         UiRadii,

@@ -46,3 +46,6 @@ app.*.map.json
 
 # Recall local config (contains bundled auto-login creds)
 config/supabase.local.json
+
+# Flutter machine-local SDK paths
+/android/local.properties
