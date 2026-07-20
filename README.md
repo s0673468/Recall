@@ -34,6 +34,59 @@ not removing that data source.
 - runs as the Recall browser/PWA surface and as an installable iPhone app from
   the same tested Flutter codebase
 
+## Data ownership
+
+**Recall's Supabase project is the source of truth for all review and
+scheduling state.** Everything on the device is cache or an outbound write
+buffer — never an authority.
+
+- **Supabase = truth.** Cards, notes, per-card FSRS scheduling state
+  (`stability`/`difficulty`/`due`/`state`/`reps`/`lapses`/`last_review`), the
+  append-only `review_log`, and study preferences (`user_settings`) all live in
+  Supabase, scoped per user by row-level security.
+- **Device state = disposable cache.** The local snapshot (last-loaded decks +
+  study queue, `recall_snapshot_v1`) and the mirrored study prefs
+  (`recall_prefs_v1`) are pure cache: they paint instantly on a cold open and
+  are **rebuildable and discardable**. Every successful server fetch replaces
+  them wholesale; a fresh cloud read on load/foreground always wins over what
+  was cached. Wiping local storage loses nothing but paint latency.
+- **The outbox is a pending *write*, not a competing source of truth.** Reviews
+  and card flags taken offline are appended to a durable, append-only outbox
+  (`recall_outbox_v1` / `flag_outbox_v1`) and replayed to Supabase at the next
+  launch/foreground. This is the one piece of device state that is **not**
+  freely discardable — it holds user actions that have not yet reached the
+  server, so sign-out is fail-closed on a non-empty outbox. It never makes the
+  device authoritative: it only carries local actions *toward* the server, which
+  remains truth once they land.
+- **Conflicts resolve server-wins for anything the device only reads** (queue,
+  counts, prefs on load). Replayed reviews are deduplicated server-side by a
+  durable `client_event_id` so a retry can never double-apply or log twice.
+- **Desktop Anki authors content; Recall (web/app) owns scheduling.** The
+  desktop importer is the sole author of cards/notes and sets `suspended` /
+  `deleted` one-way; Recall never creates or edits card content. Recall owns the
+  *review/scheduling* half: it computes FSRS outcomes and writes the resulting
+  scheduling state + review log back to Supabase.
+
+### Known divergences from strict server-wins
+
+Two write paths use last-write-wins rather than a server-version guard. Both are
+tolerable for a single user across a handful of devices, but they are the spots
+where a *stale local write* can overwrite a fresher server value:
+
+- **Outbox replay overwrites the `cards` row unconditionally** (`RecallApi`
+  `_updateCard`, `lib/features/review/data/recall_api.dart`). The
+  `client_event_id` idempotency guard dedupes the *same* review, but does not
+  compare `last_review`/`due` timestamps. If the same card were reviewed offline
+  on device A while device B reviewed and synced it, device A's later flush would
+  overwrite device B's newer scheduling with the older locally-computed state.
+- **Study prefs write-through is last-write-wins** (`RecallPrefsController`,
+  `lib/features/settings/application/recall_prefs_controller.dart`). The cloud
+  row replaces the local mirror on load, but an offline prefs edit can overwrite
+  a newer cloud value when it later writes through.
+
+Neither is fixed here (docs-only change); they are recorded so the doctrine
+matches real behavior.
+
 ## Local commands
 
 ```bash
