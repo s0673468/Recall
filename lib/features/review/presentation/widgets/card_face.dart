@@ -50,16 +50,30 @@ class CardFace extends StatelessWidget {
     this.cacheKey,
   });
 
-  static final _mathRe = RegExp(r'\\\((.+?)\\\)', dotAll: true);
+  /// Math delimiters, as a single alternation with one capture group each:
+  ///   group 1 — inline `\( … \)`
+  ///   group 2 — display `\[ … \]`  (the backslash is REQUIRED, so literal
+  ///             brackets like `E[X]`, `[CLS]`, `[32,10]` never match)
+  ///   group 3 — display `$$ … $$`
+  /// All branches are non-greedy so adjacent expressions don't merge.
+  static final _mathRe = RegExp(
+    r'\\\((.+?)\\\)|\\\[(.+?)\\\]|\$\$(.+?)\$\$',
+    dotAll: true,
+  );
 
   TextStyle get _readingStyle => style.merge(uiReadingSerif());
 
   @override
   Widget build(BuildContext context) {
-    // Display-math fallback: a LaTeX face with no inline `\( … \)` the client
-    // can render, but a server-rendered SVG available. Empty in practice.
+    // Display-math fallback: a LaTeX face with NO delimiter the client can
+    // render (`\( … \)`, `\[ … \]`, or `$$ … $$`), but a server-rendered SVG
+    // available. Whenever any renderable delimiter is present the client path
+    // wins. Empty in practice.
     final svg = latexSvg;
-    if (hasLatex && svg != null && !html.contains(r'\(')) {
+    final hasRenderableMath = html.contains(r'\(') ||
+        html.contains(r'\[') ||
+        html.contains(r'$$');
+    if (hasLatex && svg != null && !hasRenderableMath) {
       return _SvgFace(svg: svg, style: _readingStyle);
     }
 
@@ -250,18 +264,42 @@ class CardFace extends StatelessWidget {
 
     for (final m in _mathRe.allMatches(text)) {
       if (m.start > last) addText(text.substring(last, m.start));
-      spans.add(
-        WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: _MathFragment(
-            expression: m.group(1)!,
-            fallback: m.group(0)!,
-            maxWidth: maxWidth,
-            style: mathBase.merge(resolved),
+      // group 1 = inline `\( … \)`; groups 2/3 = display (`\[ … \]` / `$$ … $$`).
+      final inline = m.group(1);
+      final isDisplay = inline == null;
+      final expression = inline ?? m.group(2) ?? m.group(3)!;
+      if (isDisplay) {
+        // Block math sits alone on its line so the parent's TextAlign.center
+        // centers it: a `\n` before (unless already at line start) and after.
+        if (!_atLineStart(spans)) spans.add(const TextSpan(text: '\n'));
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _MathFragment(
+              expression: expression,
+              fallback: m.group(0)!,
+              maxWidth: maxWidth,
+              style: mathBase.merge(resolved),
+              display: true,
+            ),
           ),
-        ),
-      );
-      prevMath = true;
+        );
+        spans.add(const TextSpan(text: '\n'));
+        prevMath = false; // ended on a newline — no punctuation gluing
+      } else {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: _MathFragment(
+              expression: expression,
+              fallback: m.group(0)!,
+              maxWidth: maxWidth,
+              style: mathBase.merge(resolved),
+            ),
+          ),
+        );
+        prevMath = true;
+      }
       last = m.end;
     }
     if (last < text.length) addText(text.substring(last));
@@ -301,6 +339,19 @@ class CardFace extends StatelessWidget {
     return spans.sublist(start, end);
   }
 
+  /// Whether the next span would start a fresh line: nothing emitted yet, or the
+  /// previous span is a text run ending in a newline. A WidgetSpan (math / image
+  /// / pill) counts as mid-line.
+  static bool _atLineStart(List<InlineSpan> spans) {
+    if (spans.isEmpty) return true;
+    final last = spans.last;
+    if (last is TextSpan) {
+      final t = last.text;
+      return t != null && t.endsWith('\n');
+    }
+    return false;
+  }
+
   static String _keepLeadingPunctuationWithMath(String s) {
     return s.replaceFirstMapped(
       RegExp(r'^\s*([.,;:!?])'),
@@ -315,11 +366,16 @@ class _MathFragment extends StatelessWidget {
   final double maxWidth;
   final TextStyle style;
 
+  /// Block math (`\[ … \]` / `$$ … $$`): rendered in [MathStyle.display] and
+  /// NOT line-broken. Inline math stays [MathStyle.text] with `texBreak()`.
+  final bool display;
+
   const _MathFragment({
     required this.expression,
     required this.fallback,
     required this.maxWidth,
     required this.style,
+    this.display = false,
   });
 
   @override
@@ -327,17 +383,24 @@ class _MathFragment extends StatelessWidget {
     final math = Math.tex(
       expression,
       textStyle: style,
-      mathStyle: MathStyle.text,
+      mathStyle: display ? MathStyle.display : MathStyle.text,
       onErrorFallback: (_) => Text(fallback, style: style),
     );
-    final broken = math.texBreak().parts;
-    final child = broken.length > 1
-        ? Wrap(
-            alignment: WrapAlignment.center,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: broken,
-          )
-        : math;
+    // Inline line-breaking (`texBreak`) is wrong for block math — a display
+    // fragment stays a single unbroken unit, constrained but not wrapped.
+    final Widget child;
+    if (display) {
+      child = math;
+    } else {
+      final broken = math.texBreak().parts;
+      child = broken.length > 1
+          ? Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: broken,
+            )
+          : math;
+    }
 
     if (!maxWidth.isFinite) {
       return child;
