@@ -92,9 +92,12 @@ void main() {
   });
 
   group('CardFace latex_svg fallback', () {
-    testWidgets('display-math face with latex_svg renders the SVG', (
+    testWidgets('display math with latex_svg now renders client-side', (
       tester,
     ) async {
+      // Broadened guard: whenever the html carries a renderable delimiter
+      // (here `\[ … \]`) the client math path wins even when an SVG is present,
+      // so the server SVG is no longer used.
       const svg =
           '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
           '<rect width="10" height="10"/></svg>';
@@ -108,13 +111,16 @@ void main() {
           ),
         ),
       );
-      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(find.byType(SvgPicture), findsNothing);
+      expect(find.byType(Math), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('display math with no SVG falls back to literal text', (
+    testWidgets('display math with no SVG renders in display style', (
       tester,
     ) async {
+      // Pins the fix: `\[ … \]` without an SVG used to fall back to raw literal
+      // text; it must now render as a display-style Math widget.
       await tester.pumpWidget(
         _host(
           const CardFace(
@@ -125,10 +131,164 @@ void main() {
         ),
       );
       expect(find.byType(SvgPicture), findsNothing);
-      final selectable = tester.widget<SelectableText>(
-        find.byType(SelectableText),
+      final math = tester.widget<Math>(find.byType(Math));
+      expect(math.mathStyle, MathStyle.display);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('SVG is still used when NO renderable delimiter is present', (
+      tester,
+    ) async {
+      // A latex face whose html has none of `\(`, `\[`, `$$` still falls back to
+      // the server SVG (the defensive path is preserved).
+      const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">'
+          '<rect width="10" height="10"/></svg>';
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: 'E = mc^2',
+            hasLatex: true,
+            latexSvg: svg,
+            style: TextStyle(fontSize: 18, color: Colors.white),
+          ),
+        ),
       );
-      expect(selectable.textSpan!.toPlainText(), contains('E = mc^2'));
+      expect(find.byType(SvgPicture), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('CardFace display math', () {
+    testWidgets(r'$$ … $$ renders a Math widget in display style', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: r'$$\frac{a}{b}$$',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+      final math = tester.widget<Math>(find.byType(Math));
+      expect(math.mathStyle, MathStyle.display);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(r'\[ … \] renders a Math widget in display style', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: r'\[ \int_0^1 x\,dx \]',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+      final math = tester.widget<Math>(find.byType(Math));
+      expect(math.mathStyle, MathStyle.display);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('display fragment sits on its own line', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: r'before \[ x \] after',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+      final plain = tester
+          .widget<SelectableText>(find.byType(SelectableText))
+          .textSpan!
+          .toPlainText();
+      // The WidgetSpan renders as U+FFFC; assert a newline directly before and
+      // after it, i.e. the fragment is alone on its line.
+      const obj = '￼';
+      expect(plain, contains('\n$obj\n'));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('literal brackets stay verbatim text (no Math widget)', (
+      tester,
+    ) async {
+      for (final literal in ['E[X]', '[CLS]', '[32,10]']) {
+        await tester.pumpWidget(
+          _host(
+            CardFace(
+              html: 'value $literal here',
+              hasLatex: false,
+              style: const TextStyle(fontSize: 18),
+            ),
+          ),
+        );
+        final plain = tester
+            .widget<SelectableText>(find.byType(SelectableText))
+            .textSpan!
+            .toPlainText();
+        expect(plain, contains(literal));
+        expect(find.byType(Math), findsNothing);
+        expect(tester.takeException(), isNull);
+      }
+    });
+
+    testWidgets('a lone literal dollar sign stays literal', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: r'costs $5 and $6',
+            hasLatex: false,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+      final plain = tester
+          .widget<SelectableText>(find.byType(SelectableText))
+          .textSpan!
+          .toPlainText();
+      expect(plain, r'costs $5 and $6');
+      expect(find.byType(Math), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('mixed inline and display math in one face', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: r'inline \(a+b\) then block \[ c^2 \] done',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+      // Inline `texBreak()` may split one expression into several Math widgets,
+      // so assert on the set of styles rather than an exact count: both an
+      // inline (text) and a block (display) fragment must be present.
+      final maths = tester.widgetList<Math>(find.byType(Math)).toList();
+      final styles = maths.map((m) => m.mathStyle).toSet();
+      expect(styles, containsAll(<MathStyle>[MathStyle.text, MathStyle.display]));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('display math inside a revealed cloze segment', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: r'The identity is {{c1::\[ e^{i\pi}+1=0 \]}}.',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+            revealCloze: true,
+          ),
+        ),
+      );
+      final math = tester.widget<Math>(find.byType(Math));
+      expect(math.mathStyle, MathStyle.display);
       expect(tester.takeException(), isNull);
     });
   });
