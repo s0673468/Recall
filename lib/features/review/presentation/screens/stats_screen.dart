@@ -8,13 +8,22 @@ import '../../application/review_controller.dart';
 import '../../application/stats_service.dart';
 import '../../data/recall_api.dart';
 import '../../domain/stats_models.dart';
+import '../widgets/concept_retention_panel.dart';
 import '../widgets/due_forecast_chart.dart';
 import '../widgets/retention_panel.dart';
 import '../widgets/review_heatmap.dart';
 
+/// The bundled inputs for the Concepts (METIS node-retention) section: the
+/// review log, the note guid -> tags map, and the concept metadata.
+typedef _ConceptInputs = ({
+  List<ReviewLogEntry> log,
+  Map<String, String> tags,
+  List<ConceptNodeInfo> nodes,
+});
+
 /// Stats v2: headline tiles, a 26-week review heatmap, a 14-day due forecast,
-/// and true-retention (30/90d). The three chart sections load independently —
-/// a failed forecast can't blank the heatmap.
+/// true-retention (30/90d), and METIS concept retention. The chart sections load
+/// independently — a failed forecast can't blank the heatmap.
 class StatsScreen extends StatefulWidget {
   final RecallApi api;
   final ReviewController controller;
@@ -29,6 +38,7 @@ class StatsScreenState extends State<StatsScreen> {
   late final StatsService _service = StatsService(widget.api);
   late Future<List<ReviewLogEntry>> _reviewLog;
   late Future<List<DateTime>> _dueDates;
+  late Future<_ConceptInputs> _conceptData;
   int _retentionWindow = 30;
 
   @override
@@ -40,6 +50,14 @@ class StatsScreenState extends State<StatsScreen> {
   void _fetch() {
     _reviewLog = _service.loadReviewLog();
     _dueDates = _service.loadDueDates();
+    // The Concepts section needs the review log plus the node<->card tag map and
+    // the concept metadata. Bundle them so it resolves (and fails) as one unit.
+    _conceptData = () async {
+      final tags = await _service.loadNoteTags();
+      final nodes = await _service.loadConceptNodes();
+      final log = await _reviewLog;
+      return (log: log, tags: tags, nodes: nodes);
+    }();
   }
 
   Future<void> reload() async {
@@ -47,6 +65,13 @@ class StatsScreenState extends State<StatsScreen> {
     await Future.wait([
       _reviewLog.catchError((_) => <ReviewLogEntry>[]),
       _dueDates.catchError((_) => <DateTime>[]),
+      _conceptData.catchError(
+        (_) => (
+          log: <ReviewLogEntry>[],
+          tags: <String, String>{},
+          nodes: <ConceptNodeInfo>[],
+        ),
+      ),
     ]);
   }
 
@@ -127,6 +152,27 @@ class StatsScreenState extends State<StatsScreen> {
               windowDays: _retentionWindow,
               onWindowChanged: (w) => setState(() => _retentionWindow = w),
             ),
+          ),
+          const SizedBox(height: UiSpacing.lg),
+
+          // Concepts — METIS node retention (weakest-first Again-rate).
+          _asyncSection<_ConceptInputs>(
+            future: _conceptData,
+            label: 'concepts',
+            builder: (data) {
+              final result = StatsService.computeNodeRetention(
+                reviewLog: data.log,
+                noteTags: data.tags,
+                conceptNodes: data.nodes,
+                now: today,
+              );
+              return ConceptRetentionPanel(
+                ranked: result.ranked,
+                notEnoughData: result.notEnoughData,
+                coveredNodeCount: result.coveredNodeCount,
+                totalConcepts: data.nodes.length,
+              );
+            },
           ),
           const SizedBox(height: UiSpacing.xl),
 

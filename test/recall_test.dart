@@ -243,6 +243,12 @@ class _FakeRecallApi implements RecallApi {
   }
 
   @override
+  Future<Map<String, String>> fetchNoteTags() async => const {};
+
+  @override
+  Future<List<ConceptNodeInfo>> fetchConceptNodes() async => const [];
+
+  @override
   Future<void> signIn({
     required String email,
     required String password,

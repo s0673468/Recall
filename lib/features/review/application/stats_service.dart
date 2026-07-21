@@ -14,10 +14,25 @@ class StatsService {
   /// Interval (days) at or above which a card counts as "mature".
   static const int matureIntervalDays = 21;
 
+  /// Concepts (node-retention) window + rank floor — mirror `metis
+  /// recall-signal`: a fortnight of reviews, ranked only once a node clears the
+  /// floor. Kept in sync with recall_signal.py's REVIEW_WINDOW_DAYS.
+  static const int conceptWindowDays = 14;
+  static const int conceptMinReviews = 4;
+
+  /// The `node::none` sentinel is a "deliberately un-mapped" marker, never a
+  /// real graph node — excluded from attribution entirely.
+  static const String _nodeTagPrefix = 'node::';
+  static const String _nodeNoneSentinel = 'none';
+
   Future<List<ReviewLogEntry>> loadReviewLog() =>
       api.fetchReviewLog(days: heatmapWeeks * 7 + 7);
 
   Future<List<DateTime>> loadDueDates() => api.fetchDueDates();
+
+  Future<Map<String, String>> loadNoteTags() => api.fetchNoteTags();
+
+  Future<List<ConceptNodeInfo>> loadConceptNodes() => api.fetchConceptNodes();
 
   static DateTime dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -135,6 +150,103 @@ class StatsService {
       youngPassed: youngPassed,
       matureTotal: matureTotal,
       maturePassed: maturePassed,
+    );
+  }
+
+  // ── Concepts (METIS node retention) ──
+
+  /// Concept-node ids from a space-delimited `notes.tags` string, order-preserving
+  /// + deduped, excluding the `node::none` sentinel. Mirrors recall_signal.py's
+  /// `node_tags`.
+  static List<String> nodeTags(String? tags) {
+    if (tags == null || tags.isEmpty) return const [];
+    final out = <String>[];
+    final seen = <String>{};
+    for (final token in tags.split(RegExp(r'\s+'))) {
+      if (!token.startsWith(_nodeTagPrefix)) continue;
+      final id = token.substring(_nodeTagPrefix.length);
+      if (id.isEmpty || id == _nodeNoneSentinel) continue;
+      if (seen.add(id)) out.add(id);
+    }
+    return out;
+  }
+
+  /// Per-node Again-rate over the last [window] days, weakest-first — the Stats
+  /// "Concepts" section. Semantics mirror `metis recall-signal` exactly:
+  ///
+  ///  * pass = rating ≥ 2, fail = rating 1 (Again);
+  ///  * a note's reviews attribute to EVERY `node::<id>` tag it carries
+  ///    (`node::none` excluded via [nodeTags]);
+  ///  * only nodes with ≥ [minReviews] reviews in the window are ranked
+  ///    (Again-rate descending); the rest are counted in `notEnoughData`;
+  ///  * `coveredNodeCount` is every node with ≥ 1 review in the window (the
+  ///    coverage numerator).
+  ///
+  /// [noteTags] maps note guid -> raw tags string. Reviews whose guid is absent
+  /// from the map (untagged, or the log row predates guid capture) contribute to
+  /// nothing. Pure — no I/O.
+  static ({
+    List<NodeRetention> ranked,
+    int notEnoughData,
+    int coveredNodeCount,
+  })
+  computeNodeRetention({
+    required List<ReviewLogEntry> reviewLog,
+    required Map<String, String> noteTags,
+    required List<ConceptNodeInfo> conceptNodes,
+    required DateTime now,
+    int window = conceptWindowDays,
+    int minReviews = conceptMinReviews,
+  }) {
+    final cutoff = dayOnly(now).subtract(Duration(days: window - 1));
+
+    // guid -> node ids, parsed once from the tag strings.
+    final guidNodes = <String, List<String>>{};
+    noteTags.forEach((guid, tags) {
+      final ids = nodeTags(tags);
+      if (ids.isNotEmpty) guidNodes[guid] = ids;
+    });
+
+    final reviews = <String, int>{};
+    final again = <String, int>{};
+    for (final r in reviewLog) {
+      if (dayOnly(r.at).isBefore(cutoff)) continue;
+      final guid = r.guid;
+      if (guid == null) continue;
+      final ids = guidNodes[guid];
+      if (ids == null) continue;
+      final ok = r.rating >= 2; // Anki true-retention convention
+      for (final nid in ids) {
+        reviews[nid] = (reviews[nid] ?? 0) + 1;
+        if (!ok) again[nid] = (again[nid] ?? 0) + 1;
+      }
+    }
+
+    final info = {for (final c in conceptNodes) c.nodeId: c};
+    final all = [
+      for (final entry in reviews.entries)
+        NodeRetention(
+          nodeId: entry.key,
+          title: info[entry.key]?.title,
+          module: info[entry.key]?.module,
+          reviews: entry.value,
+          againCount: again[entry.key] ?? 0,
+        ),
+    ];
+
+    final ranked = all.where((n) => n.reviews >= minReviews).toList()
+      ..sort((a, b) {
+        final byRate = b.againRate.compareTo(a.againRate); // weakest first
+        if (byRate != 0) return byRate;
+        final byVolume = b.reviews.compareTo(a.reviews); // more evidence first
+        if (byVolume != 0) return byVolume;
+        return a.nodeId.compareTo(b.nodeId); // stable tiebreak
+      });
+
+    return (
+      ranked: ranked,
+      notEnoughData: all.length - ranked.length,
+      coveredNodeCount: all.length,
     );
   }
 
