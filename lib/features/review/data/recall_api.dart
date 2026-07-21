@@ -392,18 +392,52 @@ class RecallApi {
         .toIso8601String();
     final rows = await client
         .from('review_log')
-        .select('rating_at,rating,state_after,due_after')
+        .select('guid,rating_at,rating,state_after,due_after')
         .gte('rating_at', since)
         .order('rating_at', ascending: true);
     return [
       for (final r in rows)
         ReviewLogEntry(
+          guid: r['guid'] as String?,
           at: DateTime.parse(r['rating_at'] as String).toLocal(),
           rating: (r['rating'] as num).toInt(),
           stateAfter: (r['state_after'] as num?)?.toInt(),
           dueAfter: r['due_after'] == null
               ? null
               : DateTime.parse(r['due_after'] as String).toLocal(),
+        ),
+    ];
+  }
+
+  /// note guid -> raw space-delimited `tags` string, for live notes that carry
+  /// at least one `node::` tag. Powers the Concepts (node-retention) section:
+  /// the service parses `node::<id>` tokens out of each tag string. Only tagged
+  /// notes are fetched, so the payload stays small.
+  Future<Map<String, String>> fetchNoteTags() async {
+    final rows = await client
+        .from('notes')
+        .select('guid,tags')
+        .eq('deleted', false)
+        .like('tags', '%node::%');
+    return {
+      for (final r in rows)
+        if (r['guid'] != null) (r['guid'] as String): (r['tags'] as String?) ?? '',
+    };
+  }
+
+  /// The METIS concept nodes (id -> title/module) mirrored into the cloud, used
+  /// to label the Concepts section. Tolerates an empty table — the section then
+  /// falls back to raw node ids (or hides when there is no node data at all).
+  Future<List<ConceptNodeInfo>> fetchConceptNodes() async {
+    final rows = await client
+        .from('concept_nodes')
+        .select('node_id,title,module');
+    return [
+      for (final r in rows)
+        ConceptNodeInfo(
+          nodeId: r['node_id'] as String,
+          title: (r['title'] as String?) ?? r['node_id'] as String,
+          module: (r['module'] as String?) ?? '',
         ),
     ];
   }

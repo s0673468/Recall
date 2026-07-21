@@ -8,6 +8,12 @@ ReviewLogEntry _entry(
   DateTime? dueAfter,
 }) => ReviewLogEntry(at: at, rating: rating, dueAfter: dueAfter);
 
+ReviewLogEntry _review(String? guid, DateTime at, int rating) =>
+    ReviewLogEntry(guid: guid, at: at, rating: rating);
+
+ConceptNodeInfo _node(String id, {String? title, String module = 'M00'}) =>
+    ConceptNodeInfo(nodeId: id, title: title ?? id, module: module);
+
 void main() {
   group('buildHeatmap', () {
     test('groups a UTC timestamp into its correct local day', () {
@@ -148,6 +154,154 @@ void main() {
       expect(t.recall, '—');
       expect(t.reviews, 0);
       expect(t.streak, 0);
+    });
+  });
+
+  group('nodeTags', () {
+    test('parses node:: tokens, dedupes, drops node::none and non-node tags', () {
+      expect(
+        StatsService.nodeTags('leech node::m00-a marked node::m01-b node::m00-a'),
+        ['m00-a', 'm01-b'],
+      );
+      expect(StatsService.nodeTags('node::none node::m02-c'), ['m02-c']);
+      expect(StatsService.nodeTags('node:: node::none'), isEmpty);
+      expect(StatsService.nodeTags(null), isEmpty);
+      expect(StatsService.nodeTags(''), isEmpty);
+    });
+  });
+
+  group('computeNodeRetention', () {
+    final now = DateTime(2026, 7, 20, 12);
+    DateTime daysAgo(int n) => now.subtract(Duration(days: n));
+
+    test("attributes a note's reviews to every node:: tag it carries", () {
+      // g1 teaches two nodes; 4 reviews, 1 Again → both nodes see 4 rev / 1 again.
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          _review('g1', daysAgo(1), 1),
+          _review('g1', daysAgo(1), 3),
+          _review('g1', daysAgo(2), 3),
+          _review('g1', daysAgo(2), 4),
+        ],
+        noteTags: {'g1': 'node::m00-a node::m01-b'},
+        conceptNodes: [_node('m00-a'), _node('m01-b')],
+        now: now,
+      );
+      expect(result.ranked.length, 2);
+      expect(result.coveredNodeCount, 2);
+      for (final n in result.ranked) {
+        expect(n.reviews, 4);
+        expect(n.againCount, 1);
+        expect(n.againRate, closeTo(0.25, 1e-9));
+      }
+    });
+
+    test('excludes the node::none sentinel entirely', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          for (var i = 0; i < 4; i++) _review('g1', daysAgo(1), 3),
+        ],
+        noteTags: {'g1': 'node::none'},
+        conceptNodes: const [],
+        now: now,
+      );
+      expect(result.ranked, isEmpty);
+      expect(result.coveredNodeCount, 0);
+      expect(result.notEnoughData, 0);
+    });
+
+    test('ranks only nodes at/above the floor; the rest are notEnoughData', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          // ranked: 4 reviews.
+          for (var i = 0; i < 4; i++) _review('g1', daysAgo(1), 3),
+          // below floor: 3 reviews.
+          for (var i = 0; i < 3; i++) _review('g2', daysAgo(1), 3),
+        ],
+        noteTags: {'g1': 'node::ranked', 'g2': 'node::thin'},
+        conceptNodes: [_node('ranked'), _node('thin')],
+        now: now,
+        minReviews: 4,
+      );
+      expect(result.ranked.map((n) => n.nodeId), ['ranked']);
+      expect(result.notEnoughData, 1);
+      expect(result.coveredNodeCount, 2); // both had reviews this window
+    });
+
+    test('orders weakest (highest Again-rate) first', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          // weak: 2/4 again = 50%.
+          _review('g1', daysAgo(1), 1),
+          _review('g1', daysAgo(1), 1),
+          _review('g1', daysAgo(1), 3),
+          _review('g1', daysAgo(1), 3),
+          // strong: 1/4 again = 25%.
+          _review('g2', daysAgo(1), 1),
+          _review('g2', daysAgo(1), 3),
+          _review('g2', daysAgo(1), 3),
+          _review('g2', daysAgo(1), 3),
+        ],
+        noteTags: {'g1': 'node::weak', 'g2': 'node::strong'},
+        conceptNodes: [_node('weak'), _node('strong')],
+        now: now,
+      );
+      expect(result.ranked.map((n) => n.nodeId), ['weak', 'strong']);
+    });
+
+    test('excludes reviews outside the window and with a null guid', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          _review('g1', daysAgo(20), 3), // outside 14d window
+          _review(null, daysAgo(1), 1), // null guid → attributes to nothing
+          for (var i = 0; i < 4; i++) _review('g1', daysAgo(1), 3),
+        ],
+        noteTags: {'g1': 'node::a'},
+        conceptNodes: [_node('a')],
+        now: now,
+      );
+      expect(result.ranked.single.reviews, 4);
+    });
+
+    test('a guid missing from the tags map contributes nothing', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          for (var i = 0; i < 4; i++) _review('untagged', daysAgo(1), 1),
+        ],
+        noteTags: const {}, // no tag mapping for this guid
+        conceptNodes: const [],
+        now: now,
+      );
+      expect(result.ranked, isEmpty);
+      expect(result.coveredNodeCount, 0);
+    });
+
+    test('leaves title/module null when no concept_nodes row resolves the id', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          for (var i = 0; i < 4; i++) _review('g1', daysAgo(1), 1),
+        ],
+        noteTags: {'g1': 'node::m99-orphan'},
+        conceptNodes: const [], // table empty / id absent
+        now: now,
+      );
+      final node = result.ranked.single;
+      expect(node.nodeId, 'm99-orphan');
+      expect(node.title, isNull);
+      expect(node.module, isNull);
+      expect(node.againRate, 1.0);
+    });
+
+    test('empty inputs → empty result, no throw', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: const [],
+        noteTags: const {},
+        conceptNodes: const [],
+        now: now,
+      );
+      expect(result.ranked, isEmpty);
+      expect(result.notEnoughData, 0);
+      expect(result.coveredNodeCount, 0);
     });
   });
 }
