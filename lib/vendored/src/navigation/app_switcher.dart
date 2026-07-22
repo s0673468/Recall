@@ -8,7 +8,7 @@ import 'app_switcher_platform_stub.dart'
     if (dart.library.js_interop) 'app_switcher_platform_web.dart'
     as platform;
 
-/// One installable app of the Health suite. All four web versions are served from the
+/// One installable app of the Health suite. The web apps are served from the
 /// same origin under one suite root (e.g. `https://<host>/Health/`), each at
 /// its own subpath.
 class HealthWebApp {
@@ -32,11 +32,6 @@ class HealthWebApp {
     'track/',
     Icons.checklist_rounded,
   );
-  static const lift = HealthWebApp._(
-    'Lift',
-    'lift/',
-    Icons.fitness_center_rounded,
-  );
   static const recall = HealthWebApp._(
     'Recall',
     'recall/',
@@ -44,11 +39,11 @@ class HealthWebApp {
   );
 
   /// Every app in the suite, in switcher display order.
-  static const List<HealthWebApp> all = [dashboard, track, lift, recall];
+  static const List<HealthWebApp> all = [dashboard, track, recall];
 }
 
 /// Resolves the suite root from a document base URI by stripping a trailing
-/// sub-app segment (`track/`, `lift/`, `recall/`). The dashboard's base *is*
+/// sub-app segment (`track/`, `recall/`). The dashboard's base *is*
 /// the root. Works on any host because nothing about the origin or the
 /// `/Health/` prefix is hardcoded — Flutter's injected `<base href>` already
 /// encodes the deployed path.
@@ -86,7 +81,7 @@ void _openApp(HealthWebApp app) {
   unawaited(platform.assignLocation('$root${app.subpath}'));
 }
 
-/// A compact pill row linking the four Health apps, highlighting [current].
+/// A compact pill row linking the active Health apps, highlighting [current].
 /// Browser builds stay in the suite; native iOS opens sibling apps in Safari.
 /// Other native platforms render nothing, so callers can drop it in unguarded.
 class AppSwitcher extends StatelessWidget {
@@ -168,7 +163,7 @@ class _AppPill extends StatelessWidget {
 }
 
 /// App-bar variant of [AppSwitcher]: a single icon button opening a menu of
-/// the four apps, for apps whose chrome has no settings surface to host the
+/// the active apps, for apps whose chrome has no settings surface to host the
 /// pill row. Supported on web and native iOS.
 class AppSwitcherMenuButton extends StatelessWidget {
   final HealthWebApp current;
