@@ -92,6 +92,34 @@ order. Review replay reconciles that instead of letting the last flush win
   passes the guard. Making it a true row version would need a dedicated
   version column, i.e. a schema migration.
 
+#### Replay is not fully idempotent
+
+The card merge and the `review_log` append are two separate writes, and
+PostgREST cannot put them in one transaction. The merge runs first, so a
+failure between them leaves no log row and the next flush retries the whole
+apply cleanly — but because counters now accumulate from server state, that
+retry can add a phantom `reps`/`lapses`.
+
+The merge recognises its own partial apply when the row already carries the
+review's `last_review`, which covers the common case. It is a heuristic, not
+idempotency, and three cases fall outside it:
+
+1. a review that **lost** the scheduling race wrote no `last_review`, so a
+   retry re-counts it;
+2. another device updating `last_review` between our merge and our log append
+   hides the evidence, so a retry re-counts;
+3. two devices rating at the identical instant are indistinguishable from our
+   own partial apply, so the second review's rep is dropped.
+
+All three need a network failure in a narrow window or a microsecond-exact
+collision, and all three are **counter-only**: `FsrsEngine` never reads
+`reps`/`lapses`, so scheduling cannot be corrupted by them, and every event is
+still logged, so the true count is recoverable from `review_log`.
+
+Closing this properly means doing both writes in one transaction — a Postgres
+function called over RPC, keyed on `client_event_id` — which is a schema
+migration and therefore a separate, sign-off-gated change.
+
 Replay stays idempotent through the `client_event_id` ledger. That id is
 minted per install (`LocalReviewStore.newEventId`) from an install id, a
 counter, and a random suffix: the outbox outlives a restart while in-memory

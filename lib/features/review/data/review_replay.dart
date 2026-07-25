@@ -134,9 +134,11 @@ Map<String, dynamic> mergeReviewIntoCard({
   };
 
   // We cannot order this review against a timestamp we cannot read, and the
-  // row holds real scheduling from some earlier write. Count the rep and leave
-  // the schedule alone rather than overwrite on a guess.
-  if (server.lastReviewUnreadable) return values;
+  // row holds real scheduling from some earlier write. Write nothing at all:
+  // a counters-only patch here would leave `last_review` untouched, so the
+  // equality check below could never recognise the merge on a later retry and
+  // every replay of this entry would add another phantom rep.
+  if (server.lastReviewUnreadable) return const {};
 
   final serverAt = server.lastReview;
   final eventAt = entry['last_review'] == null
@@ -147,7 +149,15 @@ Map<String, dynamic> mergeReviewIntoCard({
   // merged it and then failed before the log row landed. Counters are derived
   // from server state now, so repeating the merge would inflate `reps`; the
   // caller only needs to finish appending the log.
-  if (eventAt != null && serverAt != null && serverAt.isAtSameMomentAs(eventAt)) {
+  //
+  // This is a heuristic, not true idempotency — see "Replay is not fully
+  // idempotent" in the README. It cannot tell our own partial apply from a
+  // second device that rated at the identical instant, so that (vanishingly
+  // rare) tie loses a rep. Traded knowingly against retry double-counting,
+  // which a flaky mobile connection makes far more likely.
+  if (eventAt != null &&
+      serverAt != null &&
+      serverAt.isAtSameMomentAs(eventAt)) {
     return const {};
   }
 

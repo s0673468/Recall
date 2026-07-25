@@ -1289,6 +1289,29 @@ void main() {
       await api.applyReview(tie);
 
       expect(api.server.cards[5]!.stability, 2); // first writer's scheduling
+      // KNOWN RESIDUAL, pinned deliberately: the tie is indistinguishable from
+      // our own partial apply, so the second review's rep is dropped — reps is
+      // 4, not the 5 the "both reviews count" policy would give. Both events
+      // are still logged, so the history is complete and the count is
+      // recoverable. Fixing this needs true per-client_event_id idempotency
+      // (a transactional RPC); see the README.
+      expect(api.server.cards[5]!.reps, 4);
+      expect(api.server.reviewLog, hasLength(2));
+    });
+
+    test('an unreadable last_review writes nothing at all', () async {
+      // Failing closed on the whole row, not just the scheduling: a
+      // counters-only patch would leave last_review untouched, so every retry
+      // of this entry would add another phantom rep with no way to detect the
+      // earlier merge.
+      final server = CardSyncState.fromRow({
+        'reps': 9,
+        'lapses': 2,
+        'last_review': 'not-a-timestamp',
+      });
+
+      expect(server.lastReviewUnreadable, isTrue);
+      expect(mergeReviewIntoCard(server: server, entry: morning), isEmpty);
     });
 
     test('a never-reviewed card takes the incoming scheduling', () {
@@ -1304,24 +1327,6 @@ void main() {
       final values = mergeReviewIntoCard(server: server, entry: morning);
       expect(values['due'], morning['due']);
       expect(values['reps'], 1);
-    });
-
-    test('an unreadable server last_review is never clobbered', () {
-      // The row has been reviewed but we cannot tell when. Ordering is
-      // unknowable, so the merge must fail closed on the scheduling columns
-      // instead of assuming this review is newer.
-      final server = CardSyncState.fromRow({
-        'reps': 9,
-        'lapses': 2,
-        'last_review': 'not-a-timestamp',
-      });
-
-      expect(server.lastReviewUnreadable, isTrue);
-      final values = mergeReviewIntoCard(server: server, entry: morning);
-      expect(values['reps'], 10); // the review still counts
-      expect(values.keys, isNot(contains('due')));
-      expect(values.keys, isNot(contains('stability')));
-      expect(values.keys, isNot(contains('last_review')));
     });
 
     test('a colliding client_event_id discards a genuine review', () async {
