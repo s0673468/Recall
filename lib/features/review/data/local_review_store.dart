@@ -82,9 +82,19 @@ class LocalReviewStore {
     return '$install-${++_eventSequence}-${_token()}';
   }
 
-  static String _token() =>
-      _random.nextInt(1 << 32).toRadixString(36) +
-      _random.nextInt(1 << 32).toRadixString(36);
+  /// ~62 bits of entropy over a lowercase-alphanumeric alphabet.
+  ///
+  /// Deliberately built from small `nextInt` draws rather than shifted 32-bit
+  /// integers: Recall also builds to web, where Dart ints are JS doubles and a
+  /// `1 << 32` would silently collapse to 1 — every token would be identical
+  /// on exactly the platform where this is hardest to notice.
+  static String _token([int length = 12]) {
+    const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
+    return String.fromCharCodes([
+      for (var i = 0; i < length; i++)
+        alphabet.codeUnitAt(_random.nextInt(alphabet.length)),
+    ]);
+  }
 
   Future<T> _withOutboxLock<T>(Future<T> Function() action) {
     final run = _outboxTail.then((_) => action());

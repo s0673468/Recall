@@ -1730,6 +1730,44 @@ void main() {
       expect(result.remaining, 1);
     });
 
+    test('event ids are unique and share one stable install id', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+
+      final ids = [for (var i = 0; i < 200; i++) await store.newEventId()];
+
+      expect(ids.toSet(), hasLength(200));
+      final install = await store.installId();
+      expect(install, isNotEmpty);
+      expect(ids.every((id) => id.startsWith('$install-')), isTrue);
+      // The random suffix must actually vary — a platform where the entropy
+      // collapsed (web's 32-bit shifts) would still pass a uniqueness check on
+      // the counter alone, so assert the tails differ too.
+      final tails = {for (final id in ids) id.split('-').last};
+      expect(tails.length, greaterThan(190));
+    });
+
+    test('a second store on the same install reuses its id', () async {
+      SharedPreferences.setMockInitialValues({});
+      final first = await LocalReviewStore().installId();
+      // A fresh instance (app restart) must not mint a new identity.
+      expect(await LocalReviewStore().installId(), first);
+    });
+
+    test('the install id survives sign-out', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      final before = await store.installId();
+
+      await store.clear();
+
+      // It identifies the device, not the user: reviews still queued from a
+      // previous session keep their uniqueness guarantee.
+      final sp = await SharedPreferences.getInstance();
+      expect(sp.getString(LocalReviewStore.installIdKey), before);
+      expect(await LocalReviewStore().installId(), before);
+    });
+
     test('clear() drops snapshot + outbox (sign-out)', () async {
       SharedPreferences.setMockInitialValues({});
       final store = LocalReviewStore();
