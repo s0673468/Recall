@@ -16,6 +16,7 @@ import 'package:health_anki_flutter/features/review/application/review_controlle
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
+import 'package:health_anki_flutter/features/review/data/review_replay.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
 import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
@@ -84,9 +85,156 @@ ReviewCard _card({
   cloudSeen: cloudSeen,
 );
 
+/// One row of the modelled `cards` table — the mutable server-side scheduling
+/// state a replay merges into.
+class _ServerCard {
+  double? stability;
+  double? difficulty;
+  DateTime? due;
+  int state;
+  int reps;
+  int lapses;
+  DateTime? lastReview;
+  bool cloudSeen;
+
+  _ServerCard({
+    required this.stability,
+    required this.difficulty,
+    required this.due,
+    required this.state,
+    required this.reps,
+    required this.lapses,
+    required this.lastReview,
+    required this.cloudSeen,
+  });
+
+  factory _ServerCard.from(ReviewCard c) => _ServerCard(
+    stability: c.stability,
+    difficulty: c.difficulty,
+    due: c.due,
+    state: c.state,
+    reps: c.reps,
+    lapses: c.lapses,
+    lastReview: c.lastReview,
+    cloudSeen: c.cloudSeen,
+  );
+
+  /// Apply a PATCH: only the columns actually present in [values] move, which
+  /// is what lets a stale replay update `reps`/`lapses` while leaving the
+  /// newer device's scheduling untouched.
+  void patch(Map<String, dynamic> values) {
+    for (final entry in values.entries) {
+      switch (entry.key) {
+        case 'stability':
+          stability = (entry.value as num?)?.toDouble();
+        case 'difficulty':
+          difficulty = (entry.value as num?)?.toDouble();
+        case 'due':
+          due = entry.value == null
+              ? null
+              : DateTime.parse(entry.value as String);
+        case 'state':
+          state = (entry.value as num).toInt();
+        case 'reps':
+          reps = (entry.value as num).toInt();
+        case 'lapses':
+          lapses = (entry.value as num).toInt();
+        case 'last_review':
+          lastReview = entry.value == null
+              ? null
+              : DateTime.parse(entry.value as String);
+        case 'cloud_seen':
+          cloudSeen = entry.value as bool;
+      }
+    }
+  }
+}
+
+/// Raised when an insert violates the modelled `(card_id, client_event_id)`
+/// unique index — the constraint that makes replay idempotent server-side.
+class _DuplicateEventError extends Error {
+  final int cardId;
+  final String clientEventId;
+  _DuplicateEventError(this.cardId, this.clientEventId);
+
+  @override
+  String toString() =>
+      'duplicate key: (card_id, client_event_id) = ($cardId, $clientEventId)';
+}
+
+/// The shared server two devices sync against: a card table keyed by id and an
+/// append-only review log with a real uniqueness constraint. Pass one instance
+/// to several [_FakeRecallApi]s to model a multi-device collection.
+class _FakeServer {
+  final Map<int, _ServerCard> cards = {};
+  final List<Map<String, dynamic>> reviewLog = [];
+
+  /// Matches the previous recorder's numbering so existing undo tests keep
+  /// asserting the same review_log ids.
+  int nextLogId = 900;
+
+  /// Awaited inside the guarded card update — lets a test interleave another
+  /// device's write and force the compare-and-swap to lose.
+  Future<void> Function()? beforeCardUpdate;
+
+  void seed(ReviewCard card) =>
+      cards.putIfAbsent(card.id, () => _ServerCard.from(card));
+
+  int? findLogByEventId(int cardId, String clientEventId) {
+    for (final row in reviewLog) {
+      if (row['card_id'] == cardId &&
+          row['client_event_id'] == clientEventId) {
+        return row['id'] as int;
+      }
+    }
+    return null;
+  }
+
+  int? findLogLegacy(int cardId, Object? ratingAt, Object? device) {
+    for (final row in reviewLog.reversed) {
+      if (row['card_id'] == cardId &&
+          row['rating_at'] == ratingAt &&
+          row['device'] == device) {
+        return row['id'] as int;
+      }
+    }
+    return null;
+  }
+
+  int appendLog(Map<String, dynamic> entry, {String? clientEventId}) {
+    final cardId = (entry['card_id'] as num).toInt();
+    if (clientEventId != null &&
+        findLogByEventId(cardId, clientEventId) != null) {
+      throw _DuplicateEventError(cardId, clientEventId);
+    }
+    final id = ++nextLogId;
+    reviewLog.add({
+      'id': id,
+      'card_id': cardId,
+      'guid': entry['guid'],
+      'rating': entry['rating'],
+      'rating_at': entry['last_review'],
+      'device': entry['device'],
+      'client_event_id': clientEventId,
+    });
+    return id;
+  }
+
+  void deleteLog(Object? logId) =>
+      reviewLog.removeWhere((row) => row['id'] == logId);
+}
+
 class _FakeRecallApi implements RecallApi {
   final List<ReviewCard> queue;
   final FsrsSettings? fsrsSettings;
+
+  /// The server this device syncs against. Two fakes sharing one instance is
+  /// how a two-device conflict is expressed.
+  final _FakeServer server;
+
+  /// Overridable so two devices in one test are distinguishable in the log.
+  final String deviceLabel;
+
   User? user;
   Map<int, ({int due, int neu})> deckCounts = const {};
   bool failDeckCounts = false;
@@ -110,7 +258,16 @@ class _FakeRecallApi implements RecallApi {
   int? lastNewLimit;
   NewOrder? lastOrder;
 
-  _FakeRecallApi(this.queue, {this.fsrsSettings});
+  _FakeRecallApi(
+    this.queue, {
+    this.fsrsSettings,
+    _FakeServer? server,
+    this.deviceLabel = 'test',
+  }) : server = server ?? _FakeServer() {
+    for (final card in queue) {
+      this.server.seed(card);
+    }
+  }
 
   @override
   SupabaseClient get client => throw UnimplementedError();
@@ -119,7 +276,33 @@ class _FakeRecallApi implements RecallApi {
   User? get currentUser => user;
 
   @override
-  String get device => 'test';
+  String get device => deviceLabel;
+
+  /// The queue as the *server* currently holds it: card content from the
+  /// fixture, scheduling state from the card table. A device that loads after
+  /// another has synced therefore sees the other's work, which is what makes a
+  /// divergent second review expressible.
+  ReviewCard _project(ReviewCard template) {
+    final row = server.cards[template.id];
+    if (row == null) return template;
+    return ReviewCard(
+      id: template.id,
+      guid: template.guid,
+      deckId: template.deckId,
+      front: template.front,
+      back: template.back,
+      hasLatex: template.hasLatex,
+      stability: row.stability,
+      difficulty: row.difficulty,
+      due: row.due,
+      state: row.state,
+      reps: row.reps,
+      lapses: row.lapses,
+      lastReview: row.lastReview,
+      cloudSeen: row.cloudSeen,
+      latexSvg: template.latexSvg,
+    );
+  }
 
   @override
   Stream<AuthState> get onAuthStateChange => const Stream<AuthState>.empty();
@@ -139,10 +322,9 @@ class _FakeRecallApi implements RecallApi {
     lastNewLimit = newLimit;
     lastOrder = order;
     await beforeQueue?.call();
-    if (deckId == null) return queue;
     return [
       for (final c in queue)
-        if (c.deckId == deckId) c,
+        if (deckId == null || c.deckId == deckId) _project(c),
     ];
   }
 
@@ -156,10 +338,6 @@ class _FakeRecallApi implements RecallApi {
   Future<void> saveRecallPrefs(Map<String, dynamic> value) async =>
       savedRecallPrefs.add(value);
 
-  /// Auto-incrementing review_log id handed back per delivery, so undo tests
-  /// can assert the flushed row is the one that gets deleted.
-  int nextLogId = 900;
-
   /// Every restore entry undoReview received, in order.
   final List<Map<String, dynamic>> undone = [];
   bool failUndoReview = false;
@@ -168,11 +346,48 @@ class _FakeRecallApi implements RecallApi {
   /// Awaited inside undoReview — lets tests hold the cloud undo open.
   Future<void> Function()? beforeUndoReview;
 
+  /// Mirrors `RecallApi.applyReview` step for step: suppress a duplicate off
+  /// the log's uniqueness constraint, merge through the *production* replay
+  /// algorithm, then append the log row. Only the transport is fake.
   @override
   Future<int?> applyReview(Map<String, dynamic> e) async {
     await beforeApplyReview?.call();
+    final cardId = (e['card_id'] as num).toInt();
+    final eventId = e['client_id']?.toString();
+    final existing = eventId != null
+        ? server.findLogByEventId(cardId, eventId)
+        : server.findLogLegacy(cardId, e['last_review'], e['device']);
+    if (existing != null) return existing;
+
+    await applyMergedReview(this, e);
+    if (failLogInsert) throw StateError('review_log insert failed');
     applied.add(e);
-    return ++nextLogId;
+    return server.appendLog(e, clientEventId: eventId);
+  }
+
+  @override
+  Future<CardSyncState?> readCardState(int cardId) async {
+    final row = server.cards[cardId];
+    return row == null
+        ? null
+        : CardSyncState(
+            reps: row.reps,
+            lapses: row.lapses,
+            lastReview: row.lastReview?.toUtc(),
+          );
+  }
+
+  @override
+  Future<int> updateCardWhereReps(
+    int cardId, {
+    required int? expectedReps,
+    required Map<String, dynamic> values,
+  }) async {
+    await server.beforeCardUpdate?.call();
+    final row = server.cards[cardId];
+    if (row == null || row.reps != expectedReps) return 0;
+    row.patch(values);
+    return 1;
   }
 
   /// Every flag applyFlag delivered, in order.
@@ -180,6 +395,10 @@ class _FakeRecallApi implements RecallApi {
 
   /// When true, applyFlag throws — simulates the note_flags table not existing.
   bool failApplyFlag = false;
+
+  /// When true, the card merge commits but appending the log row throws —
+  /// the partial-apply window between applyReview's two writes.
+  bool failLogInsert = false;
 
   /// Awaited inside applyFlag — lets tests hold the flag flush open.
   Future<void> Function()? beforeApplyFlag;
@@ -196,6 +415,10 @@ class _FakeRecallApi implements RecallApi {
     await beforeUndoReview?.call();
     if (failUndoReview) throw StateError('undo failed');
     undone.add(e);
+    // Undo is a straight restore of the pre-rating snapshot (unguarded, like
+    // production) plus the log-row delete.
+    server.cards[(e['card_id'] as num).toInt()]?.patch(e);
+    server.deleteLog(e['review_log_id']);
   }
 
   @override
@@ -203,7 +426,21 @@ class _FakeRecallApi implements RecallApi {
     ReviewCard card,
     ReviewOutcome o, {
     int? elapsedMs,
-  }) => {'card_id': card.id, 'rating': o.rating, 'elapsed_ms': elapsedMs};
+  }) => {
+    'card_id': card.id,
+    'guid': card.guid,
+    'stability': o.stability,
+    'difficulty': o.difficulty,
+    'due': o.due.toIso8601String(),
+    'state': o.state,
+    'reps': o.reps,
+    'lapses': o.lapses,
+    'last_review': o.reviewedAt.toIso8601String(),
+    'rating': o.rating,
+    'elapsed_ms': elapsedMs,
+    'device': device,
+    'lapsed': o.lapses > card.lapses,
+  };
 
   @override
   Map<String, dynamic> restoreEntry(ReviewCard card) => {
@@ -863,6 +1100,310 @@ void main() {
     );
   });
 
+  group('Multi-device sync', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    /// A card both devices already hold: reviewed three times, lapsed once.
+    ReviewCard studied() => _card(
+      id: 5,
+      state: 2,
+      stability: 10,
+      difficulty: 5,
+      reps: 3,
+      lapses: 1,
+      due: DateTime.utc(2026, 6, 1),
+      lastReview: DateTime.utc(2026, 5, 25),
+      cloudSeen: true,
+    );
+
+    /// One device's queued review of that card. `reps`/`lapses` carry the
+    /// absolute values computed off *this* device's snapshot — the numbers the
+    /// unguarded replay used to write straight through.
+    Map<String, dynamic> event({
+      required String device,
+      required DateTime at,
+      required int rating,
+      required int state,
+      required bool lapsed,
+      required double stability,
+    }) => {
+      'card_id': 5,
+      'guid': 'g5',
+      'stability': stability,
+      'difficulty': 5.0,
+      'due': at.add(const Duration(days: 10)).toIso8601String(),
+      'state': state,
+      'reps': 4,
+      'lapses': lapsed ? 2 : 1,
+      'last_review': at.toIso8601String(),
+      'rating': rating,
+      'device': device,
+      'client_id': '$device-event-1',
+      'lapsed': lapsed,
+    };
+
+    final morning = event(
+      device: 'phone',
+      at: DateTime.utc(2026, 6, 10, 9),
+      rating: 3,
+      state: 2,
+      lapsed: false,
+      stability: 20,
+    );
+    final evening = event(
+      device: 'ipad',
+      at: DateTime.utc(2026, 6, 10, 17),
+      rating: 1,
+      state: 3,
+      lapsed: true,
+      stability: 2,
+    );
+
+    /// Two devices, one server, flushing in the given order.
+    Future<_ServerCard> syncInOrder(List<Map<String, dynamic>> order) async {
+      final server = _FakeServer();
+      final devices = {
+        'phone': _FakeRecallApi(
+          [studied()],
+          server: server,
+          deviceLabel: 'phone',
+        ),
+        'ipad': _FakeRecallApi([studied()], server: server, deviceLabel: 'ipad'),
+      };
+      for (final e in order) {
+        await devices[e['device']]!.applyReview(e);
+      }
+      return server.cards[5]!;
+    }
+
+    test('two offline devices converge whichever order they sync', () async {
+      final forward = await syncInOrder([morning, evening]);
+      final reverse = await syncInOrder([evening, morning]);
+
+      for (final card in [forward, reverse]) {
+        // Both reviews really happened, so both are counted — accumulated from
+        // server state rather than taken from either device's snapshot.
+        expect(card.reps, 5);
+        expect(card.lapses, 2);
+        // The later review owns the schedule no matter when it arrives.
+        expect(card.lastReview, DateTime.utc(2026, 6, 10, 17));
+        expect(card.state, 3);
+        expect(card.stability, 2);
+      }
+    });
+
+    test('a late replay counts its rep without rewinding the card', () async {
+      // Evening synced first; the morning review arrives afterwards. Its older
+      // scheduling must not drag the card back to a due date already superseded.
+      final api = _FakeRecallApi([studied()]);
+      await api.applyReview(evening);
+      final scheduledDue = api.server.cards[5]!.due;
+
+      await api.applyReview(morning);
+
+      final card = api.server.cards[5]!;
+      expect(card.due, scheduledDue);
+      expect(card.stability, 2);
+      expect(card.state, 3);
+      expect(card.reps, 5); // still counted
+    });
+
+    test('reps and lapses never take a stale absolute snapshot', () async {
+      // Both entries claim `reps: 4` off their own stale local card. Writing
+      // either one through verbatim would lose the other device's review.
+      final api = _FakeRecallApi([studied()]);
+      await api.applyReview(morning);
+      expect(api.server.cards[5]!.reps, 4);
+      expect(api.server.cards[5]!.lapses, 1);
+
+      await api.applyReview(evening);
+      expect(api.server.cards[5]!.reps, 5);
+      expect(api.server.cards[5]!.lapses, 2);
+    });
+
+    test('a lost compare-and-swap re-merges instead of clobbering', () async {
+      final api = _FakeRecallApi([studied()]);
+      // Another device commits between this replay's read and its write.
+      var interposed = false;
+      api.server.beforeCardUpdate = () async {
+        if (interposed) return;
+        interposed = true;
+        api.server.cards[5]!
+          ..reps += 1
+          ..lastReview = DateTime.utc(2026, 6, 10, 12);
+      };
+
+      await api.applyReview(morning);
+
+      expect(interposed, isTrue);
+      // The interloper's rep survived and ours landed on top of it.
+      expect(api.server.cards[5]!.reps, 5);
+      // Its review was newer than ours, so it kept the schedule.
+      expect(api.server.cards[5]!.lastReview, DateTime.utc(2026, 6, 10, 12));
+    });
+
+    test('a permanently contended card defers rather than corrupts', () async {
+      final api = _FakeRecallApi([studied()]);
+      api.server.beforeCardUpdate = () async => api.server.cards[5]!.reps += 1;
+
+      await expectLater(
+        api.applyReview(morning),
+        throwsA(isA<ReviewReplayConflict>()),
+      );
+      // Nothing logged: the review stays in the outbox for the next flush.
+      expect(api.server.reviewLog, isEmpty);
+    });
+
+    test('a retry after a failed log insert does not double-count', () async {
+      // applyReview merges the card first, then appends the log. A failure in
+      // between leaves the outbox entry queued with no log row, so the next
+      // flush's client_event_id probe finds nothing and retries the whole
+      // apply. Since counters now accumulate from server state, repeating the
+      // merge would inflate reps — the merge has to notice it already landed.
+      final api = _FakeRecallApi([studied()])..failLogInsert = true;
+
+      await expectLater(api.applyReview(morning), throwsA(isA<StateError>()));
+      expect(api.server.cards[5]!.reps, 4); // card merged
+      expect(api.server.reviewLog, isEmpty); // log did not
+
+      api.failLogInsert = false;
+      await api.applyReview(morning); // the outbox retries it
+
+      expect(api.server.cards[5]!.reps, 4); // not 5
+      expect(api.server.cards[5]!.lapses, 1);
+      expect(api.server.reviewLog, hasLength(1));
+    });
+
+    test('an exact timestamp tie leaves the first writer alone', () async {
+      // Strict `isAfter` means equal timestamps do not win the schedule, so
+      // two devices rating in the same instant resolve first-writer-wins
+      // rather than thrashing on flush order.
+      final api = _FakeRecallApi([studied()]);
+      final tie = {
+        ...evening,
+        'client_id': 'other-device',
+        'stability': 99.0,
+      };
+
+      await api.applyReview(evening);
+      await api.applyReview(tie);
+
+      expect(api.server.cards[5]!.stability, 2); // first writer's scheduling
+      // KNOWN RESIDUAL, pinned deliberately: the tie is indistinguishable from
+      // our own partial apply, so the second review's rep is dropped — reps is
+      // 4, not the 5 the "both reviews count" policy would give. Both events
+      // are still logged, so the history is complete and the count is
+      // recoverable. Fixing this needs true per-client_event_id idempotency
+      // (a transactional RPC); see the README.
+      expect(api.server.cards[5]!.reps, 4);
+      expect(api.server.reviewLog, hasLength(2));
+    });
+
+    test('an unreadable last_review writes nothing at all', () async {
+      // Failing closed on the whole row, not just the scheduling: a
+      // counters-only patch would leave last_review untouched, so every retry
+      // of this entry would add another phantom rep with no way to detect the
+      // earlier merge.
+      final server = CardSyncState.fromRow({
+        'reps': 9,
+        'lapses': 2,
+        'last_review': 'not-a-timestamp',
+      });
+
+      expect(server.lastReviewUnreadable, isTrue);
+      expect(mergeReviewIntoCard(server: server, entry: morning), isEmpty);
+    });
+
+    test('a never-reviewed card takes the incoming scheduling', () {
+      // last_review IS NULL means nobody has reviewed it, so this review is
+      // unambiguously the newest thing the row has ever seen.
+      final server = CardSyncState.fromRow({
+        'reps': 0,
+        'lapses': 0,
+        'last_review': null,
+      });
+
+      expect(server.lastReviewUnreadable, isFalse);
+      final values = mergeReviewIntoCard(server: server, entry: morning);
+      expect(values['due'], morning['due']);
+      expect(values['reps'], 1);
+    });
+
+    test('a colliding client_event_id discards a genuine review', () async {
+      // Why the durable id has to be unique: the server dedupes on it alone,
+      // so two different reviews wearing the same id collapse into one.
+      final api = _FakeRecallApi([studied()]);
+      final second = {...evening, 'client_id': morning['client_id']};
+
+      await api.applyReview(morning);
+      await api.applyReview(second);
+
+      expect(api.server.reviewLog, hasLength(1));
+      expect(api.server.cards[5]!.reps, 4); // the evening review vanished
+    });
+
+    test(
+      'a restart with a rolled-back clock still delivers both reviews',
+      () async {
+        // The outbox survives a restart but the in-memory counters do not. If
+        // the durable id were only clock+counter, a device whose clock rolled
+        // back to the same instant would mint the same id twice and the server
+        // would discard the second review as a replay.
+        final at = DateTime.utc(2026, 7, 20, 12);
+        final server = _FakeServer();
+        final store = LocalReviewStore();
+        ReviewCard due() => _card(
+          id: 1,
+          state: 2,
+          stability: 10,
+          difficulty: 5,
+          reps: 3,
+          due: DateTime.utc(2026, 7, 1),
+          lastReview: DateTime.utc(2026, 6, 25),
+        );
+
+        Future<ReviewController> session() async {
+          final api = _FakeRecallApi([due()], server: server)
+            ..beforeApplyReview = () async => throw StateError('offline');
+          final controller = ReviewController(
+            api: api,
+            engine: FsrsEngine(),
+            store: store,
+            clock: () => at,
+          );
+          await controller.load();
+          controller.flip();
+          await controller.rate(Rating.good);
+          return controller;
+        }
+
+        final first = await session();
+        first.dispose(); // app killed; sequence counters reset
+        final second = await session();
+        addTearDown(second.dispose);
+
+        final queued = await store.outbox();
+        expect(queued, hasLength(2));
+        expect(queued[0]['client_id'], isNot(queued[1]['client_id']));
+
+        // Back online: both must land as separate reviews.
+        final api = _FakeRecallApi([due()], server: server);
+        final online = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+          clock: () => at,
+        );
+        addTearDown(online.dispose);
+        await online.syncPending();
+
+        expect(await store.outbox(), isEmpty);
+        expect(server.reviewLog, hasLength(2));
+        expect(server.cards[1]!.reps, 5);
+      },
+    );
+  });
+
   group('UI widgets', () {
     testWidgets('RatingBar shows all four ratings and reports taps', (
       tester,
@@ -1267,6 +1808,44 @@ void main() {
       result = await store.removeEntry(99);
       expect(result.removed, isFalse);
       expect(result.remaining, 1);
+    });
+
+    test('event ids are unique and share one stable install id', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+
+      final ids = [for (var i = 0; i < 200; i++) await store.newEventId()];
+
+      expect(ids.toSet(), hasLength(200));
+      final install = await store.installId();
+      expect(install, isNotEmpty);
+      expect(ids.every((id) => id.startsWith('$install-')), isTrue);
+      // The random suffix must actually vary — a platform where the entropy
+      // collapsed (web's 32-bit shifts) would still pass a uniqueness check on
+      // the counter alone, so assert the tails differ too.
+      final tails = {for (final id in ids) id.split('-').last};
+      expect(tails.length, greaterThan(190));
+    });
+
+    test('a second store on the same install reuses its id', () async {
+      SharedPreferences.setMockInitialValues({});
+      final first = await LocalReviewStore().installId();
+      // A fresh instance (app restart) must not mint a new identity.
+      expect(await LocalReviewStore().installId(), first);
+    });
+
+    test('the install id survives sign-out', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      final before = await store.installId();
+
+      await store.clear();
+
+      // It identifies the device, not the user: reviews still queued from a
+      // previous session keep their uniqueness guarantee.
+      final sp = await SharedPreferences.getInstance();
+      expect(sp.getString(LocalReviewStore.installIdKey), before);
+      expect(await LocalReviewStore().installId(), before);
     });
 
     test('clear() drops snapshot + outbox (sign-out)', () async {

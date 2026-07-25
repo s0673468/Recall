@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,12 +27,74 @@ class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
+  static const installIdKey = 'recall_install_id_v1';
 
   Future<void> _outboxTail = Future.value();
   Future<SharedPreferences>? _prefsFuture;
+  String? _installId;
+  int _eventSequence = 0;
 
   Future<SharedPreferences> get _prefs =>
       _prefsFuture ??= SharedPreferences.getInstance();
+
+  /// Random source for durable ids. `Random.secure()` can be unavailable on
+  /// some embedders; uniqueness (not unpredictability) is what matters here,
+  /// so a plain PRNG is an acceptable fallback.
+  static final Random _random = () {
+    try {
+      return Random.secure();
+    } on UnsupportedError {
+      return Random();
+    }
+  }();
+
+  /// This installation's stable identity, minted once and reused for the life
+  /// of the install. It scopes durable event ids to one device so two devices
+  /// studying the same collection can never mint the same id.
+  ///
+  /// Deliberately NOT cleared by [clear]: it identifies the device, not the
+  /// user, and keeping it stable across sign-out preserves the uniqueness
+  /// guarantee for reviews still queued from a previous session.
+  Future<String> installId() {
+    final cached = _installId;
+    if (cached != null) return Future.value(cached);
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      var value = prefs.getString(installIdKey);
+      if (value == null || value.isEmpty) {
+        value = _token();
+        await prefs.setString(installIdKey, value);
+      }
+      return _installId = value;
+    });
+  }
+
+  /// A durable, globally unique id for one study action.
+  ///
+  /// Three parts, each covering a different collision: the install id
+  /// separates devices, the counter separates actions within a run, and the
+  /// random suffix separates runs. The suffix is what makes the id independent
+  /// of the clock — the outbox outlives a restart while the counter resets, so
+  /// a device whose clock rolled back would otherwise mint an id it had
+  /// already used and the server would discard the review as a replay.
+  Future<String> newEventId() async {
+    final install = await installId();
+    return '$install-${++_eventSequence}-${_token()}';
+  }
+
+  /// ~62 bits of entropy over a lowercase-alphanumeric alphabet.
+  ///
+  /// Deliberately built from small `nextInt` draws rather than shifted 32-bit
+  /// integers: Recall also builds to web, where Dart ints are JS doubles and a
+  /// `1 << 32` would silently collapse to 1 — every token would be identical
+  /// on exactly the platform where this is hardest to notice.
+  static String _token([int length = 12]) {
+    const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
+    return String.fromCharCodes([
+      for (var i = 0; i < length; i++)
+        alphabet.codeUnitAt(_random.nextInt(alphabet.length)),
+    ]);
+  }
 
   Future<T> _withOutboxLock<T>(Future<T> Function() action) {
     final run = _outboxTail.then((_) => action());

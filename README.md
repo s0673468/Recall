@@ -67,25 +67,78 @@ buffer — never an authority.
   *review/scheduling* half: it computes FSRS outcomes and writes the resulting
   scheduling state + review log back to Supabase.
 
+### Multi-device review conflicts
+
+Two devices can each rate the same card while offline and flush in either
+order. Review replay reconciles that instead of letting the last flush win
+(`lib/features/review/data/review_replay.dart`):
+
+- **Scheduling is newest-review-wins.** Whichever review carries the later
+  `last_review` owns `stability`/`difficulty`/`due`/`state`. A review that
+  syncs late but *happened* earlier leaves those columns alone rather than
+  dragging the card back to a superseded due date.
+- **`reps`/`lapses` accumulate from server state**, never from the absolute
+  values a device computed off its own snapshot. Both reviews really happened,
+  so both are counted regardless of which one won the scheduling.
+- **The write is compare-and-swap on `reps`.** Every applied review bumps
+  `reps` by exactly one, so it serves as a version for *review* writes: the
+  update only lands if the row still holds the value the merge was computed
+  from, otherwise the replay re-reads and re-merges. A card that stays
+  contended through four rounds defers — the review stays in the outbox —
+  rather than landing a stale write.
+
+  Note the limit: this detects concurrent **reviews**, not every writer. A
+  path that changes scheduling without incrementing `reps` (undo, below) still
+  passes the guard. Making it a true row version would need a dedicated
+  version column, i.e. a schema migration.
+
+#### Replay is not fully idempotent
+
+The card merge and the `review_log` append are two separate writes, and
+PostgREST cannot put them in one transaction. The merge runs first, so a
+failure between them leaves no log row and the next flush retries the whole
+apply cleanly — but because counters now accumulate from server state, that
+retry can add a phantom `reps`/`lapses`.
+
+The merge recognises its own partial apply when the row already carries the
+review's `last_review`, which covers the common case. It is a heuristic, not
+idempotency, and three cases fall outside it:
+
+1. a review that **lost** the scheduling race wrote no `last_review`, so a
+   retry re-counts it;
+2. another device updating `last_review` between our merge and our log append
+   hides the evidence, so a retry re-counts;
+3. two devices rating at the identical instant are indistinguishable from our
+   own partial apply, so the second review's rep is dropped.
+
+All three need a network failure in a narrow window or a microsecond-exact
+collision, and all three are **counter-only**: `FsrsEngine` never reads
+`reps`/`lapses`, so scheduling cannot be corrupted by them, and every event is
+still logged, so the true count is recoverable from `review_log`.
+
+Closing this properly means doing both writes in one transaction — a Postgres
+function called over RPC, keyed on `client_event_id` — which is a schema
+migration and therefore a separate, sign-off-gated change.
+
+Replay stays idempotent through the `client_event_id` ledger. That id is
+minted per install (`LocalReviewStore.newEventId`) from an install id, a
+counter, and a random suffix: the outbox outlives a restart while in-memory
+counters reset, so a purely clock-derived id could repeat after a clock
+rollback and the server would discard a genuine review as a replay.
+
 ### Known divergences from strict server-wins
 
-Two write paths use last-write-wins rather than a server-version guard. Both are
-tolerable for a single user across a handful of devices, but they are the spots
-where a *stale local write* can overwrite a fresher server value:
-
-- **Outbox replay overwrites the `cards` row unconditionally** (`RecallApi`
-  `_updateCard`, `lib/features/review/data/recall_api.dart`). The
-  `client_event_id` idempotency guard dedupes the *same* review, but does not
-  compare `last_review`/`due` timestamps. If the same card were reviewed offline
-  on device A while device B reviewed and synced it, device A's later flush would
-  overwrite device B's newer scheduling with the older locally-computed state.
 - **Study prefs write-through is last-write-wins** (`RecallPrefsController`,
   `lib/features/settings/application/recall_prefs_controller.dart`). The cloud
   row replaces the local mirror on load, but an offline prefs edit can overwrite
   a newer cloud value when it later writes through.
+- **Undo restores its local pre-rating snapshot unconditionally**
+  (`RecallApi.undoReview`). Undo is a single-level, session-scoped affordance
+  for the rating you just made, so it deliberately writes the exact state it
+  captured; a second device's review landing in that window would be overwritten.
 
-Neither is fixed here (docs-only change); they are recorded so the doctrine
-matches real behavior.
+Both are tolerable for a single user across a handful of devices, and are
+recorded here so the doctrine matches real behavior.
 
 ## Local commands
 

@@ -6,10 +6,15 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../settings/domain/recall_prefs.dart';
 import '../domain/stats_models.dart';
 import 'models.dart';
+import 'review_replay.dart';
 
 /// All Supabase reads/writes for Recall. RLS scopes every row to the signed-in
 /// user, so no explicit user_id filter is needed.
-class RecallApi {
+///
+/// Implements [ReviewReplayGateway] so the multi-device conflict policy in
+/// `review_replay.dart` runs against Supabase here and against a modelled
+/// server in tests — one algorithm, two transports.
+class RecallApi implements ReviewReplayGateway {
   final SupabaseClient client;
   final Future<void> Function(String)? _persistSession;
   final Future<void> Function()? _removePersistedSession;
@@ -195,6 +200,11 @@ class RecallApi {
     'rating': o.rating,
     'elapsed_ms': elapsedMs,
     'device': device,
+    // Whether this rating cost a lapse, as a *delta*. The absolute `lapses`
+    // above is computed off this device's snapshot and is only a fallback for
+    // a fresh card; the replay increments the server's counter by this flag so
+    // a second device's lapse is never overwritten. See [reviewLapsed].
+    'lapsed': o.lapses > card.lapses,
   };
 
   /// The pre-rating scheduling state of a card, shaped like [reviewEntry], so
@@ -212,14 +222,26 @@ class RecallApi {
     'cloud_seen': card.cloudSeen,
   };
 
-  /// Replay one review entry against Supabase: advance the card's FSRS state
-  /// and append a log row. Returns the inserted review_log id so a later undo
-  /// can target exactly this row.
+  /// Replay one review entry against Supabase: merge the card's FSRS state and
+  /// append a log row. Returns the review_log id so a later undo can target
+  /// exactly this row.
+  ///
+  /// Three separate guards, in order:
+  ///  1. **Duplicate suppression** — the `client_event_id` ledger short-circuits
+  ///     a replay of the *same* review before anything is written.
+  ///  2. **Conflict merge** — [applyMergedReview] reconciles this review with
+  ///     whatever another device has already written (see `review_replay.dart`).
+  ///  3. **Log append** — never re-runs step 2, so a missing ledger column can
+  ///     cost us the dedup key without also double-counting the review.
   Future<int?> applyReview(Map<String, dynamic> e) async {
     final eventId = e['client_id']?.toString();
+    // Null once we know the ledger column isn't deployed — the whole call then
+    // falls back to the legacy (rating_at, device) dedup tuple.
+    var ledgerEventId = eventId;
     if (eventId != null) {
       try {
-        return await _applyReviewIdempotently(e, eventId);
+        final existing = await _findLogByEventId(e['card_id'], eventId);
+        if (existing != null) return existing;
       } on PostgrestException catch (error) {
         if (!_idempotencySchemaUnavailable(error)) rethrow;
         // Rolling-deploy compatibility only. Once the checked-in migration is
@@ -227,43 +249,34 @@ class RecallApi {
         debugPrint(
           'Recall: idempotency schema not deployed; using legacy replay',
         );
+        ledgerEventId = null;
       }
     }
-    return _applyReviewLegacy(e);
+    if (ledgerEventId == null) {
+      final existing = await _findLogLegacy(e);
+      if (existing != null) return existing;
+    }
+
+    await applyMergedReview(this, e);
+    return _insertReviewLog(e, ledgerEventId);
   }
 
-  Future<int?> _applyReviewIdempotently(
-    Map<String, dynamic> e,
-    String eventId,
-  ) async {
+  Future<int?> _findLogByEventId(Object cardId, String eventId) async {
     final existing = await client
         .from('review_log')
         .select('id')
-        .eq('card_id', e['card_id'])
+        .eq('card_id', cardId)
         .eq('client_event_id', eventId)
         .limit(1);
-    if (existing.isNotEmpty) {
-      return (existing.first['id'] as num?)?.toInt();
-    }
-
-    await _updateCard(e);
-    final inserted = await client
-        .from('review_log')
-        .upsert(
-          _reviewLogPayload(e, clientEventId: eventId),
-          onConflict: 'card_id,client_event_id',
-        )
-        .select('id')
-        .single();
-    return (inserted['id'] as num?)?.toInt();
+    return existing.isEmpty ? null : (existing.first['id'] as num?)?.toInt();
   }
 
-  Future<int?> _applyReviewLegacy(Map<String, dynamic> e) async {
-    // The local outbox is at-least-once: a network response or the on-device
-    // acknowledgement write can fail after Supabase committed the insert.
-    // rating_at is captured at the original tap and survives every replay, so
-    // this stable tuple prevents a retry from creating a second review/log or
-    // regressing a card that has since advanced.
+  /// The local outbox is at-least-once: a network response or the on-device
+  /// acknowledgement write can fail after Supabase committed the insert.
+  /// rating_at is captured at the original tap and survives every replay, so
+  /// this stable tuple prevents a retry from creating a second review/log or
+  /// regressing a card that has since advanced.
+  Future<int?> _findLogLegacy(Map<String, dynamic> e) async {
     final existing = await client
         .from('review_log')
         .select('id')
@@ -272,12 +285,32 @@ class RecallApi {
         .eq('device', e['device'])
         .order('id', ascending: false)
         .limit(1);
-    if (existing.isNotEmpty) {
-      return (existing.first['id'] as num?)?.toInt();
+    return existing.isEmpty ? null : (existing.first['id'] as num?)?.toInt();
+  }
+
+  /// Append the log row for an already-merged review. If the ledger column
+  /// turns out to be missing at this point the card is already updated, so it
+  /// logs without the key rather than replaying the merge and double-counting.
+  Future<int?> _insertReviewLog(
+    Map<String, dynamic> e,
+    String? clientEventId,
+  ) async {
+    if (clientEventId != null) {
+      try {
+        final inserted = await client
+            .from('review_log')
+            .upsert(
+              _reviewLogPayload(e, clientEventId: clientEventId),
+              onConflict: 'card_id,client_event_id',
+            )
+            .select('id')
+            .single();
+        return (inserted['id'] as num?)?.toInt();
+      } on PostgrestException catch (error) {
+        if (!_idempotencySchemaUnavailable(error)) rethrow;
+        debugPrint('Recall: review logged without its durable event id');
+      }
     }
-
-    await _updateCard(e);
-
     final inserted = await client
         .from('review_log')
         .insert(_reviewLogPayload(e))
@@ -286,20 +319,33 @@ class RecallApi {
     return (inserted['id'] as num?)?.toInt();
   }
 
-  Future<void> _updateCard(Map<String, dynamic> e) async {
-    await client
+  @override
+  Future<CardSyncState?> readCardState(int cardId) async {
+    final row = await client
         .from('cards')
-        .update({
-          'stability': e['stability'],
-          'difficulty': e['difficulty'],
-          'due': e['due'],
-          'state': e['state'],
-          'reps': e['reps'],
-          'lapses': e['lapses'],
-          'last_review': e['last_review'],
-          'cloud_seen': true,
-        })
-        .eq('id', e['card_id']);
+        .select('reps,lapses,last_review')
+        .eq('id', cardId)
+        .maybeSingle();
+    return row == null
+        ? null
+        : CardSyncState.fromRow(Map<String, dynamic>.from(row));
+  }
+
+  @override
+  Future<int> updateCardWhereReps(
+    int cardId, {
+    required int? expectedReps,
+    required Map<String, dynamic> values,
+  }) async {
+    final update = client.from('cards').update(values).eq('id', cardId);
+    // `reps` doubles as the row version: an applied review always bumps it by
+    // one, so requiring the value we read makes the write compare-and-swap.
+    // NULL needs `IS NULL` — SQL equality never matches it.
+    final guarded = expectedReps == null
+        ? update.isFilter('reps', null)
+        : update.eq('reps', expectedReps);
+    final updated = await guarded.select('id');
+    return updated.length;
   }
 
   Map<String, dynamic> _reviewLogPayload(
