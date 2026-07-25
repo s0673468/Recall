@@ -36,19 +36,32 @@ class CardSyncState {
   final int? lapses;
   final DateTime? lastReview;
 
+  /// The row carries a `last_review` we could not parse.
+  ///
+  /// Distinct from `lastReview == null`, which means the column is SQL NULL —
+  /// a card nobody has reviewed yet, where the incoming review is unambiguously
+  /// newer. An unreadable value instead means the card *has* been reviewed and
+  /// we cannot tell when, so the merge has to fail closed rather than assume
+  /// it is free to overwrite the scheduling.
+  final bool lastReviewUnreadable;
+
   const CardSyncState({
     required this.reps,
     required this.lapses,
     required this.lastReview,
+    this.lastReviewUnreadable = false,
   });
 
-  factory CardSyncState.fromRow(Map<String, dynamic> row) => CardSyncState(
-    reps: (row['reps'] as num?)?.toInt(),
-    lapses: (row['lapses'] as num?)?.toInt(),
-    lastReview: row['last_review'] == null
-        ? null
-        : DateTime.tryParse(row['last_review'] as String)?.toUtc(),
-  );
+  factory CardSyncState.fromRow(Map<String, dynamic> row) {
+    final raw = row['last_review'];
+    final parsed = raw is String ? DateTime.tryParse(raw)?.toUtc() : null;
+    return CardSyncState(
+      reps: (row['reps'] as num?)?.toInt(),
+      lapses: (row['lapses'] as num?)?.toInt(),
+      lastReview: parsed,
+      lastReviewUnreadable: raw != null && parsed == null,
+    );
+  }
 }
 
 /// The narrow server surface [applyMergedReview] drives. Implemented once over
@@ -117,6 +130,11 @@ Map<String, dynamic> mergeReviewIntoCard({
     'lapses': (server.lapses ?? 0) + (reviewLapsed(entry) ? 1 : 0),
     'cloud_seen': true,
   };
+
+  // We cannot order this review against a timestamp we cannot read, and the
+  // row holds real scheduling from some earlier write. Count the rep and leave
+  // the schedule alone rather than overwrite on a guess.
+  if (server.lastReviewUnreadable) return values;
 
   final serverAt = server.lastReview;
   final eventAt = entry['last_review'] == null

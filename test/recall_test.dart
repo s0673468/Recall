@@ -1249,6 +1249,39 @@ void main() {
       expect(api.server.reviewLog, isEmpty);
     });
 
+    test('a never-reviewed card takes the incoming scheduling', () {
+      // last_review IS NULL means nobody has reviewed it, so this review is
+      // unambiguously the newest thing the row has ever seen.
+      final server = CardSyncState.fromRow({
+        'reps': 0,
+        'lapses': 0,
+        'last_review': null,
+      });
+
+      expect(server.lastReviewUnreadable, isFalse);
+      final values = mergeReviewIntoCard(server: server, entry: morning);
+      expect(values['due'], morning['due']);
+      expect(values['reps'], 1);
+    });
+
+    test('an unreadable server last_review is never clobbered', () {
+      // The row has been reviewed but we cannot tell when. Ordering is
+      // unknowable, so the merge must fail closed on the scheduling columns
+      // instead of assuming this review is newer.
+      final server = CardSyncState.fromRow({
+        'reps': 9,
+        'lapses': 2,
+        'last_review': 'not-a-timestamp',
+      });
+
+      expect(server.lastReviewUnreadable, isTrue);
+      final values = mergeReviewIntoCard(server: server, entry: morning);
+      expect(values['reps'], 10); // the review still counts
+      expect(values.keys, isNot(contains('due')));
+      expect(values.keys, isNot(contains('stability')));
+      expect(values.keys, isNot(contains('last_review')));
+    });
+
     test('a colliding client_event_id discards a genuine review', () async {
       // Why the durable id has to be unique: the server dedupes on it alone,
       // so two different reviews wearing the same id collapse into one.

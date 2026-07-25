@@ -81,11 +81,16 @@ order. Review replay reconciles that instead of letting the last flush win
   values a device computed off its own snapshot. Both reviews really happened,
   so both are counted regardless of which one won the scheduling.
 - **The write is compare-and-swap on `reps`.** Every applied review bumps
-  `reps` by exactly one, so it doubles as the row version: the update only
-  lands if the row still holds the value the merge was computed from,
-  otherwise the replay re-reads and re-merges. A card that stays contended
-  through four rounds defers — the review stays in the outbox — rather than
-  landing a stale write.
+  `reps` by exactly one, so it serves as a version for *review* writes: the
+  update only lands if the row still holds the value the merge was computed
+  from, otherwise the replay re-reads and re-merges. A card that stays
+  contended through four rounds defers — the review stays in the outbox —
+  rather than landing a stale write.
+
+  Note the limit: this detects concurrent **reviews**, not every writer. A
+  path that changes scheduling without incrementing `reps` (undo, below) still
+  passes the guard. Making it a true row version would need a dedicated
+  version column, i.e. a schema migration.
 
 Replay stays idempotent through the `client_event_id` ledger. That id is
 minted per install (`LocalReviewStore.newEventId`) from an install id, a
