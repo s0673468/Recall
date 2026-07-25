@@ -92,33 +92,41 @@ order. Review replay reconciles that instead of letting the last flush win
   passes the guard. Making it a true row version would need a dedicated
   version column, i.e. a schema migration.
 
-#### Replay is not fully idempotent
+#### Idempotency: the `apply_review` RPC
 
-The card merge and the `review_log` append are two separate writes, and
-PostgREST cannot put them in one transaction. The merge runs first, so a
-failure between them leaves no log row and the next flush retries the whole
-apply cleanly — but because counters now accumulate from server state, that
-retry can add a phantom `reps`/`lapses`.
+Replay goes through the `apply_review` Postgres function, which does both
+writes — the `review_log` append and the `cards` merge — in **one
+transaction**, keyed on `client_event_id`:
 
-The merge recognises its own partial apply when the row already carries the
-review's `last_review`, which covers the common case. It is a heuristic, not
-idempotency, and three cases fall outside it:
+- the log insert is the idempotency anchor. `ON CONFLICT DO NOTHING` against
+  `review_log_card_client_event_uidx` means a replay returns the existing row
+  id and touches nothing else;
+- the card merge only runs when that insert actually created a row, so it
+  happens exactly once per `(card_id, client_event_id)` however often the
+  outbox retries;
+- `SELECT … FOR UPDATE` serialises concurrent replays, so no compare-and-swap
+  or retry loop is needed on this path.
 
-1. a review that **lost** the scheduling race wrote no `last_review`, so a
-   retry re-counts it;
-2. another device updating `last_review` between our merge and our log append
-   hides the evidence, so a retry re-counts;
-3. two devices rating at the identical instant are indistinguishable from our
-   own partial apply, so the second review's rep is dropped.
+The function is `SECURITY INVOKER`, so the `auth.uid() = user_id` policies
+still apply. It lives in the Health repo as
+`scripts/supabase_migrate_recall_review_rpc.sql`, with a matching
+`supabase_verify_…` script that exercises the policy inside a
+rolled-back transaction, and a `supabase_rollback_…` script.
 
-All three need a network failure in a narrow window or a microsecond-exact
-collision, and all three are **counter-only**: `FsrsEngine` never reads
-`reps`/`lapses`, so scheduling cannot be corrupted by them, and every event is
-still logged, so the true count is recoverable from `review_log`.
+**The client-side path below is the fallback**, used only when the function
+isn't deployed. It cannot be made fully idempotent from outside the database:
+the merge recognises its own partial apply when the row already carries the
+review's `last_review`, but that is a heuristic, and three cases fall outside
+it — a review that *lost* the scheduling race wrote no `last_review`; another
+device can overwrite `last_review` between our merge and our log append; and
+two devices rating at the identical instant are indistinguishable from our own
+partial apply, so that rep is dropped. All three are counter-only (`FsrsEngine`
+never reads `reps`/`lapses`, so scheduling cannot be corrupted) and every event
+is still logged, so the true count stays recoverable from `review_log`.
 
-Closing this properly means doing both writes in one transaction — a Postgres
-function called over RPC, keyed on `client_event_id` — which is a schema
-migration and therefore a separate, sign-off-gated change.
+> Because the policy is now expressed twice — in SQL and in
+> `review_replay.dart` — the two can drift. `supabase_verify_recall_review_rpc.sql`
+> pins the SQL half against the same cases the Dart suite pins.
 
 Replay stays idempotent through the `client_event_id` ledger. That id is
 minted per install (`LocalReviewStore.newEventId`) from an install id, a

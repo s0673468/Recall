@@ -226,14 +226,64 @@ class RecallApi implements ReviewReplayGateway {
   /// append a log row. Returns the review_log id so a later undo can target
   /// exactly this row.
   ///
-  /// Three separate guards, in order:
+  /// Prefers the `apply_review` RPC, which does both writes in one transaction
+  /// keyed on `client_event_id` and is therefore genuinely idempotent under the
+  /// outbox's at-least-once delivery. Falls back to [_applyReviewClientSide]
+  /// when the function isn't deployed.
+  Future<int?> applyReview(Map<String, dynamic> e) async {
+    final eventId = e['client_id']?.toString();
+    if (eventId != null) {
+      try {
+        return await _applyReviewViaRpc(e, eventId);
+      } on PostgrestException catch (error) {
+        if (!_rpcUnavailable(error)) rethrow;
+        debugPrint('Recall: apply_review RPC absent; using client-side replay');
+      }
+    }
+    return _applyReviewClientSide(e);
+  }
+
+  /// One round trip, one transaction. The server anchors idempotency on the
+  /// `(card_id, client_event_id)` unique index, so a replay cannot re-count a
+  /// review no matter where a previous attempt died — the gap the client-side
+  /// path can only narrow, never close (see README, "Replay is not fully
+  /// idempotent").
+  Future<int?> _applyReviewViaRpc(Map<String, dynamic> e, String eventId) async {
+    final id = await client.rpc<Object?>(
+      'apply_review',
+      params: {
+        'p_card_id': e['card_id'],
+        'p_guid': e['guid'],
+        'p_rating': e['rating'],
+        'p_rating_at': e['last_review'],
+        'p_stability': e['stability'],
+        'p_difficulty': e['difficulty'],
+        'p_due': e['due'],
+        'p_state': e['state'],
+        'p_lapsed': reviewLapsed(e),
+        'p_elapsed_ms': e['elapsed_ms'],
+        'p_device': e['device'],
+        'p_client_event_id': eventId,
+      },
+    );
+    return (id as num?)?.toInt();
+  }
+
+  /// PostgREST reports an undeployed function as 404/PGRST202. Anything else is
+  /// a real failure and must not be swallowed into the fallback, or a broken
+  /// RPC would silently downgrade every device to the weaker path forever.
+  bool _rpcUnavailable(PostgrestException error) =>
+      error.code == 'PGRST202' || error.code == '404' || error.code == '42883';
+
+  /// Pre-RPC replay: probe the ledger, merge the card, append the log. Three
+  /// separate guards, in order:
   ///  1. **Duplicate suppression** — the `client_event_id` ledger short-circuits
   ///     a replay of the *same* review before anything is written.
   ///  2. **Conflict merge** — [applyMergedReview] reconciles this review with
   ///     whatever another device has already written (see `review_replay.dart`).
   ///  3. **Log append** — never re-runs step 2, so a missing ledger column can
   ///     cost us the dedup key without also double-counting the review.
-  Future<int?> applyReview(Map<String, dynamic> e) async {
+  Future<int?> _applyReviewClientSide(Map<String, dynamic> e) async {
     final eventId = e['client_id']?.toString();
     // Null once we know the ledger column isn't deployed — the whole call then
     // falls back to the legacy (rating_at, device) dedup tuple.
