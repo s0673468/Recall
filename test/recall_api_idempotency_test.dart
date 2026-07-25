@@ -64,33 +64,44 @@ void main() {
     expect(query, contains('client_event_id=eq.event-42-1'));
   });
 
-  test('a new review still updates the card and inserts one log', () async {
+  test('a new review reads server state, guards the write, and logs', () async {
     final requests = <http.BaseRequest>[];
+    http.Response json(String body, {int status = 200, http.BaseRequest? to}) =>
+        http.Response(
+          body,
+          status,
+          request: to,
+          headers: {'content-type': 'application/json'},
+        );
     final client = SupabaseClient(
       'https://example.supabase.co',
       'anon-key',
       httpClient: MockClient((request) async {
         requests.add(request);
-        if (request.method == 'GET') {
-          return http.Response(
-            '[]',
-            200,
-            request: request,
-            headers: {'content-type': 'application/json'},
-          );
+        final path = request.url.path;
+        if (request.method == 'GET' && path.endsWith('review_log')) {
+          return json('[]', to: request); // no prior replay of this event
         }
-        if (request.method == 'POST') {
-          return http.Response(
-            jsonEncode({'id': 88}),
-            201,
-            request: request,
-            headers: {'content-type': 'application/json'},
+        if (request.method == 'GET' && path.endsWith('cards')) {
+          // Server truth: three reps and one lapse, last reviewed 2026-07-01.
+          return json(
+            jsonEncode({
+              'reps': 3,
+              'lapses': 1,
+              'last_review': '2026-07-01T00:00:00.000Z',
+            }),
+            to: request,
           );
         }
         if (request.method == 'PATCH') {
-          return http.Response('', 204, request: request);
+          return json(jsonEncode([
+            {'id': 42},
+          ]), to: request);
         }
-        return http.Response('[]', 200, request: request);
+        if (request.method == 'POST') {
+          return json(jsonEncode({'id': 88}), status: 201, to: request);
+        }
+        return json('[]', to: request);
       }),
       authOptions: const AuthClientOptions(autoRefreshToken: false),
     );
@@ -99,13 +110,85 @@ void main() {
     final id = await RecallApi(client).applyReview(entry);
 
     expect(id, 88);
-    expect(requests.map((request) => request.method), ['GET', 'PATCH', 'POST']);
+    // Dedup probe, card read, guarded merge, log append.
+    expect(requests.map((request) => request.method), [
+      'GET',
+      'GET',
+      'PATCH',
+      'POST',
+    ]);
+
+    final patch = requests[2];
+    expect(patch.url.query, contains('id=eq.42'));
+    // Compare-and-swap: the merge only lands while `reps` is still the value
+    // it was computed from.
+    expect(patch.url.query, contains('reps=eq.3'));
+    final patched = jsonDecode((patch as http.Request).body);
+    // Counters come from the server (3 + 1), never the entry's stale absolute
+    // `reps: 3` — that is what a second device's review would have clobbered.
+    expect(patched, containsPair('reps', 4));
+    expect(patched, containsPair('lapses', 1)); // a Good rating is no lapse
+    // This review is newer than the row, so it also owns the scheduling.
+    expect(patched, containsPair('due', '2026-07-14T12:00:00.000Z'));
+
     final insert = requests.last;
     expect(insert.url.query, contains('on_conflict=card_id%2Cclient_event_id'));
     expect(
       jsonDecode((insert as http.Request).body),
       containsPair('client_event_id', 'event-42-1'),
     );
+  });
+
+  test('a review older than the card keeps its rep but not the schedule', () async {
+    final requests = <http.BaseRequest>[];
+    http.Response json(String body, {int status = 200, http.BaseRequest? to}) =>
+        http.Response(
+          body,
+          status,
+          request: to,
+          headers: {'content-type': 'application/json'},
+        );
+    final client = SupabaseClient(
+      'https://example.supabase.co',
+      'anon-key',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        final path = request.url.path;
+        if (request.method == 'GET' && path.endsWith('review_log')) {
+          return json('[]', to: request);
+        }
+        if (request.method == 'GET' && path.endsWith('cards')) {
+          // Another device already synced a *later* review of this card.
+          return json(
+            jsonEncode({
+              'reps': 9,
+              'lapses': 2,
+              'last_review': '2026-07-20T08:00:00.000Z',
+            }),
+            to: request,
+          );
+        }
+        if (request.method == 'PATCH') {
+          return json(jsonEncode([
+            {'id': 42},
+          ]), to: request);
+        }
+        return json(jsonEncode({'id': 90}), status: 201, to: request);
+      }),
+      authOptions: const AuthClientOptions(autoRefreshToken: false),
+    );
+    addTearDown(client.dispose);
+
+    await RecallApi(client).applyReview(entry);
+
+    final patched =
+        jsonDecode((requests[2] as http.Request).body) as Map<String, dynamic>;
+    expect(patched, containsPair('reps', 10)); // the review still counts
+    // …but none of the scheduling columns are touched, so the newer device's
+    // due date survives.
+    expect(patched.keys, isNot(contains('due')));
+    expect(patched.keys, isNot(contains('stability')));
+    expect(patched.keys, isNot(contains('last_review')));
   });
 
   test('flag replay upserts with the durable client event id', () async {

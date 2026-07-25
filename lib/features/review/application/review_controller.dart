@@ -514,16 +514,16 @@ class ReviewController extends ChangeNotifier {
     // Snapshot everything undo needs BEFORE the rating takes effect. The
     // queue's ReviewCard still holds the pre-rating scheduling state (rating
     // never mutates it), so the card itself is the snapshot.
-    // The id is clock-derived so it can never collide with an entry a
-    // previous session persisted: the outbox survives restarts (offline
-    // flush failures stay queued in shared_preferences), the counter alone
-    // would restart at 1 and claim a stale entry.
     final undo = _UndoRecord(
-      clientId: '${clock().microsecondsSinceEpoch}-${++_undoSequence}',
+      clientId: await store.newEventId(),
       card: card,
       index: _state.index,
     );
-    entry['client_id'] = undo.clientId; // outbox identity; never hits the API
+    // Two jobs, both of which need this id to be unique forever: it is how an
+    // undo finds its own entry in the durable outbox, AND the `client_event_id`
+    // RecallApi.applyReview sends — so a repeat would make the server discard a
+    // genuine review as a replay. See [LocalReviewStore.newEventId].
+    entry['client_id'] = undo.clientId;
     // enqueueReview is local storage (fast, and it must land before the next
     // card so the review can never be lost); it also returns the new pending
     // count so advancing doesn't re-read + re-decode the whole outbox.
@@ -560,8 +560,6 @@ class ReviewController extends ChangeNotifier {
     'duplicate',
   };
 
-  int _flagSequence = 0;
-
   /// Queue a bad-card report for the current card and kick off a flag flush.
   /// Flagging is a pure side-channel: it never rates, skips, or advances the
   /// card, and the review flow is left entirely untouched. Flagging the same
@@ -569,9 +567,9 @@ class ReviewController extends ChangeNotifier {
   /// card or an unrecognized reason.
   ///
   /// The record is durable: it lands in a separate flag outbox and, like a
-  /// review, survives an offline session. The [client_id] is clock-derived
-  /// (same scheme as undo) so it is unique across restarts — the flag outbox
-  /// persists in shared_preferences, and a bare counter would restart at 1.
+  /// review, survives an offline session. Its `client_id` comes from the same
+  /// install-scoped minter reviews use, so it stays unique across restarts and
+  /// across devices — `note_flags` dedupes on it exactly like `review_log`.
   Future<void> flag(String reason) async {
     final card = _state.current;
     if (card == null || !flagReasons.contains(reason)) return;
@@ -581,7 +579,7 @@ class ReviewController extends ChangeNotifier {
       'reason': reason,
       'flagged_at': clock().toUtc().toIso8601String(),
       'device': api.device,
-      'client_id': '${clock().microsecondsSinceEpoch}-${++_flagSequence}',
+      'client_id': await store.newEventId(),
     };
     await store.enqueueFlag(entry);
     // Send behind the UI; a failure (e.g. table not created yet) just leaves
@@ -592,7 +590,6 @@ class ReviewController extends ChangeNotifier {
   // --- Undo (single-level, session-only) ---
 
   _UndoRecord? _undo;
-  int _undoSequence = 0;
   bool _undoInFlight = false;
 
   /// Whether the most recent rating can still be reverted.
