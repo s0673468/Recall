@@ -49,3 +49,6 @@ config/supabase.local.json
 
 # Flutter machine-local SDK paths
 /android/local.properties
+
+# Local tooling state (pr-shepherd audit ledger, etc.) — not repo content
+reports/
