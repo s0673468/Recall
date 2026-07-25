@@ -360,6 +360,7 @@ class _FakeRecallApi implements RecallApi {
     if (existing != null) return existing;
 
     await applyMergedReview(this, e);
+    if (failLogInsert) throw StateError('review_log insert failed');
     applied.add(e);
     return server.appendLog(e, clientEventId: eventId);
   }
@@ -394,6 +395,10 @@ class _FakeRecallApi implements RecallApi {
 
   /// When true, applyFlag throws — simulates the note_flags table not existing.
   bool failApplyFlag = false;
+
+  /// When true, the card merge commits but appending the log row throws —
+  /// the partial-apply window between applyReview's two writes.
+  bool failLogInsert = false;
 
   /// Awaited inside applyFlag — lets tests hold the flag flush open.
   Future<void> Function()? beforeApplyFlag;
@@ -1247,6 +1252,43 @@ void main() {
       );
       // Nothing logged: the review stays in the outbox for the next flush.
       expect(api.server.reviewLog, isEmpty);
+    });
+
+    test('a retry after a failed log insert does not double-count', () async {
+      // applyReview merges the card first, then appends the log. A failure in
+      // between leaves the outbox entry queued with no log row, so the next
+      // flush's client_event_id probe finds nothing and retries the whole
+      // apply. Since counters now accumulate from server state, repeating the
+      // merge would inflate reps — the merge has to notice it already landed.
+      final api = _FakeRecallApi([studied()])..failLogInsert = true;
+
+      await expectLater(api.applyReview(morning), throwsA(isA<StateError>()));
+      expect(api.server.cards[5]!.reps, 4); // card merged
+      expect(api.server.reviewLog, isEmpty); // log did not
+
+      api.failLogInsert = false;
+      await api.applyReview(morning); // the outbox retries it
+
+      expect(api.server.cards[5]!.reps, 4); // not 5
+      expect(api.server.cards[5]!.lapses, 1);
+      expect(api.server.reviewLog, hasLength(1));
+    });
+
+    test('an exact timestamp tie leaves the first writer alone', () async {
+      // Strict `isAfter` means equal timestamps do not win the schedule, so
+      // two devices rating in the same instant resolve first-writer-wins
+      // rather than thrashing on flush order.
+      final api = _FakeRecallApi([studied()]);
+      final tie = {
+        ...evening,
+        'client_id': 'other-device',
+        'stability': 99.0,
+      };
+
+      await api.applyReview(evening);
+      await api.applyReview(tie);
+
+      expect(api.server.cards[5]!.stability, 2); // first writer's scheduling
     });
 
     test('a never-reviewed card takes the incoming scheduling', () {

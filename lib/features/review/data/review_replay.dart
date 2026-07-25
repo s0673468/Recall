@@ -115,7 +115,9 @@ bool reviewLapsed(Map<String, dynamic> entry) {
       (entry['state'] as num?)?.toInt() == 3;
 }
 
-/// The columns to write for [entry] given the card's current [server] state.
+/// The columns to write for [entry] given the card's current [server] state,
+/// or an **empty map** when the row already reflects this review and nothing
+/// needs writing.
 ///
 /// Counters always advance from the server's values. Scheduling is only
 /// overwritten when this review is genuinely newer than what the row already
@@ -140,6 +142,15 @@ Map<String, dynamic> mergeReviewIntoCard({
   final eventAt = entry['last_review'] == null
       ? null
       : DateTime.tryParse(entry['last_review'] as String)?.toUtc();
+
+  // The row already carries this review's own timestamp, so a previous attempt
+  // merged it and then failed before the log row landed. Counters are derived
+  // from server state now, so repeating the merge would inflate `reps`; the
+  // caller only needs to finish appending the log.
+  if (eventAt != null && serverAt != null && serverAt.isAtSameMomentAs(eventAt)) {
+    return const {};
+  }
+
   final schedulingWins =
       serverAt == null || (eventAt != null && eventAt.isAfter(serverAt));
   if (!schedulingWins) return values;
@@ -159,7 +170,14 @@ Map<String, dynamic> mergeReviewIntoCard({
 ///
 /// Returns normally when the card is gone server-side: the row was deleted
 /// while the review waited in the outbox, and the caller should still append
-/// the log row so the review history stays complete.
+/// the log row so the review history stays complete. Also returns normally
+/// when the merge is a no-op because a previous attempt already applied it.
+///
+/// The card is merged *before* the log row is appended. That ordering is
+/// deliberate: if this throws, no log row exists, so the next flush re-reads
+/// and retries the whole apply cleanly. The reverse order would let a failure
+/// between the two writes strand a logged review whose counters never land,
+/// because the caller's `client_event_id` probe would then short-circuit it.
 Future<void> applyMergedReview(
   ReviewReplayGateway gateway,
   Map<String, dynamic> entry, {
@@ -169,10 +187,12 @@ Future<void> applyMergedReview(
   for (var attempt = 0; attempt < maxAttempts; attempt++) {
     final server = await gateway.readCardState(cardId);
     if (server == null) return;
+    final values = mergeReviewIntoCard(server: server, entry: entry);
+    if (values.isEmpty) return; // already applied by an earlier attempt
     final updated = await gateway.updateCardWhereReps(
       cardId,
       expectedReps: server.reps,
-      values: mergeReviewIntoCard(server: server, entry: entry),
+      values: values,
     );
     if (updated > 0) return;
   }
