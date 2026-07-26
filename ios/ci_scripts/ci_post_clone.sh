@@ -34,7 +34,12 @@ config_tmp="$config_path.tmp.$$"
 mkdir -p "$config_dir"
 trap 'rm -f "$config_tmp"' EXIT HUP INT TERM
 
-if ! printf '%s' "$config_b64" | /usr/bin/base64 -D > "$config_tmp"; then
+base64_decode_flag="--decode"
+if [[ "$(/usr/bin/uname -s)" == "Darwin" ]]; then
+  base64_decode_flag="-D"
+fi
+
+if ! printf '%s' "$config_b64" | /usr/bin/base64 "$base64_decode_flag" > "$config_tmp"; then
   echo "RECALL_SUPABASE_CONFIG_B64 is not valid base64." >&2
   exit 1
 fi
