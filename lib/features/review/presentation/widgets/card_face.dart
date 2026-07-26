@@ -386,10 +386,14 @@ class _MathFragment extends StatelessWidget {
       mathStyle: display ? MathStyle.display : MathStyle.text,
       onErrorFallback: (_) => Text(fallback, style: style),
     );
-    // Inline line-breaking (`texBreak`) is wrong for block math — a display
-    // fragment stays a single unbroken unit, constrained but not wrapped.
+    // Inline line-breaking (`texBreak`) is wrong for block math and TeX
+    // environments. Splitting an environment can detach structural children
+    // (for example a fraction inside a matrix), which makes flutter_math_fork
+    // fail during layout. Keep those expressions whole and scale them down to
+    // the card width instead.
+    final hasEnvironment = expression.contains(r'\begin{');
     final Widget child;
-    if (display) {
+    if (display || hasEnvironment) {
       child = math;
     } else {
       final broken = math.texBreak().parts;
@@ -408,7 +412,9 @@ class _MathFragment extends StatelessWidget {
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
-      child: child,
+      child: hasEnvironment
+          ? FittedBox(fit: BoxFit.scaleDown, child: child)
+          : child,
     );
   }
 }
