@@ -42,6 +42,49 @@ flutter build ipa --release \
   --dart-define-from-file=config/supabase.local.json
 ```
 
+## Personal TestFlight delivery
+
+The paid-team delivery lane uses Xcode Cloud only for an intentional personal
+beta, not for every commit. GitHub CI remains the validation gate; start the
+cloud workflow only from the exact green `main` commit that German wants on the
+iPhone.
+
+### One-time App Store Connect setup
+
+1. Create the iOS app record for bundle ID `com.german.ankiReview`.
+2. Under TestFlight, create one internal group named `German` and add the
+   Account Holder as its only tester.
+3. In Xcode, configure Xcode Cloud for `ios/Runner.xcworkspace`, product
+   `Runner`, and the shared `Runner` scheme.
+4. Keep the workflow manual. Add one iOS Archive action with deployment
+   preparation **Internal Testing Only**, then add a TestFlight Internal
+   Testing post-action targeting the `German` group.
+5. Add `RECALL_SUPABASE_CONFIG_B64` to the workflow environment and mark it
+   **Secret**. Its decoded JSON must contain exactly `SUPABASE_URL` and
+   `SUPABASE_ANON_KEY`; no login, service-role, or signing credential is
+   allowed.
+
+To place the protected local config on the clipboard without printing it:
+
+```bash
+/usr/bin/base64 < config/supabase.local.json | pbcopy
+```
+
+Paste that value into the secret workflow variable. The checked-in
+`ios/ci_scripts/ci_post_clone.sh` sits beside `Runner.xcworkspace`, as Xcode
+Cloud requires. It installs pinned Flutter 3.44.2, reconstructs and validates
+the ignored config, runs `flutter pub get`, and prepares the Release archive
+with Xcode Cloud's unique `CI_BUILD_NUMBER`.
+`ios/ci_scripts/ci_post_xcodebuild.sh` removes the reconstructed file after
+the Xcode action. Xcode Cloud's environment is temporary, and the runtime
+config is compiled through Dart defines rather than bundled as an asset.
+
+On the iPhone, accept the internal invitation in TestFlight and enable
+automatic updates for Recall. Use TestFlight's **Update** button when a build
+is needed immediately; background automatic installation is not
+instantaneous. Each beta build expires after 90 days, so keep publishing
+current builds while TestFlight is Recall's primary installation.
+
 ## PWA-to-native cutover
 
 Safari/PWA storage and the iOS app sandbox are separate. Before switching:
