@@ -235,6 +235,8 @@ class ReviewController extends ChangeNotifier {
         index: deckChanged ? 0 : null,
         showBack: deckChanged ? false : null,
         reviewedThisSession: keepReviewed ? null : 0,
+        // A normal load re-arms "Keep going" — the ahead window moved.
+        aheadExhausted: false,
       ),
     );
     _previewForCardId = null;
@@ -440,6 +442,60 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> selectDeck(int? deckId) =>
       load(deckId: deckId, keepReviewed: false);
+
+  /// "Keep going" after the daily queue: load a bonus batch of cards due
+  /// within the next 24 hours (soonest first — which recaptures learning
+  /// cards that came due minutes ahead) topped up with unseen new cards.
+  /// The session counter keeps running; each finished batch lands back on
+  /// the done screen, where the button stays until a fetch comes back empty.
+  ///
+  /// Cloud-only by design: the ratings just made must be on the server before
+  /// fetching, or the batch would re-serve those cards with their pre-rating
+  /// scheduling. The daily snapshot is deliberately not overwritten — a cold
+  /// start should paint the real queue, not a bonus batch.
+  Future<void> keepGoing() async {
+    // No auth guard (load() has none either): the button only renders on the
+    // done screen, which a signed-out session never reaches.
+    if (_state.loading) return;
+    final loadToken = ++_loadSequence;
+    _undo = null; // the finished queue's positions stop meaning anything
+    _set(_state.copyWith(loading: true, error: null));
+    _previewForCardId = null;
+
+    await _flushOutbox();
+    if (loadToken != _loadSequence) return;
+    if ((await store.outbox()).isNotEmpty) {
+      // Undelivered ratings — offline. Stay on the done screen; it explains
+      // that bonus cards need a connection.
+      if (loadToken != _loadSequence) return;
+      _set(_state.copyWith(loading: false, offline: true));
+      return;
+    }
+
+    try {
+      final queue = await api.fetchAheadQueue(
+        deckId: _state.deckFilter,
+        order: _activePrefs.newOrder,
+      );
+      if (loadToken != _loadSequence) return;
+      _set(
+        _state.copyWith(
+          loading: false,
+          error: null,
+          offline: false,
+          queue: queue,
+          index: 0,
+          showBack: false,
+          aheadExhausted: queue.isEmpty,
+        ),
+      );
+      _previewForCardId = null;
+    } catch (e) {
+      debugPrint('Recall: keep-going fetch failed (offline?): $e');
+      if (loadToken != _loadSequence) return;
+      _set(_state.copyWith(loading: false, offline: true));
+    }
+  }
 
   /// Flush queued reviews AND queued flags without reloading the queue — safe
   /// on foreground/app-resume. The two loops run concurrently and each swallows
