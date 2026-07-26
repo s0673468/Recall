@@ -328,6 +328,38 @@ class _FakeRecallApi implements RecallApi {
     ];
   }
 
+  /// How many bonus batches were fetched, mirroring [queueFetches].
+  int aheadFetches = 0;
+
+  /// Mirrors the production query shape: server-projected cards due within
+  /// the horizon (soonest first), topped up with unseen new cards.
+  @override
+  Future<List<ReviewCard>> fetchAheadQueue({
+    int? deckId,
+    Duration horizon = const Duration(hours: 24),
+    int limit = 20,
+    NewOrder order = NewOrder.oldestFirst,
+  }) async {
+    aheadFetches++;
+    final cutoff = DateTime.now().toUtc().add(horizon);
+    final all = [
+      for (final c in queue)
+        if (deckId == null || c.deckId == deckId) _project(c),
+    ];
+    final ahead = [
+      for (final c in all)
+        if (c.state != 0 && c.due != null && !c.due!.isAfter(cutoff)) c,
+    ]..sort((a, b) => a.due!.compareTo(b.due!));
+    final fresh = [
+      for (final c in all)
+        if (c.state == 0) c,
+    ];
+    return [
+      ...ahead.take(limit),
+      ...fresh.take((limit - ahead.length).clamp(0, limit)),
+    ];
+  }
+
   @override
   Future<FsrsSettings?> fetchFsrsSettings() async => fsrsSettings;
 
@@ -575,6 +607,72 @@ void main() {
       expect(p.keys.toSet(), Rating.values.toSet());
     });
 
+    test('Good graduates a learning card whose last gap was the final step', () {
+      // Persisted rows carry no `step`. This card's last scheduled gap was the
+      // 10-minute (final) learning step, so Good must graduate it to days —
+      // restoring it at step 0 would loop it at 10 minutes forever.
+      final out = engine.review(
+        _card(
+          id: 4,
+          state: 1,
+          stability: 1.5,
+          difficulty: 5,
+          reps: 1,
+          due: now.subtract(const Duration(minutes: 1)),
+          lastReview: now.subtract(const Duration(minutes: 11)),
+        ),
+        Rating.good,
+        now: now,
+      );
+      expect(out.state, 2);
+      expect(
+        out.due.difference(now),
+        greaterThanOrEqualTo(const Duration(days: 1)),
+      );
+    });
+
+    test('Good moves a step-0 learning card to the next step, not out', () {
+      // Last gap ≈ the 1-minute step (an Again press) — still step 0, so Good
+      // advances to the 10-minute step rather than graduating.
+      final out = engine.review(
+        _card(
+          id: 5,
+          state: 1,
+          stability: 1.0,
+          difficulty: 5,
+          reps: 2,
+          due: now.subtract(const Duration(seconds: 30)),
+          lastReview: now.subtract(const Duration(seconds: 90)),
+        ),
+        Rating.good,
+        now: now,
+      );
+      expect(out.state, 1);
+      expect(out.due.difference(now), lessThan(const Duration(minutes: 15)));
+    });
+
+    test('rating previews show no cliff between Good and Easy', () {
+      // The bug this pins down: Good previewing ~10 minutes while Easy
+      // previews months, with nothing in between.
+      final p = engine.preview(
+        _card(
+          id: 6,
+          state: 1,
+          stability: 1.5,
+          difficulty: 5,
+          reps: 1,
+          due: now.subtract(const Duration(minutes: 1)),
+          lastReview: now.subtract(const Duration(minutes: 11)),
+        ),
+        now: now,
+      );
+      expect(
+        p[Rating.good]!.difference(now),
+        greaterThanOrEqualTo(const Duration(days: 1)),
+      );
+      expect(!p[Rating.good]!.isAfter(p[Rating.easy]!), isTrue);
+    });
+
     test('can be configured from seeded FSRS settings', () {
       final engine = FsrsEngine();
       engine.configure(
@@ -725,6 +823,87 @@ void main() {
 
         await controller.undo();
         expect(controller.state.globalDueCount, 7);
+      },
+    );
+
+    test(
+      'keepGoing loads a bonus batch and recaptures near-due learning cards',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final api = _FakeRecallApi([
+          _card(
+            state: 2,
+            stability: 10,
+            difficulty: 5,
+            reps: 3,
+            due: DateTime.now().toUtc().subtract(const Duration(hours: 1)),
+            lastReview: DateTime.now().toUtc().subtract(
+              const Duration(days: 10),
+            ),
+          ),
+        ]);
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+        controller.flip();
+        // Again → relearning, due ~10 minutes ahead: exactly the card a
+        // bonus batch must recapture so it can graduate the same day.
+        await controller.rate(Rating.again);
+        expect(controller.state.isDone, isTrue);
+
+        await controller.keepGoing();
+
+        expect(api.aheadFetches, 1);
+        expect(controller.state.queue, hasLength(1));
+        expect(controller.state.current?.state, 3);
+        expect(controller.state.aheadExhausted, isFalse);
+        // The session keeps counting and the old rating is no longer undoable.
+        expect(controller.state.reviewedThisSession, 1);
+        expect(controller.canUndo, isFalse);
+      },
+    );
+
+    test(
+      'keepGoing with nothing left marks exhausted until the next load',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final api = _FakeRecallApi([
+          _card(
+            state: 2,
+            stability: 10,
+            difficulty: 5,
+            reps: 3,
+            due: DateTime.now().toUtc().subtract(const Duration(hours: 1)),
+            lastReview: DateTime.now().toUtc().subtract(
+              const Duration(days: 10),
+            ),
+          ),
+        ]);
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+        controller.flip();
+        // Good on a mature review card lands days out — beyond the horizon.
+        await controller.rate(Rating.good);
+
+        await controller.keepGoing();
+
+        expect(controller.state.isDone, isTrue);
+        expect(controller.state.aheadExhausted, isTrue);
+
+        // A normal reload re-arms the button: the window has moved.
+        await controller.refresh();
+        expect(controller.state.aheadExhausted, isFalse);
       },
     );
 

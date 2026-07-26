@@ -69,17 +69,43 @@ class FsrsEngine {
     return Card(
       cardId: c.id,
       state: _stateFromInt(c.state),
-      // Recall's cloud row predates fsrs.dart's transient `step` field. The
-      // package restores learning cards to step 0 itself, but relearning cards
-      // otherwise keep a null step and crash as soon as rating previews build.
+      // Recall's cloud row predates fsrs.dart's transient `step` field, so a
+      // card's position in the (re)learning steps must be reconstructed here.
       // Recall uses the package's single 10-minute relearning step, so step 0
       // is the exact durable reconstruction for a persisted relearning card.
-      step: c.state == 3 ? 0 : null,
+      // Learning cards get their step back from the last scheduled gap — see
+      // [_learningStep]; restoring them at step 0 (the package default for a
+      // null step) made Good re-assign the 10-minute step forever, so a card
+      // could never graduate to days except through Easy.
+      step: switch (c.state) {
+        3 => 0,
+        2 => null,
+        _ => _learningStep(c),
+      },
       stability: c.stability,
       difficulty: c.difficulty,
       due: c.due ?? DateTime.now().toUtc(),
       lastReview: c.lastReview,
     );
+  }
+
+  /// Reconstruct which learning step a persisted learning card sits at: the
+  /// scheduler assigned `due - lastReview` when the card entered its current
+  /// step, so the card is at the highest step whose delay fits in that gap
+  /// (Again → 1 minute → step 0; Good/Hard past step 0 → 10 minutes → step 1).
+  /// Gaps longer than every step (e.g. rows imported from desktop Anki) clamp
+  /// to the final step, so Good graduates them.
+  int _learningStep(ReviewCard c) {
+    final due = c.due;
+    final lastReview = c.lastReview;
+    if (due == null || lastReview == null) return 0;
+    final gap = due.difference(lastReview);
+    final steps = _scheduler.learningSteps;
+    var step = 0;
+    for (var i = 1; i < steps.length; i++) {
+      if (gap >= steps[i]) step = i;
+    }
+    return step;
   }
 
   ReviewOutcome review(ReviewCard c, Rating rating, {DateTime? now}) {

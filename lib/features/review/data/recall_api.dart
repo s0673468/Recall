@@ -179,6 +179,65 @@ class RecallApi implements ReviewReplayGateway {
     ];
   }
 
+  /// A bonus batch for "Keep going" after the daily queue is done: cards due
+  /// within [horizon] (soonest first — which naturally recaptures learning
+  /// cards that came due minutes ahead), topped up to [limit] with new cards
+  /// beyond the day's batch. Returns empty when there is truly nothing more.
+  Future<List<ReviewCard>> fetchAheadQueue({
+    int? deckId,
+    Duration horizon = const Duration(hours: 24),
+    int limit = 20,
+    NewOrder order = NewOrder.oldestFirst,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final horizonIso = now.add(horizon).toIso8601String();
+
+    PostgrestFilterBuilder<List<Map<String, dynamic>>> aheadQ = client
+        .from('cards')
+        .select(_cardSelect)
+        .eq('deleted', false)
+        .eq('suspended', false)
+        .neq('state', 0)
+        .lte('due', horizonIso);
+    if (deckId != null) {
+      aheadQ = aheadQ.eq('notes.deck_id', deckId);
+    }
+    final aheadRows = await aheadQ
+        .order('due', ascending: true)
+        .limit(limit);
+    final ahead = [
+      for (final r in aheadRows)
+        ReviewCard.fromRow(Map<String, dynamic>.from(r)),
+    ];
+
+    final newSlots = limit - ahead.length;
+    if (newSlots <= 0) return ahead;
+
+    PostgrestFilterBuilder<List<Map<String, dynamic>>> newQ = client
+        .from('cards')
+        .select(_cardSelect)
+        .eq('deleted', false)
+        .eq('suspended', false)
+        .eq('state', 0);
+    if (deckId != null) {
+      newQ = newQ.eq('notes.deck_id', deckId);
+    }
+    final newAscending = order != NewOrder.newestFirst;
+    final newRows = await newQ
+        .order('id', ascending: newAscending)
+        .limit(newSlots);
+    var newCards = [
+      for (final r in newRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
+    ];
+    if (order == NewOrder.random) {
+      newCards = seededShuffle(
+        newCards,
+        newOrderDaySeed(DateTime.now(), deckId),
+      );
+    }
+    return [...ahead, ...newCards];
+  }
+
   /// A self-contained, JSON-serializable record of one review — what the outbox
   /// stores and replays. Built locally so a review survives an offline session.
   /// [elapsedMs] is the time the card was on screen (front shown → rating

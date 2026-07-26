@@ -17,6 +17,11 @@ class ReviewState {
   final int? globalDueCount;
   final DateTime? globalDueUpdatedAt;
 
+  /// True when the last "Keep going" fetch came back empty — there is nothing
+  /// due within the look-ahead window and no unseen cards left, so the done
+  /// screen stops offering the button until the next normal load.
+  final bool aheadExhausted;
+
   const ReviewState({
     this.loading = true,
     this.error,
@@ -31,6 +36,7 @@ class ReviewState {
     this.authSubmitting = false,
     this.globalDueCount,
     this.globalDueUpdatedAt,
+    this.aheadExhausted = false,
   });
 
   ReviewCard? get current =>
@@ -54,6 +60,7 @@ class ReviewState {
     bool? authSubmitting,
     Object? globalDueCount = _unset,
     Object? globalDueUpdatedAt = _unset,
+    bool? aheadExhausted,
   }) {
     return ReviewState(
       loading: loading ?? this.loading,
@@ -75,6 +82,7 @@ class ReviewState {
       globalDueUpdatedAt: identical(globalDueUpdatedAt, _unset)
           ? this.globalDueUpdatedAt
           : globalDueUpdatedAt as DateTime?,
+      aheadExhausted: aheadExhausted ?? this.aheadExhausted,
     );
   }
 }

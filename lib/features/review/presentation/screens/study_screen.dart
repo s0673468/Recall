@@ -48,18 +48,32 @@ class StudyScreen extends StatelessWidget {
         }
         if (s.isDone) {
           final n = s.reviewedThisSession;
+          final reviewedLine = n > 0
+              ? 'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session.'
+              : 'Nothing due right now.';
+          // "Keep going" pulls a bonus batch (cards due in the next 24h +
+          // unseen new cards). It hides once a fetch came back empty, and
+          // needs a connection — the just-made ratings must sync first.
+          final subtitle = s.aheadExhausted
+              ? '$reviewedLine Nothing more within the next day.'
+              : s.offline
+              ? '$reviewedLine Bonus cards need a connection.'
+              : reviewedLine;
+          final canKeepGoing = !s.aheadExhausted && !s.offline;
           return _Message(
             icon: Icons.check_circle_outline,
             title: 'All caught up',
-            subtitle: n > 0
-                ? 'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session.'
-                : 'Nothing due right now.',
-            action: 'Reload',
-            onAction: controller.refresh,
+            subtitle: subtitle,
+            action: canKeepGoing ? 'Keep going' : 'Reload',
+            onAction: canKeepGoing ? controller.keepGoing : controller.refresh,
             // A mis-tap on the session's last card lands here — keep it
             // recoverable (undo survives until the queue is reloaded).
-            secondaryAction: undoable ? 'Undo last rating' : null,
-            onSecondaryAction: undoable ? controller.undo : null,
+            secondaryAction: undoable
+                ? 'Undo last rating'
+                : (canKeepGoing ? 'Reload' : null),
+            onSecondaryAction: undoable
+                ? controller.undo
+                : (canKeepGoing ? controller.refresh : null),
           );
         }
 
