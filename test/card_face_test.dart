@@ -160,6 +160,28 @@ void main() {
   });
 
   group('CardFace display math', () {
+    testWidgets('converted display math with matrices stays renderable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html:
+                r'\(\det(A)=1\cdot4-2\cdot3=-2\)<br>'
+                r'\(\displaystyle A^{-1}=\frac{1}{-2}'
+                r'\begin{pmatrix}4&-2\\-3&1\end{pmatrix}'
+                r'=\begin{pmatrix}-2&1\\\frac{3}{2}&-\frac{1}{2}'
+                r'\end{pmatrix}\)',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+
+      expect(find.byType(Math), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets(r'$$ … $$ renders a Math widget in display style', (
       tester,
     ) async {
