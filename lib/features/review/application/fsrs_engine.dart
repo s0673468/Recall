@@ -66,6 +66,17 @@ class FsrsEngine {
     if (c.isNew || (c.stability ?? 0) <= 0) {
       return Card(cardId: c.id);
     }
+    // Learning cards can't have legitimately earned more stability than a
+    // first Good press (w[2], ~3 days) plus short-term noise — Easy graduates
+    // immediately, so nothing larger ever stays in learning. Rows written
+    // while the pre-step-reconstruction loop compounded same-day reviews
+    // carry weeks-to-months of stability, which put a graduating Good right
+    // next to Hard's 10 minutes. Clamp on reconstruction; the corrected value
+    // persists with the next rating, so the row heals itself.
+    final learning = c.state != 2 && c.state != 3;
+    final stability = learning && c.stability! > _parameters[2]
+        ? _parameters[2]
+        : c.stability;
     return Card(
       cardId: c.id,
       state: _stateFromInt(c.state),
@@ -82,7 +93,7 @@ class FsrsEngine {
         2 => null,
         _ => _learningStep(c),
       },
-      stability: c.stability,
+      stability: stability,
       difficulty: c.difficulty,
       due: c.due ?? DateTime.now().toUtc(),
       lastReview: c.lastReview,
