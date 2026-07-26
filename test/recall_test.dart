@@ -651,6 +651,56 @@ void main() {
       expect(out.due.difference(now), lessThan(const Duration(minutes: 15)));
     });
 
+    test('loop-inflated learning stability is clamped on graduation', () {
+      // Cards stuck in the pre-#12 learning loop had their stability
+      // compounded to weeks or months. A card still in learning can't have
+      // legitimately earned more than a first Good press (~w[2] days), so
+      // Good must graduate it to days — not the months its row claims.
+      final out = engine.review(
+        _card(
+          id: 7,
+          state: 1,
+          stability: 117.4,
+          difficulty: 5,
+          reps: 9,
+          due: now.subtract(const Duration(minutes: 1)),
+          lastReview: now.subtract(const Duration(minutes: 11)),
+        ),
+        Rating.good,
+        now: now,
+      );
+      expect(out.state, 2);
+      expect(
+        out.due.difference(now),
+        greaterThanOrEqualTo(const Duration(days: 1)),
+      );
+      expect(out.due.difference(now), lessThan(const Duration(days: 10)));
+    });
+
+    test('relearning cards keep their real stability (no clamp)', () {
+      // A lapsed mature card legitimately carries large stability through
+      // relearning — graduating it back out must respect that.
+      final out = engine.review(
+        _card(
+          id: 8,
+          state: 3,
+          stability: 60,
+          difficulty: 5,
+          reps: 12,
+          lapses: 2,
+          due: now.subtract(const Duration(minutes: 1)),
+          lastReview: now.subtract(const Duration(minutes: 11)),
+        ),
+        Rating.good,
+        now: now,
+      );
+      expect(out.state, 2);
+      expect(
+        out.due.difference(now),
+        greaterThan(const Duration(days: 30)),
+      );
+    });
+
     test('rating previews show no cliff between Good and Easy', () {
       // The bug this pins down: Good previewing ~10 minutes while Easy
       // previews months, with nothing in between.
