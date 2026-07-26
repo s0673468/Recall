@@ -102,6 +102,49 @@ printf '%s\\n' "\$*" >> "\$RECALL_CI_CALL_LOG"
     },
   );
 
+  test('post-clone removes the runtime config after a later failure', () async {
+    final sandbox = await Directory.systemTemp.createTemp(
+      'recall-xcode-cloud-late-failure-',
+    );
+    addTearDown(() => sandbox.delete(recursive: true));
+
+    final checkout = Directory('${sandbox.path}/checkout')
+      ..createSync(recursive: true);
+    final flutterRoot = Directory('${sandbox.path}/flutter')
+      ..createSync(recursive: true);
+    final flutterBin = File('${flutterRoot.path}/bin/flutter');
+    flutterBin.parent.createSync(recursive: true);
+    flutterBin.writeAsStringSync('''
+#!/bin/sh
+exit 23
+''');
+    await Process.run('/bin/chmod', ['+x', flutterBin.path]);
+
+    final configPath = '${checkout.path}/config/supabase.local.json';
+    final result = await Process.run(
+      '/bin/bash',
+      [postCloneScript],
+      environment: {
+        ...Platform.environment,
+        'CI_BUILD_NUMBER': '43',
+        'CI_WORKSPACE': sandbox.path,
+        'RECALL_CI_FLUTTER_ROOT': flutterRoot.path,
+        'RECALL_CI_REPO_ROOT': checkout.path,
+        'RECALL_SUPABASE_CONFIG_B64': base64Encode(
+          utf8.encode(
+            jsonEncode({
+              'SUPABASE_URL': 'https://example.supabase.co',
+              'SUPABASE_ANON_KEY': 'anon-test-value',
+            }),
+          ),
+        ),
+      },
+    );
+
+    expect(result.exitCode, 23);
+    expect(File(configPath).existsSync(), isFalse);
+  });
+
   test('post-clone rejects a non-numeric cloud build number', () async {
     final sandbox = await Directory.systemTemp.createTemp(
       'recall-xcode-cloud-build-number-',
@@ -156,5 +199,22 @@ printf '%s\\n' "\$*" >> "\$RECALL_CI_CALL_LOG"
 
     expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
     expect(config.existsSync(), isFalse);
+  });
+
+  test('widget build number follows Flutter build number', () {
+    final project = File(
+      '$repositoryRoot/ios/Runner.xcodeproj/project.pbxproj',
+    ).readAsStringSync();
+    final widgetConfigurations = RegExp(
+      r'baseConfigurationReference = [^;]+ /\* Generated\.xcconfig \*/;'
+      r'[\s\S]*?CODE_SIGN_ENTITLEMENTS = RecallWidget/RecallWidget\.entitlements;'
+      r'[\s\S]*?CURRENT_PROJECT_VERSION = ([^;]+);',
+    ).allMatches(project);
+
+    expect(widgetConfigurations, hasLength(3));
+    expect(
+      widgetConfigurations.map((match) => match.group(1)),
+      everyElement(r'"$(FLUTTER_BUILD_NUMBER)"'),
+    );
   });
 }

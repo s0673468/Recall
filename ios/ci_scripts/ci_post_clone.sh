@@ -32,7 +32,15 @@ config_dir="$repo_root/config"
 config_path="$config_dir/supabase.local.json"
 config_tmp="$config_path.tmp.$$"
 mkdir -p "$config_dir"
-trap 'rm -f "$config_tmp"' EXIT HUP INT TERM
+
+cleanup() {
+  status=$?
+  rm -f "$config_tmp"
+  if (( status != 0 )); then
+    rm -f "$config_path"
+  fi
+}
+trap cleanup EXIT
 
 base64_decode_flag="--decode"
 if [[ "$(/usr/bin/uname -s)" == "Darwin" ]]; then
