@@ -81,11 +81,32 @@ class RecallApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final controller = dependencies.reviewController;
     return MaterialApp(
       title: UiBrand.appName,
       debugShowCheckedModeBanner: false,
       theme: buildRecallTheme(),
       scrollBehavior: const AppScrollBehavior(),
+      builder: (context, navigator) {
+        final appNavigator = navigator ?? const SizedBox.shrink();
+        return ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) {
+            if (controller.currentUser == null ||
+                !supportsRecallBiometricUnlock(
+                  isWeb: kIsWeb,
+                  targetPlatform: defaultTargetPlatform,
+                )) {
+              return appNavigator;
+            }
+            return BiometricUnlockGate(
+              key: ValueKey('recall-unlock-${controller.currentUser!.id}'),
+              onSignOut: controller.signOut,
+              child: appNavigator,
+            );
+          },
+        );
+      },
       home: _RecallRoot(dependencies: dependencies),
     );
   }
@@ -120,23 +141,12 @@ class _RecallRootState extends State<_RecallRoot> {
             subtitle: UiBrand.subtitle,
           );
         } else {
-          final appShell = AppShell(
+          content = AppShell(
             controller: controller,
             api: widget.dependencies.api,
             prefs: widget.dependencies.recallPrefs,
             reminder: widget.dependencies.studyReminder,
           );
-          content =
-              supportsRecallBiometricUnlock(
-                isWeb: kIsWeb,
-                targetPlatform: defaultTargetPlatform,
-              )
-              ? BiometricUnlockGate(
-                  key: ValueKey('recall-unlock-${controller.currentUser!.id}'),
-                  onSignOut: controller.signOut,
-                  child: appShell,
-                )
-              : appShell;
         }
         return RecallWidgetBridge(controller: controller, child: content);
       },

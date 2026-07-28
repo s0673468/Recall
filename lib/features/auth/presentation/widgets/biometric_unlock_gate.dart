@@ -5,6 +5,13 @@ import 'package:local_auth/local_auth.dart';
 
 import '../../../../theme/ui_tokens.dart';
 
+typedef RecallElapsedTime = Duration Function();
+
+RecallElapsedTime _newMonotonicElapsedTime() {
+  final stopwatch = Stopwatch()..start();
+  return () => stopwatch.elapsed;
+}
+
 abstract class RecallBiometricPrompt {
   Future<bool> get canAuthenticate;
   Future<bool> authenticate();
@@ -56,12 +63,14 @@ class LocalAuthRecallBiometricPrompt implements RecallBiometricPrompt {
 class BiometricUnlockGate extends StatefulWidget {
   final Widget child;
   final RecallBiometricPrompt prompt;
+  final RecallElapsedTime? elapsedTime;
   final Future<void> Function()? onSignOut;
 
   BiometricUnlockGate({
     super.key,
     required this.child,
     RecallBiometricPrompt? prompt,
+    this.elapsedTime,
     this.onSignOut,
   }) : prompt = prompt ?? LocalAuthRecallBiometricPrompt();
 
@@ -71,6 +80,9 @@ class BiometricUnlockGate extends StatefulWidget {
 
 class _BiometricUnlockGateState extends State<BiometricUnlockGate>
     with WidgetsBindingObserver {
+  static const _reauthenticationTimeout = Duration(minutes: 5);
+
+  late final RecallElapsedTime _elapsedTime;
   bool _locked = true;
   bool _authenticating = false;
   bool _signingOut = false;
@@ -78,14 +90,16 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
   bool _promptCancelled = false;
   String? _signOutError;
 
-  // App switching hides study data from the native task-switcher snapshot, but
-  // does not reset [_locked]. A fresh process/gate still starts locked and
-  // requires one successful device authentication.
+  // App switching immediately hides study data from the native task-switcher
+  // snapshot. Short interruptions preserve the mounted child; longer ones
+  // re-lock it when the app resumes.
   bool _privacyCovered = false;
+  Duration? _backgroundedAt;
 
   @override
   void initState() {
     super.initState();
+    _elapsedTime = widget.elapsedTime ?? _newMonotonicElapsedTime();
     WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _unlock());
   }
@@ -99,20 +113,39 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final isCoveredState =
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden;
     if (_authenticating) {
+      if (isCoveredState) {
+        _backgroundedAt ??= _elapsedTime();
+      }
       return;
     }
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
+    if (isCoveredState) {
       if (!_locked && !_privacyCovered && mounted) {
         FocusManager.instance.primaryFocus?.unfocus();
-        setState(() => _privacyCovered = true);
+        setState(() {
+          _privacyCovered = true;
+          _backgroundedAt = _elapsedTime();
+        });
       }
       return;
     }
     if (state == AppLifecycleState.resumed && _privacyCovered && mounted) {
-      setState(() => _privacyCovered = false);
+      final backgroundedAt = _backgroundedAt;
+      final requiresAuthentication =
+          backgroundedAt != null &&
+          _elapsedTime() - backgroundedAt >= _reauthenticationTimeout;
+      setState(() {
+        _privacyCovered = false;
+        _backgroundedAt = null;
+        if (requiresAuthentication) _locked = true;
+      });
+      if (requiresAuthentication) {
+        unawaited(_unlock());
+      }
     }
   }
 
@@ -134,12 +167,20 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
     }
     final unlocked = await widget.prompt.authenticate();
     if (!mounted) return;
+    final resumed =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     setState(() {
       _authenticating = false;
       _authenticationAvailable = true;
       _locked = !unlocked;
-      _privacyCovered = false;
       _promptCancelled = !unlocked;
+      if (unlocked && !resumed) {
+        _privacyCovered = true;
+        _backgroundedAt ??= _elapsedTime();
+      } else {
+        _privacyCovered = false;
+        _backgroundedAt = null;
+      }
     });
   }
 
