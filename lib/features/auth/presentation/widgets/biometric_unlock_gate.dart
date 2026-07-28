@@ -113,12 +113,17 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final isCoveredState =
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden;
     if (_authenticating) {
+      if (isCoveredState) {
+        _backgroundedAt ??= _elapsedTime();
+      }
       return;
     }
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden) {
+    if (isCoveredState) {
       if (!_locked && !_privacyCovered && mounted) {
         FocusManager.instance.primaryFocus?.unfocus();
         setState(() {
@@ -162,12 +167,20 @@ class _BiometricUnlockGateState extends State<BiometricUnlockGate>
     }
     final unlocked = await widget.prompt.authenticate();
     if (!mounted) return;
+    final resumed =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     setState(() {
       _authenticating = false;
       _authenticationAvailable = true;
       _locked = !unlocked;
-      _privacyCovered = false;
       _promptCancelled = !unlocked;
+      if (unlocked && !resumed) {
+        _privacyCovered = true;
+        _backgroundedAt ??= _elapsedTime();
+      } else {
+        _privacyCovered = false;
+        _backgroundedAt = null;
+      }
     });
   }
 

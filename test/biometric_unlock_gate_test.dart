@@ -44,6 +44,12 @@ class _FakeElapsedTime {
 }
 
 void main() {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+  });
+
   test('Recall biometric lock is native mobile only', () {
     expect(
       supportsRecallBiometricUnlock(
@@ -292,6 +298,84 @@ void main() {
       expect(find.text('private recall data'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'successful authentication while backgrounded stays privacy covered',
+    (tester) async {
+      final result = Completer<bool>();
+      final prompt = _FakeBiometricPrompt(
+        authenticateOverride: () => result.future,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BiometricUnlockGate(
+            prompt: prompt,
+            child: const Text('private recall data'),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      result.complete(true);
+      await tester.pumpAndSettle();
+
+      expect(prompt.promptCount, 1);
+      expect(find.text('private recall data'), findsNothing);
+      expect(find.byKey(const Key('recall_privacy_cover')), findsOneWidget);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(prompt.promptCount, 1);
+      expect(find.text('private recall data'), findsOneWidget);
+      expect(find.byKey(const Key('recall_privacy_cover')), findsNothing);
+    },
+  );
+
+  testWidgets('builder placement covers routes above the home screen', (
+    tester,
+  ) async {
+    final prompt = _FakeBiometricPrompt(results: [true, false]);
+    final elapsedTime = _FakeElapsedTime();
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, navigator) => BiometricUnlockGate(
+          prompt: prompt,
+          elapsedTime: elapsedTime.call,
+          child: navigator!,
+        ),
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    const Scaffold(body: Text('private pushed route')),
+              ),
+            ),
+            child: const Text('open private route'),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open private route'));
+    await tester.pumpAndSettle();
+    expect(find.text('private pushed route'), findsOneWidget);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    elapsedTime.value = const Duration(minutes: 5);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(prompt.promptCount, 2);
+    expect(find.text('private pushed route'), findsNothing);
+    expect(find.text('Recall is locked'), findsOneWidget);
+    expect(find.text('Unlock Recall'), findsOneWidget);
+  });
 
   testWidgets('background privacy cover clears focus from Recall inputs', (
     tester,
