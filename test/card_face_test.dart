@@ -160,6 +160,25 @@ void main() {
   });
 
   group('CardFace display math', () {
+    testWidgets(r'inline \displaystyle with subscripts stays renderable', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html:
+                r'\(\displaystyle h_t=\tanh('
+                r'W_{hh}h_{t-1}+W_{xh}x_t+b_h)\)',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+
+      expect(find.byType(Math), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('converted display math with matrices stays renderable', (
       tester,
     ) async {
