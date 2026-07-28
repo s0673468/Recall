@@ -148,6 +148,19 @@ rollback and the server would discard a genuine review as a replay.
 Both are tolerable for a single user across a handful of devices, and are
 recorded here so the doctrine matches real behavior.
 
+## Operational diagnostics
+
+Recall records selected framework, background-sync, foreground-sync, and auth
+failures as `operational-event/v2` envelopes under the isolated
+`recall.operational_events.v2` preference. The ring retains at most 100 events
+and 64 KiB.
+
+The envelope accepts only fixed enums, timestamps, bounded numbers, and an
+opaque run ID. It never stores exception text, stack traces, card or deck
+content, user or device identifiers, paths, endpoints, or credentials.
+Malformed or unavailable diagnostic storage is discarded without changing app
+behavior. There is intentionally no export or network telemetry path yet.
+
 ## Local commands
 
 ```bash

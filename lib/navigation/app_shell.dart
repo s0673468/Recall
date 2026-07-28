@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../core/diagnostics/operational_diagnostics.dart';
 import '../core/platform/recall_platform.dart';
 import '../features/review/application/review_controller.dart';
 import '../features/reminders/application/study_reminder_controller.dart';
@@ -22,8 +23,9 @@ class AppShell extends StatefulWidget {
   final StudyReminderController? reminder;
   final RecallLinkSource? linkSource;
   final bool? nativeIos;
+  final OperationalEventRecorder diagnostics;
 
-  const AppShell({
+  AppShell({
     super.key,
     required this.controller,
     required this.api,
@@ -31,7 +33,8 @@ class AppShell extends StatefulWidget {
     this.reminder,
     this.linkSource,
     this.nativeIos,
-  });
+    OperationalEventRecorder? diagnostics,
+  }) : diagnostics = diagnostics ?? RecallDiagnostics.instance;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -69,16 +72,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       // Drain durable writes and refresh stale aggregate state when no card is
       // active. An in-progress study card is never displaced on foreground.
-      unawaited(() async {
-        try {
-          await Future.wait<void>([
-            widget.controller.syncPending(),
-            widget.controller.refreshIfIdle(),
-          ]);
-        } catch (error) {
-          debugPrint('Recall: foreground sync deferred: $error');
-        }
-      }());
+      unawaited(
+        runRecallForegroundSync(
+          diagnostics: widget.diagnostics,
+          syncPending: widget.controller.syncPending,
+          refreshIfIdle: widget.controller.refreshIfIdle,
+        ),
+      );
     }
   }
 
@@ -172,6 +172,26 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           nativeIos: _nativeIos,
         ),
       ),
+    );
+  }
+}
+
+@visibleForTesting
+Future<void> runRecallForegroundSync({
+  required OperationalEventRecorder diagnostics,
+  required Future<void> Function() syncPending,
+  required Future<void> Function() refreshIfIdle,
+}) async {
+  try {
+    await Future.wait<void>([syncPending(), refreshIfIdle()]);
+  } catch (_) {
+    await diagnostics.record(
+      level: OperationalLevel.error,
+      component: OperationalComponent.foregroundSync,
+      operation: OperationalOperation.syncPending,
+      outcome: OperationalOutcome.failed,
+      causeCode: OperationalCauseCode.foregroundSyncFailed,
+      retryable: true,
     );
   }
 }
