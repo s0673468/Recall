@@ -50,7 +50,8 @@ bool recordUncaughtPlatformError(
       retryable: false,
     ),
   );
-  // Preserve the prior fatal-error contract: the embedder still decides how
-  // to handle an uncaught platform error.
+  // OperationalDiagnostics emits the allowlisted console event synchronously
+  // before its best-effort preference write. Keep the fatal-error contract:
+  // the embedder still decides how to handle an uncaught platform error.
   return false;
 }

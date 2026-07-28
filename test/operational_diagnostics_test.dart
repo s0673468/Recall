@@ -192,6 +192,49 @@ void main() {
       expect(_events(storage).single.keys, isNot(contains('detail')));
     });
 
+    test(
+      'retains canonical events across separate recorder instances',
+      () async {
+        final storage = _MemoryStorage();
+        final first = OperationalDiagnostics(
+          storage: storage,
+          clock: () => DateTime.utc(2026, 7, 28, 15),
+          runId: 'run-first',
+          console: (_) {},
+        );
+        await first.record(
+          level: OperationalLevel.error,
+          component: OperationalComponent.auth,
+          operation: OperationalOperation.observeAuthState,
+          outcome: OperationalOutcome.failed,
+          causeCode: OperationalCauseCode.authStreamError,
+          retryable: true,
+        );
+        await first.idle;
+
+        final second = OperationalDiagnostics(
+          storage: storage,
+          clock: () => DateTime.utc(2026, 7, 28, 16),
+          runId: 'run-second',
+          console: (_) {},
+        );
+        await second.record(
+          level: OperationalLevel.error,
+          component: OperationalComponent.framework,
+          operation: OperationalOperation.handleFrameworkError,
+          outcome: OperationalOutcome.failed,
+          causeCode: OperationalCauseCode.flutterFrameworkError,
+          retryable: false,
+        );
+        await second.idle;
+
+        expect(_events(storage).map((event) => event['run_id']), [
+          'run-first',
+          'run-second',
+        ]);
+      },
+    );
+
     test('storage and console failures never escape record', () async {
       final storage = _MemoryStorage()
         ..readError = StateError('private read error')
@@ -238,9 +281,13 @@ void main() {
         StateError(privateText),
         StackTrace.fromString('private stack $privateText'),
       );
+      expect(handled, isFalse);
+      expect(
+        console.last,
+        contains('handle_uncaught_error failed flutter.uncaught_error'),
+      );
       await diagnostics.idle;
 
-      expect(handled, isFalse);
       expect(storage.value, isNot(contains(privateText)));
       expect(console.join('\n'), isNot(contains(privateText)));
       expect(_events(storage).map((event) => event['cause_code']), [

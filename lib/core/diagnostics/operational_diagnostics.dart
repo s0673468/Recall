@@ -253,8 +253,8 @@ class OperationalDiagnostics implements OperationalEventRecorder {
         final decoded = jsonDecode(encoded);
         if (decoded is List<Object?>) {
           events = decoded
-              .whereType<Map<Object?, Object?>>()
-              .map((item) => item.cast<String, Object?>())
+              .whereType<Map>()
+              .map((item) => Map<String, Object?>.from(item))
               .where(_isCanonicalEvent)
               .toList();
         }
