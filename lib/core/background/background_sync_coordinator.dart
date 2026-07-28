@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../diagnostics/operational_diagnostics.dart';
+
 typedef BackgroundSyncAction = Future<BackgroundSyncReport> Function();
 
 class BackgroundSyncReport {
@@ -44,16 +46,28 @@ class MethodChannelBackgroundSyncPlatform implements BackgroundSyncPlatform {
 class BackgroundSyncCoordinator {
   final BackgroundSyncPlatform platform;
   final BackgroundSyncAction sync;
+  final OperationalEventRecorder diagnostics;
 
-  const BackgroundSyncCoordinator({required this.platform, required this.sync});
+  BackgroundSyncCoordinator({
+    required this.platform,
+    required this.sync,
+    OperationalEventRecorder? diagnostics,
+  }) : diagnostics = diagnostics ?? RecallDiagnostics.instance;
 
   Future<void> start() => platform.start(_performSync);
 
   Future<String> _performSync() async {
     try {
       return (await sync()).nativeResult;
-    } catch (error, stack) {
-      debugPrint('Recall background sync failed: $error\n$stack');
+    } catch (_) {
+      await diagnostics.record(
+        level: OperationalLevel.error,
+        component: OperationalComponent.backgroundSync,
+        operation: OperationalOperation.syncPending,
+        outcome: OperationalOutcome.failed,
+        causeCode: OperationalCauseCode.backgroundSyncFailed,
+        retryable: true,
+      );
       return 'failed';
     }
   }

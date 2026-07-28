@@ -5,6 +5,7 @@ import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:supabase_flutter/supabase_flutter.dart' show User, AuthState;
 
 import '../../../core/background/background_sync_coordinator.dart';
+import '../../../core/diagnostics/operational_diagnostics.dart';
 import '../../settings/application/recall_prefs_controller.dart';
 import '../../settings/domain/recall_prefs.dart';
 import '../data/local_review_store.dart';
@@ -36,6 +37,7 @@ class ReviewController extends ChangeNotifier {
   final FsrsEngine engine;
   final LocalReviewStore store;
   final ReviewHaptics haptics;
+  final OperationalEventRecorder diagnostics;
 
   /// Wall clock, injectable so tests can drive the elapsed-time stopwatch.
   final DateTime Function() clock;
@@ -55,16 +57,28 @@ class ReviewController extends ChangeNotifier {
     this.afterSignOut,
     this.afterSignIn,
     ReviewHaptics? haptics,
+    OperationalEventRecorder? diagnostics,
     DateTime Function()? clock,
   }) : haptics = haptics ?? ReviewHaptics.forPlatform(),
+       diagnostics = diagnostics ?? RecallDiagnostics.instance,
        clock = clock ?? DateTime.now {
     // Supabase emits auth errors (e.g. an offline token refresh) as STREAM
     // errors; without onError they rethrow and can crash the app. Swallow them —
     // an active session going offline should fall back to the cache, not die.
     _authSub = api.onAuthStateChange.listen(
       _onAuthChanged,
-      onError: (Object e) =>
-          debugPrint('Recall: auth stream error (non-fatal): $e'),
+      onError: (Object _) {
+        unawaited(
+          this.diagnostics.record(
+            level: OperationalLevel.error,
+            component: OperationalComponent.auth,
+            operation: OperationalOperation.observeAuthState,
+            outcome: OperationalOutcome.failed,
+            causeCode: OperationalCauseCode.authStreamError,
+            retryable: true,
+          ),
+        );
+      },
     );
     prefs?.addListener(_onPrefsChanged);
   }
