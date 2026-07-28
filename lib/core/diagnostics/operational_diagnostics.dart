@@ -81,6 +81,10 @@ abstract interface class OperationalEventStorage {
   Future<void> write(String encoded);
 }
 
+abstract interface class OperationalEventExporter {
+  Future<void> export(String encoded);
+}
+
 class SharedPreferencesOperationalEventStorage
     implements OperationalEventStorage {
   final SharedPreferences _preferences;
@@ -92,7 +96,9 @@ class SharedPreferencesOperationalEventStorage
 
   @override
   Future<void> write(String encoded) async {
-    await _preferences.setString(_storageKey, encoded);
+    if (!await _preferences.setString(_storageKey, encoded)) {
+      throw StateError('operational diagnostics preference write failed');
+    }
   }
 }
 
@@ -106,12 +112,20 @@ class _DiscardingOperationalEventStorage implements OperationalEventStorage {
   Future<void> write(String encoded) async {}
 }
 
+class _DiscardingOperationalEventExporter implements OperationalEventExporter {
+  const _DiscardingOperationalEventExporter();
+
+  @override
+  Future<void> export(String encoded) async {}
+}
+
 class OperationalDiagnostics implements OperationalEventRecorder {
   static const defaultMaxEvents = 100;
   static const defaultMaxEncodedBytes = 64 * 1024;
   static const defaultMaxPendingEvents = 100;
 
   final OperationalEventStorage _storage;
+  final OperationalEventExporter _exporter;
   final DateTime Function() _clock;
   final String _runId;
   final String? _commitSha;
@@ -124,6 +138,8 @@ class OperationalDiagnostics implements OperationalEventRecorder {
 
   OperationalDiagnostics({
     required OperationalEventStorage storage,
+    OperationalEventExporter exporter =
+        const _DiscardingOperationalEventExporter(),
     required DateTime Function() clock,
     required String runId,
     String? commitSha,
@@ -132,6 +148,7 @@ class OperationalDiagnostics implements OperationalEventRecorder {
     this.maxPendingEvents = defaultMaxPendingEvents,
     void Function(String)? console,
   }) : _storage = storage,
+       _exporter = exporter,
        _clock = clock,
        _runId = _validatedRunId(runId),
        _commitSha = _validatedCommitSha(commitSha),
@@ -160,6 +177,8 @@ class OperationalDiagnostics implements OperationalEventRecorder {
   static Future<OperationalDiagnostics> create({
     DateTime Function() clock = DateTime.now,
     String? commitSha,
+    OperationalEventExporter exporter =
+        const _DiscardingOperationalEventExporter(),
     void Function(String)? console,
   }) async {
     OperationalEventStorage storage;
@@ -172,6 +191,7 @@ class OperationalDiagnostics implements OperationalEventRecorder {
     }
     return OperationalDiagnostics(
       storage: storage,
+      exporter: exporter,
       clock: clock,
       runId: _newRunId(clock),
       commitSha: commitSha,
@@ -275,6 +295,11 @@ class OperationalDiagnostics implements OperationalEventRecorder {
     }
     try {
       await _storage.write(encoded);
+      try {
+        await _exporter.export(encoded);
+      } catch (_) {
+        // A failed diagnostic mirror must not change app behavior.
+      }
     } catch (_) {
       // Persistence is isolated from app behavior.
     }
@@ -391,4 +416,24 @@ bool _isCanonicalEvent(Map<String, Object?> event) {
   return (event['exit_code'] == null || event['exit_code'] is int) &&
       (event['duration_ms'] == null ||
           (event['duration_ms'] is int && (event['duration_ms'] as int) >= 0));
+}
+
+bool isCanonicalOperationalEventPayload(
+  String encoded, {
+  int maxEncodedBytes = OperationalDiagnostics.defaultMaxEncodedBytes,
+}) {
+  try {
+    if (utf8.encode(encoded).length > maxEncodedBytes) return false;
+    final decoded = jsonDecode(encoded);
+    if (decoded is! List<Object?> ||
+        decoded.length > OperationalDiagnostics.defaultMaxEvents) {
+      return false;
+    }
+    return decoded.every(
+      (event) =>
+          event is Map && _isCanonicalEvent(Map<String, Object?>.from(event)),
+    );
+  } catch (_) {
+    return false;
+  }
 }

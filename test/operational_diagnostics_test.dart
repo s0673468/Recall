@@ -47,6 +47,17 @@ class _GatedStorage implements OperationalEventStorage {
   }
 }
 
+class _RecordingExporter implements OperationalEventExporter {
+  final payloads = <String>[];
+  Object? error;
+
+  @override
+  Future<void> export(String encoded) async {
+    if (error case final value?) throw value;
+    payloads.add(encoded);
+  }
+}
+
 List<Map<String, Object?>> _events(_MemoryStorage storage) =>
     (jsonDecode(storage.value!) as List<Object?>)
         .cast<Map<Object?, Object?>>()
@@ -258,6 +269,87 @@ void main() {
         returnsNormally,
       );
       await expectLater(diagnostics.idle, completes);
+    });
+
+    test(
+      'mirrors the exact canonical payload only after storage commits',
+      () async {
+        final storage = _MemoryStorage();
+        final exporter = _RecordingExporter();
+        final diagnostics = OperationalDiagnostics(
+          storage: storage,
+          exporter: exporter,
+          clock: () => DateTime.utc(2026, 7, 28, 15),
+          runId: 'run-export',
+          console: (_) {},
+        );
+
+        await diagnostics.record(
+          level: OperationalLevel.error,
+          component: OperationalComponent.auth,
+          operation: OperationalOperation.observeAuthState,
+          outcome: OperationalOutcome.failed,
+          causeCode: OperationalCauseCode.authStreamError,
+          retryable: true,
+        );
+        await diagnostics.idle;
+
+        expect(exporter.payloads, [storage.value]);
+        expect(
+          isCanonicalOperationalEventPayload(exporter.payloads.single),
+          isTrue,
+        );
+      },
+    );
+
+    test('storage failure does not replace the native mirror', () async {
+      final storage = _MemoryStorage()
+        ..writeError = StateError('preference write failed');
+      final exporter = _RecordingExporter();
+      final diagnostics = OperationalDiagnostics(
+        storage: storage,
+        exporter: exporter,
+        clock: () => DateTime.utc(2026, 7, 28, 15),
+        runId: 'run-no-export',
+        console: (_) {},
+      );
+
+      await diagnostics.record(
+        level: OperationalLevel.error,
+        component: OperationalComponent.auth,
+        operation: OperationalOperation.observeAuthState,
+        outcome: OperationalOutcome.failed,
+        causeCode: OperationalCauseCode.authStreamError,
+        retryable: true,
+      );
+      await diagnostics.idle;
+
+      expect(exporter.payloads, isEmpty);
+    });
+
+    test('native mirror failure never escapes the diagnostic path', () async {
+      final storage = _MemoryStorage();
+      final exporter = _RecordingExporter()
+        ..error = StateError('native mirror failed');
+      final diagnostics = OperationalDiagnostics(
+        storage: storage,
+        exporter: exporter,
+        clock: () => DateTime.utc(2026, 7, 28, 15),
+        runId: 'run-export-failure',
+        console: (_) {},
+      );
+
+      await diagnostics.record(
+        level: OperationalLevel.error,
+        component: OperationalComponent.auth,
+        operation: OperationalOperation.observeAuthState,
+        outcome: OperationalOutcome.failed,
+        causeCode: OperationalCauseCode.authStreamError,
+        retryable: true,
+      );
+
+      await expectLater(diagnostics.idle, completes);
+      expect(storage.value, isNotNull);
     });
 
     test('framework handlers discard exception and stack contents', () async {

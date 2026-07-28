@@ -29,6 +29,11 @@ import UserNotifications
     ) {
       RecallStudyReminderPlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(
+      forPlugin: "RecallOperationalDiagnosticsPlugin"
+    ) {
+      RecallOperationalDiagnosticsPlugin.register(with: registrar)
+    }
   }
 
   override func application(

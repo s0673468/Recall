@@ -23,6 +23,7 @@
 		98838FD144F7A58E86E30BC6 /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D22D9C5B3D92607A00047766 /* AppIntents.framework */; };
 		A10B7C56D6B0E638C26EB901 /* RecallBackgroundSyncPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1580414A615D8B0F8A9E901 /* RecallBackgroundSyncPlugin.swift */; };
 		A20B7C56D6B0E638C26EB902 /* RecallStudyReminderPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2580414A615D8B0F8A9E902 /* RecallStudyReminderPlugin.swift */; };
+		A30B7C56D6B0E638C26EB903 /* RecallOperationalDiagnosticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3580414A615D8B0F8A9E903 /* RecallOperationalDiagnosticsPlugin.swift */; };
 		C0B7C56D6B0E638C26EB8285 /* RecallWidgetPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7580414A615D8B0F8A9E414E /* RecallWidgetPlugin.swift */; };
 		CAD504D0B30D47F30AA8387C /* RecallWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E501758173354596BCB95E33 /* RecallWidget.appex */; };
 /* End PBXBuildFile section */
@@ -95,6 +96,7 @@
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1580414A615D8B0F8A9E901 /* RecallBackgroundSyncPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecallBackgroundSyncPlugin.swift; sourceTree = "<group>"; };
 		A2580414A615D8B0F8A9E902 /* RecallStudyReminderPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecallStudyReminderPlugin.swift; sourceTree = "<group>"; };
+		A3580414A615D8B0F8A9E903 /* RecallOperationalDiagnosticsPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecallOperationalDiagnosticsPlugin.swift; sourceTree = "<group>"; };
 		CF031D095D58588F71110C98 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		D22D9C5B3D92607A00047766 /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		E501758173354596BCB95E33 /* RecallWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RecallWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -200,6 +202,7 @@
 				7580414A615D8B0F8A9E414E /* RecallWidgetPlugin.swift */,
 				A1580414A615D8B0F8A9E901 /* RecallBackgroundSyncPlugin.swift */,
 				A2580414A615D8B0F8A9E902 /* RecallStudyReminderPlugin.swift */,
+				A3580414A615D8B0F8A9E903 /* RecallOperationalDiagnosticsPlugin.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -409,6 +412,7 @@
 				C0B7C56D6B0E638C26EB8285 /* RecallWidgetPlugin.swift in Sources */,
 				A10B7C56D6B0E638C26EB901 /* RecallBackgroundSyncPlugin.swift in Sources */,
 				A20B7C56D6B0E638C26EB902 /* RecallStudyReminderPlugin.swift in Sources */,
+				A30B7C56D6B0E638C26EB903 /* RecallOperationalDiagnosticsPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

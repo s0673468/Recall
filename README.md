@@ -159,7 +159,28 @@ The envelope accepts only fixed enums, timestamps, bounded numbers, and an
 opaque run ID. It never stores exception text, stack traces, card or deck
 content, user or device identifiers, paths, endpoints, or credentials.
 Malformed or unavailable diagnostic storage is discarded without changing app
-behavior. There is intentionally no export or network telemetry path yet.
+behavior.
+
+On native iOS only, each successfully committed ring is also mirrored byte for
+byte inside the app data container at:
+
+```text
+Library/Application Support/RecallDiagnostics/operational-events-v2.json
+```
+
+The native bridge accepts only the same closed `operational-event/v2` JSON
+array and rejects payloads above 64 KiB. It creates `RecallDiagnostics` as
+owner-only `0700` and the file as `0600`, applies
+`CompleteUntilFirstUserAuthentication`, excludes both from backups, and
+replaces the file atomically from a temporary file in the same directory. An
+invalid payload or failed write leaves the previous mirror in place. The
+bridge never reads preferences, cards, decks, snapshots, or review outboxes,
+and every bridge failure is diagnostics-only.
+
+A trusted host can copy this file from the app data container with
+`xcrun devicectl device copy from` using bundle identifier
+`com.german.ankiReview`. Android and web builds perform no export. There is no
+network telemetry path.
 
 ## Local commands
 
