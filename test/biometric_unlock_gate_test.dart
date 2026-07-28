@@ -1,29 +1,46 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_anki_flutter/features/auth/presentation/widgets/biometric_unlock_gate.dart';
 
 class _FakeBiometricPrompt implements RecallBiometricPrompt {
-  _FakeBiometricPrompt({this.available = true, List<bool>? results})
-    : _results = results ?? [true];
+  _FakeBiometricPrompt({
+    this.available = true,
+    List<bool>? results,
+    this.authenticateOverride,
+  }) : _results = results ?? [true];
 
   bool available;
   final List<bool> _results;
+  final Future<bool> Function()? authenticateOverride;
   int promptCount = 0;
+  int cancelCount = 0;
 
   @override
   Future<bool> get canAuthenticate async => available;
 
   @override
   Future<bool> authenticate() async {
-    final index = promptCount < _results.length
-        ? promptCount
-        : _results.length - 1;
     promptCount += 1;
+    final override = authenticateOverride;
+    if (override != null) return override();
+    final index = promptCount < _results.length
+        ? promptCount - 1
+        : _results.length - 1;
     return _results[index];
   }
 
   @override
-  Future<void> cancel() async {}
+  Future<void> cancel() async {
+    cancelCount += 1;
+  }
+}
+
+class _FakeElapsedTime {
+  Duration value = Duration.zero;
+
+  Duration call() => value;
 }
 
 void main() {
@@ -113,20 +130,27 @@ void main() {
     tester,
   ) async {
     final prompt = _FakeBiometricPrompt(results: [true]);
+    final elapsedTime = _FakeElapsedTime();
     await tester.pumpWidget(
       MaterialApp(
-        home: BiometricUnlockGate(prompt: prompt, child: const _CounterView()),
+        home: BiometricUnlockGate(
+          prompt: prompt,
+          elapsedTime: elapsedTime.call,
+          child: const _CounterView(),
+        ),
       ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('count 0'));
     await tester.pump();
 
+    elapsedTime.value = const Duration(minutes: 1);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump();
     expect(find.text('count 1'), findsNothing);
     expect(find.byKey(const Key('recall_privacy_cover')), findsOneWidget);
 
+    elapsedTime.value = const Duration(minutes: 5, seconds: 59);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pumpAndSettle();
 
@@ -134,6 +158,140 @@ void main() {
     expect(find.text('count 1'), findsOneWidget);
     expect(find.byKey(const Key('recall_privacy_cover')), findsNothing);
   });
+
+  testWidgets(
+    'resume at five minutes locks and starts authentication automatically',
+    (tester) async {
+      final prompt = _FakeBiometricPrompt(results: [true, true]);
+      final elapsedTime = _FakeElapsedTime();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BiometricUnlockGate(
+            prompt: prompt,
+            elapsedTime: elapsedTime.call,
+            child: const _CounterView(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('count 0'));
+      await tester.pump();
+
+      elapsedTime.value = const Duration(minutes: 2);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      expect(find.text('count 1'), findsNothing);
+      expect(find.byKey(const Key('recall_privacy_cover')), findsOneWidget);
+
+      elapsedTime.value = const Duration(minutes: 7);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(prompt.promptCount, 2);
+      expect(find.text('count 1'), findsOneWidget);
+      expect(find.text('Unlock Recall'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'failed automatic reauthentication leaves the locked fallback available',
+    (tester) async {
+      final prompt = _FakeBiometricPrompt(results: [true, false]);
+      final elapsedTime = _FakeElapsedTime();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BiometricUnlockGate(
+            prompt: prompt,
+            elapsedTime: elapsedTime.call,
+            child: const Text('private recall data'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await tester.pump();
+      elapsedTime.value = const Duration(minutes: 5);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(prompt.promptCount, 2);
+      expect(find.text('private recall data'), findsNothing);
+      expect(
+        find.text('Recall stayed locked because authentication was cancelled.'),
+        findsOneWidget,
+      );
+      expect(find.text('Unlock Recall'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'gate rebuild while covered does not reset the reauthentication clock',
+    (tester) async {
+      final prompt = _FakeBiometricPrompt(results: [true, true]);
+      final originalElapsedTime = _FakeElapsedTime();
+      final replacementElapsedTime = _FakeElapsedTime();
+
+      Widget buildGate(RecallElapsedTime elapsedTime) => MaterialApp(
+        home: BiometricUnlockGate(
+          key: const ValueKey('recall-biometric-gate'),
+          prompt: prompt,
+          elapsedTime: elapsedTime,
+          child: const Text('private recall data'),
+        ),
+      );
+
+      await tester.pumpWidget(buildGate(originalElapsedTime.call));
+      await tester.pumpAndSettle();
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      originalElapsedTime.value = const Duration(minutes: 5);
+
+      await tester.pumpWidget(buildGate(replacementElapsedTime.call));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+
+      expect(prompt.promptCount, 2);
+      expect(find.text('private recall data'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'native authentication lifecycle churn does not cancel or duplicate prompts',
+    (tester) async {
+      final result = Completer<bool>();
+      final prompt = _FakeBiometricPrompt(
+        authenticateOverride: () => result.future,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: BiometricUnlockGate(
+            prompt: prompt,
+            child: const Text('private recall data'),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      expect(prompt.promptCount, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      expect(prompt.promptCount, 1);
+      expect(prompt.cancelCount, 0);
+
+      result.complete(true);
+      await tester.pumpAndSettle();
+      expect(find.text('private recall data'), findsOneWidget);
+    },
+  );
 
   testWidgets('background privacy cover clears focus from Recall inputs', (
     tester,
