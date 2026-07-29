@@ -44,25 +44,43 @@ flutter build ipa --release \
 
 ## Personal TestFlight delivery
 
-The paid-team delivery lane uses Xcode Cloud only for an intentional personal
-beta, not for every commit. GitHub CI remains the validation gate; start the
-cloud workflow only from the exact green `main` commit that German wants on the
-iPhone.
+**Xcode Cloud is not configured for this standalone Recall repository yet.**
+The cached workflow named `Recall Internal TestFlight` belongs to the Track
+product from the old Health monorepo. It cannot ship this repository.
 
-### One-time App Store Connect setup
+Until the checklist below is complete, use the direct-install fallback:
 
-1. Create the iOS app record for bundle ID `com.german.ankiReview`.
-2. Under TestFlight, create one internal group named `German` and add the
-   Account Holder as its only tester.
-3. In Xcode, configure Xcode Cloud for `ios/Runner.xcworkspace`, product
-   `Runner`, and the shared `Runner` scheme.
-4. Keep the workflow manual. Add one iOS Archive action with deployment
-   preparation **Internal Testing Only**, then add a TestFlight Internal
-   Testing post-action targeting the `German` group.
-5. Add `RECALL_SUPABASE_CONFIG_B64` to the workflow environment and mark it
-   **Secret**. Its decoded JSON must contain exactly `SUPABASE_URL` and
-   `SUPABASE_ANON_KEY`; no login, service-role, or signing credential is
-   allowed.
+```bash
+flutter build ios --release \
+  --dart-define-from-file=config/supabase.local.json
+xcrun devicectl device install app \
+  --device <id> build/ios/iphoneos/Runner.app
+```
+
+Use `xcrun devicectl list devices` to find the paired iPhone ID.
+
+### One-time Apple setup
+
+- [ ] In App Store Connect, register `com.german.ankiReview` if needed. Create
+  the iOS app record named **Recall**.
+- [ ] Under TestFlight, create the internal group **German**. Add the Account
+  Holder as its only tester.
+- [ ] Open `ios/Runner.xcworkspace` in Xcode. Choose Integrate > Create
+  Workflow. Select product `Runner` and the shared `Runner` scheme. Grant Xcode
+  Cloud access to `github.com/s0673468/Recall`.
+- [ ] Name the workflow **Recall Internal TestFlight**. Keep its start
+  condition manual.
+- [ ] Add one iOS Archive action with deployment preparation **Internal
+  Testing Only**. Add a TestFlight Internal Testing post-action for the
+  **German** group.
+- [ ] Add `RECALL_SUPABASE_CONFIG_B64` to the workflow environment and mark it
+  **Secret**. Its decoded JSON must contain only `SUPABASE_URL` and the public
+  `SUPABASE_ANON_KEY`.
+- [ ] In App Store Connect > Users and Access > Integrations, create a Team API
+  key with App Manager or Admin access. Download it once. Save it as
+  `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`.
+- [ ] Set `ASC_KEY_ID` to that key's Key ID. Set `ASC_ISSUER_ID` to the Issuer
+  ID shown on the Integrations page. Keep both values out of the repository.
 
 To place the protected local config on the clipboard without printing it:
 
@@ -79,11 +97,32 @@ with Xcode Cloud's unique `CI_BUILD_NUMBER`.
 the Xcode action. Xcode Cloud's environment is temporary, and the runtime
 config is compiled through Dart defines rather than bundled as an asset.
 
+After the checklist is complete, shipping and waiting for the cloud build is
+one command:
+
+```bash
+python3 scripts/testflight_build.py
+```
+
+The script resolves the standalone product by bundle ID
+`com.german.ankiReview`, then resolves the workflow and `main` branch. It starts
+the build and polls until Xcode Cloud reports a final result. Use
+`--workflow <name>` or `--branch <name>` to override either default.
+
+Before shipping, confirm setup without starting a build:
+
+```bash
+python3 scripts/testflight_build.py --dry-run
+```
+
+The script never prints the API key, private key, or generated token. Run
+`python3 scripts/testflight_build.py --help` for the same environment-variable
+and key-path requirements.
+
 On the iPhone, accept the internal invitation in TestFlight and enable
-automatic updates for Recall. Use TestFlight's **Update** button when a build
-is needed immediately; background automatic installation is not
-instantaneous. Each beta build expires after 90 days, so keep publishing
-current builds while TestFlight is Recall's primary installation.
+automatic updates for Recall. A successful Xcode Cloud run is only the archive
+result. Confirm separately that App Store Connect processed the build and
+placed it in the **German** group. Each beta build expires after 90 days.
 
 ## PWA-to-native cutover
 
