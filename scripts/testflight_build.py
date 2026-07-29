@@ -379,6 +379,15 @@ class AppStoreConnectClient:
             raise DeliveryError(
                 f"cannot reach App Store Connect: {error.reason}"
             ) from None
+        except TimeoutError:
+            if method == "GET":
+                raise TransientReadError(
+                    "App Store Connect read timed out"
+                ) from None
+            raise DeliveryError(
+                "App Store Connect publishing request timed out; inspect "
+                "Xcode Cloud before starting another build"
+            ) from None
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise DeliveryError(
                 "App Store Connect returned an unreadable response"

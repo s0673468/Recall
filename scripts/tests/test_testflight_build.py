@@ -448,6 +448,36 @@ class AppStoreConnectClientTests(unittest.TestCase):
             raised.exception, delivery.TransientReadError
         )
 
+    def test_get_response_read_timeout_is_retryable(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = TimeoutError(
+            "read timed out"
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.TransientReadError):
+            client.request("GET", "/ciBuildRuns/run-1")
+
+    def test_post_response_read_timeout_is_not_retryable(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = TimeoutError(
+            "read timed out"
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.DeliveryError) as raised:
+            client.request("POST", "/ciBuildRuns", {"data": {}})
+
+        self.assertNotIsInstance(
+            raised.exception, delivery.TransientReadError
+        )
+
 
 class GitHubReleaseGateTests(unittest.TestCase):
     def test_requires_strict_green_required_check_on_exact_tip(self) -> None:
