@@ -76,11 +76,15 @@ Use `xcrun devicectl list devices` to find the paired iPhone ID.
 - [ ] Add `RECALL_SUPABASE_CONFIG_B64` to the workflow environment and mark it
   **Secret**. Its decoded JSON must contain only `SUPABASE_URL` and the public
   `SUPABASE_ANON_KEY`.
+- [ ] Keep `ITSAppUsesNonExemptEncryption` set to `false` in
+  `ios/Runner/Info.plist`. This source-controlled declaration prevents each
+  build from stopping at a manual export-compliance prompt.
 - [ ] In App Store Connect > Users and Access > Integrations, create a Team API
-  key with App Manager or Admin access. Download it once. Save it as
+  key with Developer access. Download it once. Save it as
   `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`.
 - [ ] Set `ASC_KEY_ID` to that key's Key ID. Set `ASC_ISSUER_ID` to the Issuer
   ID shown on the Integrations page. Keep both values out of the repository.
+  Keep the private key owner-owned and mode `0600`.
 
 To place the protected local config on the clipboard without printing it:
 
@@ -104,10 +108,16 @@ one command:
 python3 scripts/testflight_build.py
 ```
 
-The script resolves the standalone product by bundle ID
-`com.german.ankiReview`, then resolves the workflow and `main` branch. It starts
-the build and polls until Xcode Cloud reports a final result. Use
-`--workflow <name>` or `--branch <name>` to override either default.
+The script first proves that the exact `main` tip is protected by strict,
+successful required GitHub checks. It then resolves the standalone product by
+bundle ID `com.german.ankiReview`, the exact workflow, repository, and branch.
+It rechecks the branch tip immediately before starting the build.
+
+Completion means more than a green Xcode Cloud archive. The script verifies the
+cloud run used the gated commit, waits for App Store Connect to mark the build
+`VALID`, confirms the non-exempt-encryption declaration, and proves that the
+build is attached to the internal **German** group. Use `--workflow <name>` or
+`--branch <name>` to override either default.
 
 Before shipping, confirm setup without starting a build:
 
@@ -120,9 +130,8 @@ The script never prints the API key, private key, or generated token. Run
 and key-path requirements.
 
 On the iPhone, accept the internal invitation in TestFlight and enable
-automatic updates for Recall. A successful Xcode Cloud run is only the archive
-result. Confirm separately that App Store Connect processed the build and
-placed it in the **German** group. Each beta build expires after 90 days.
+automatic updates for Recall. The first Install or Update tap is still a
+phone-side boundary. Each beta build expires after 90 days.
 
 ## PWA-to-native cutover
 

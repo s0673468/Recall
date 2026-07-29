@@ -7,6 +7,7 @@ import argparse
 import base64
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -24,8 +25,11 @@ DEFAULT_BRANCH = "main"
 TOKEN_LIFETIME_SECONDS = 1_199
 REQUEST_TIMEOUT_SECONDS = 30
 DEFAULT_POLL_INTERVAL_SECONDS = 15.0
+DEFAULT_TIMEOUT_SECONDS = 2 * 60 * 60
 SUCCESS_STATUS = "SUCCEEDED"
 TERMINAL_PROGRESS = "COMPLETE"
+GITHUB_REPOSITORY = "s0673468/Recall"
+TESTFLIGHT_GROUP = "German"
 
 
 class DeliveryError(RuntimeError):
@@ -41,6 +45,7 @@ class Credentials:
 
 @dataclass(frozen=True)
 class BuildTarget:
+    app_id: str
     product_id: str
     workflow_id: str
     workflow_name: str
@@ -180,7 +185,117 @@ def credentials_from_environment(
             "App Store Connect API private key is missing: download the Team "
             f"API key and save it as {key_path}"
         )
+    key_stat = key_path.stat()
+    if (
+        key_path.is_symlink()
+        or not stat.S_ISREG(key_stat.st_mode)
+        or key_stat.st_uid != os.getuid()
+    ):
+        raise DeliveryError(
+            "App Store Connect API private key must be a regular, non-symlink, "
+            "owner-owned file"
+        )
+    if stat.S_IMODE(key_stat.st_mode) & 0o077:
+        raise DeliveryError(
+            f"App Store Connect API private key is too permissive; run "
+            f"chmod 600 {key_path}"
+        )
     return Credentials(key_id=key_id, issuer_id=issuer_id, key_path=key_path)
+
+
+def _gh_api(path: str) -> Mapping[str, Any]:
+    try:
+        result = subprocess.run(
+            ["gh", "api", path],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        raise DeliveryError(
+            "GitHub CLI is missing; install and authenticate gh before shipping"
+        ) from error
+    if result.returncode != 0:
+        raise DeliveryError(
+            "GitHub release-gate readback failed; run gh auth status and retry"
+        )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise DeliveryError("GitHub returned an unreadable release-gate response")
+    if not isinstance(payload, Mapping):
+        raise DeliveryError("GitHub returned an invalid release-gate response")
+    return payload
+
+
+def verify_github_release(
+    branch: str,
+    *,
+    api_get: Callable[[str], Mapping[str, Any]] = _gh_api,
+) -> str:
+    """Return the exact protected, green GitHub branch tip."""
+    encoded_branch = urllib.parse.quote(branch, safe="")
+    branch_path = f"repos/{GITHUB_REPOSITORY}/branches/{encoded_branch}"
+    branch_payload = api_get(branch_path)
+    commit = branch_payload.get("commit")
+    sha = commit.get("sha") if isinstance(commit, Mapping) else None
+    if not isinstance(sha, str) or not sha:
+        raise DeliveryError(f"GitHub branch {branch!r} has no readable tip")
+
+    protection = api_get(f"{branch_path}/protection")
+    required = protection.get("required_status_checks")
+    if not isinstance(required, Mapping) or required.get("strict") is not True:
+        raise DeliveryError(
+            f"GitHub branch {branch!r} is not protected by strict required checks"
+        )
+    contexts = {
+        str(context)
+        for context in (required.get("contexts") or [])
+        if isinstance(context, str) and context
+    }
+    for check in required.get("checks") or []:
+        if isinstance(check, Mapping) and isinstance(check.get("context"), str):
+            contexts.add(str(check["context"]))
+    if not contexts:
+        raise DeliveryError(
+            f"GitHub branch {branch!r} has no required status checks"
+        )
+
+    checks_payload = api_get(
+        f"repos/{GITHUB_REPOSITORY}/commits/{sha}/check-runs?per_page=100"
+    )
+    newest: dict[str, Mapping[str, Any]] = {}
+    for check_run in checks_payload.get("check_runs", []):
+        if not isinstance(check_run, Mapping):
+            continue
+        name = check_run.get("name")
+        if not isinstance(name, str):
+            continue
+        current = newest.get(name)
+        current_id = current.get("id", -1) if current else -1
+        candidate_id = check_run.get("id", -1)
+        if not isinstance(current_id, int):
+            current_id = -1
+        if not isinstance(candidate_id, int):
+            candidate_id = -1
+        if candidate_id > current_id:
+            newest[name] = check_run
+
+    accepted = {"success", "neutral", "skipped"}
+    for context in sorted(contexts):
+        check_run = newest.get(context)
+        if check_run is None:
+            raise DeliveryError(
+                f"required GitHub check {context!r} is missing for {sha[:12]}"
+            )
+        if (
+            str(check_run.get("status", "")).lower() != "completed"
+            or str(check_run.get("conclusion", "")).lower() not in accepted
+        ):
+            raise DeliveryError(
+                f"required GitHub check {context!r} is not green for {sha[:12]}"
+            )
+    return sha
 
 
 class AppStoreConnectClient:
@@ -252,7 +367,7 @@ def _resource_list(
 
 def resolve_product(
     client: Any, *, bundle_id: str = BUNDLE_ID
-) -> str:
+) -> tuple[str, str]:
     payload = client.request("GET", "/ciProducts?include=app&limit=200")
     app_ids = {
         item.get("id")
@@ -261,11 +376,11 @@ def resolve_product(
         and item.get("type") == "apps"
         and (item.get("attributes") or {}).get("bundleId") == bundle_id
     }
-    matches: list[str] = []
+    matches: list[tuple[str, str]] = []
     for product in _resource_list(payload, "Xcode Cloud products"):
         app = ((product.get("relationships") or {}).get("app") or {}).get("data")
         if isinstance(app, Mapping) and app.get("id") in app_ids:
-            matches.append(str(product.get("id")))
+            matches.append((str(product.get("id")), str(app.get("id"))))
     if not matches:
         raise DeliveryError(
             f"Xcode Cloud product is missing: create the standalone Recall "
@@ -318,13 +433,24 @@ def resolve_reference(
     repository_items = _resource_list(
         repositories, "Xcode Cloud primary repositories"
     )
-    if len(repository_items) != 1:
+    matches = [
+        item
+        for item in repository_items
+        if (
+            (item.get("attributes") or {}).get("ownerName") == "s0673468"
+            and (item.get("attributes") or {}).get("repositoryName") == "Recall"
+        )
+    ]
+    if not matches and len(repository_items) == 1:
+        # Older API versions can omit repository attributes unless requested.
+        matches = repository_items
+    if len(matches) != 1:
         raise DeliveryError(
             "Xcode Cloud repository is missing or ambiguous: connect "
             "github.com/s0673468/Recall as the standalone product's primary "
             "repository"
         )
-    repository_id = str(repository_items[0].get("id"))
+    repository_id = str(matches[0].get("id"))
     references = client.request(
         "GET",
         f"/scmRepositories/{repository_id}/gitReferences?limit=200",
@@ -350,7 +476,7 @@ def resolve_reference(
 def resolve_target(
     client: Any, *, workflow_name: str, branch: str
 ) -> BuildTarget:
-    product_id = resolve_product(client)
+    product_id, app_id = resolve_product(client)
     workflow_id = resolve_workflow(
         client, product_id=product_id, workflow_name=workflow_name
     )
@@ -358,6 +484,7 @@ def resolve_target(
         client, product_id=product_id, branch=branch
     )
     return BuildTarget(
+        app_id=app_id,
         product_id=product_id,
         workflow_id=workflow_id,
         workflow_name=workflow_name,
@@ -416,9 +543,13 @@ def poll_build(
     output: TextIO,
     sleep: Callable[[float], None] = time.sleep,
     poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    expected_sha: str | None = None,
+    monotonic: Callable[[], float] = time.monotonic,
 ) -> str:
     payload = initial_payload
     last_display: tuple[Any, str, Any] | None = None
+    deadline = monotonic() + timeout
     while True:
         run_id, number, progress, completion = _build_state(payload)
         display = (number, progress, completion)
@@ -436,9 +567,132 @@ def poll_build(
                     "Xcode Cloud marked the build complete without a completion "
                     "status"
                 )
-            return str(completion).upper()
+            completion_status = str(completion).upper()
+            if completion_status == SUCCESS_STATUS and expected_sha is not None:
+                data = payload.get("data")
+                attributes = (
+                    data.get("attributes") if isinstance(data, Mapping) else {}
+                )
+                source_commit = (
+                    attributes.get("sourceCommit")
+                    if isinstance(attributes, Mapping)
+                    else None
+                )
+                source_sha = (
+                    source_commit.get("commitSha")
+                    if isinstance(source_commit, Mapping)
+                    else None
+                )
+                if source_sha != expected_sha:
+                    raise DeliveryError(
+                        "Xcode Cloud built a different commit than the protected "
+                        f"GitHub tip {expected_sha[:12]}"
+                    )
+            return completion_status
+        if monotonic() >= deadline:
+            raise DeliveryError(
+                f"timed out waiting for Xcode Cloud build "
+                f"{number if number is not None else run_id}"
+            )
         sleep(poll_interval)
-        payload = client.request("GET", f"/ciBuildRuns/{run_id}")
+        payload = client.request(
+            "GET",
+            f"/ciBuildRuns/{run_id}?fields[ciBuildRuns]="
+            "number,executionProgress,completionStatus,sourceCommit,finishedDate",
+        )
+
+
+def poll_testflight(
+    client: Any,
+    *,
+    run_id: str,
+    target: BuildTarget,
+    output: TextIO,
+    sleep: Callable[[float], None] = time.sleep,
+    poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> str:
+    """Wait for a VALID build attached to Recall's internal tester group."""
+    deadline = monotonic() + timeout
+    last_state: str | None = None
+    builds_path = (
+        f"/ciBuildRuns/{run_id}/builds?"
+        "fields[builds]=version,processingState,usesNonExemptEncryption"
+    )
+    while True:
+        builds = _resource_list(
+            client.request("GET", builds_path),
+            "TestFlight builds",
+        )
+        if len(builds) > 1:
+            raise DeliveryError(
+                "Xcode Cloud returned more than one TestFlight build for the run"
+            )
+        if builds:
+            build = builds[0]
+            attributes = build.get("attributes") or {}
+            processing = str(
+                attributes.get("processingState") or "PROCESSING"
+            ).upper()
+            if processing != last_state:
+                print(f"TestFlight processing: {processing}", file=output)
+                last_state = processing
+            if processing in {"FAILED", "INVALID"}:
+                raise DeliveryError(
+                    f"TestFlight build processing finished with {processing}"
+                )
+            if processing == "VALID":
+                if attributes.get("usesNonExemptEncryption") is not False:
+                    raise DeliveryError(
+                        "TestFlight build lacks the source-controlled "
+                        "non-exempt-encryption declaration"
+                    )
+                build_id = build.get("id")
+                if not isinstance(build_id, str) or not build_id:
+                    raise DeliveryError(
+                        "App Store Connect returned an invalid TestFlight build"
+                    )
+                group_query = urllib.parse.urlencode(
+                    {
+                        "filter[app]": target.app_id,
+                        "filter[name]": TESTFLIGHT_GROUP,
+                        "filter[isInternalGroup]": "true",
+                        "filter[builds]": build_id,
+                        "limit": 200,
+                    }
+                )
+                groups = _resource_list(
+                    client.request("GET", f"/betaGroups?{group_query}"),
+                    "TestFlight beta groups",
+                )
+                exact_groups = [
+                    group
+                    for group in groups
+                    if (group.get("attributes") or {}).get("name")
+                    == TESTFLIGHT_GROUP
+                    and (group.get("attributes") or {}).get("isInternalGroup")
+                    is True
+                ]
+                if len(exact_groups) > 1:
+                    raise DeliveryError(
+                        f"multiple internal TestFlight groups are named "
+                        f"{TESTFLIGHT_GROUP!r}"
+                    )
+                if len(exact_groups) == 1:
+                    version = attributes.get("version") or build_id
+                    print(
+                        f"TestFlight build {version} is VALID and attached to "
+                        f"internal group {TESTFLIGHT_GROUP}.",
+                        file=output,
+                    )
+                    return build_id
+        if monotonic() >= deadline:
+            raise DeliveryError(
+                "timed out waiting for a VALID TestFlight build attached to "
+                f"internal group {TESTFLIGHT_GROUP}"
+            )
+        sleep(poll_interval)
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -473,6 +727,12 @@ def make_parser() -> argparse.ArgumentParser:
         default=DEFAULT_POLL_INTERVAL_SECONDS,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
@@ -482,7 +742,9 @@ def run(
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
     client_factory: Callable[[Callable[[], str]], Any] = AppStoreConnectClient,
+    release_gate: Callable[[str], str] = verify_github_release,
     sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
     issued_at: int | None = None,
     output: TextIO | None = None,
     error_output: TextIO | None = None,
@@ -493,6 +755,9 @@ def run(
     active_environment = os.environ if environ is None else environ
     active_home = Path.home() if home is None else home
     try:
+        if args.poll_interval <= 0 or args.timeout <= 0:
+            raise DeliveryError("--poll-interval and --timeout must be positive")
+        gated_sha = release_gate(args.branch)
         credentials = credentials_from_environment(
             active_environment, home=active_home
         )
@@ -510,18 +775,43 @@ def run(
             file=output,
         )
         if args.dry_run:
-            print("Dry run: no Xcode Cloud build was started.", file=output)
+            print(
+                f"Dry run: protected GitHub tip {gated_sha[:12]} is green; "
+                "no Xcode Cloud build was started.",
+                file=output,
+            )
             return 0
 
+        if release_gate(args.branch) != gated_sha:
+            raise DeliveryError(
+                f"GitHub branch {args.branch!r} moved after target resolution; "
+                "run the command again"
+            )
         initial = start_build(client, target)
+        run_id, _, _, _ = _build_state(initial)
         completion = poll_build(
             client,
             initial,
             output=output,
             sleep=sleep,
             poll_interval=args.poll_interval,
+            timeout=args.timeout,
+            expected_sha=gated_sha,
+            monotonic=monotonic,
         )
-        return 0 if completion == SUCCESS_STATUS else 1
+        if completion != SUCCESS_STATUS:
+            return 1
+        poll_testflight(
+            client,
+            run_id=run_id,
+            target=target,
+            output=output,
+            sleep=sleep,
+            poll_interval=args.poll_interval,
+            timeout=args.timeout,
+            monotonic=monotonic,
+        )
+        return 0
     except DeliveryError as error:
         print(f"error: {error}", file=error_output)
         return 1

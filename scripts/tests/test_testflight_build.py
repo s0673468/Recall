@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest import mock
 
@@ -82,7 +83,14 @@ def workflow_response(name: str = delivery.DEFAULT_WORKFLOW) -> dict:
 def repository_response() -> dict:
     return {
         "data": [
-            {"type": "scmRepositories", "id": "repository-recall"}
+            {
+                "type": "scmRepositories",
+                "id": "repository-recall",
+                "attributes": {
+                    "ownerName": "s0673468",
+                    "repositoryName": "Recall",
+                },
+            }
         ]
     }
 
@@ -191,6 +199,7 @@ class ResolutionTests(unittest.TestCase):
 
     def test_build_run_request_body(self) -> None:
         target = delivery.BuildTarget(
+            app_id="app-recall",
             product_id="product",
             workflow_id="workflow",
             workflow_name="Recall workflow",
@@ -227,7 +236,12 @@ class PollingTests(unittest.TestCase):
     def test_success_polling_path(self) -> None:
         client = FakeClient(
             {
-                ("GET", "/ciBuildRuns/run-1"): [
+                (
+                    "GET",
+                    "/ciBuildRuns/run-1?fields[ciBuildRuns]="
+                    "number,executionProgress,completionStatus,sourceCommit,"
+                    "finishedDate",
+                ): [
                     {
                         "data": {
                             "id": "run-1",
@@ -326,6 +340,7 @@ class PollingTests(unittest.TestCase):
                 },
                 home=home,
                 client_factory=lambda _token_provider: client,
+                release_gate=lambda _branch: "a" * 40,
                 sleep=lambda _seconds: None,
                 issued_at=1_700_000_000,
                 output=output,
@@ -334,6 +349,199 @@ class PollingTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(error.getvalue(), "")
         self.assertIn("completion FAILED", output.getvalue())
+
+
+class GitHubReleaseGateTests(unittest.TestCase):
+    def test_requires_strict_green_required_check_on_exact_tip(self) -> None:
+        sha = "a" * 40
+        responses = {
+            "repos/s0673468/Recall/branches/main": {
+                "commit": {"sha": sha}
+            },
+            "repos/s0673468/Recall/branches/main/protection": {
+                "required_status_checks": {
+                    "strict": True,
+                    "contexts": ["flutter"],
+                    "checks": [{"context": "flutter"}],
+                }
+            },
+            f"repos/s0673468/Recall/commits/{sha}/check-runs?per_page=100": {
+                "check_runs": [
+                    {
+                        "id": 1,
+                        "name": "flutter",
+                        "status": "completed",
+                        "conclusion": "failure",
+                    },
+                    {
+                        "id": 2,
+                        "name": "flutter",
+                        "status": "completed",
+                        "conclusion": "success",
+                    },
+                ]
+            },
+        }
+
+        self.assertEqual(
+            delivery.verify_github_release(
+                "main", api_get=lambda path: responses[path]
+            ),
+            sha,
+        )
+
+    def test_rejects_missing_required_check(self) -> None:
+        sha = "b" * 40
+        responses = {
+            "repos/s0673468/Recall/branches/main": {
+                "commit": {"sha": sha}
+            },
+            "repos/s0673468/Recall/branches/main/protection": {
+                "required_status_checks": {
+                    "strict": True,
+                    "contexts": ["flutter"],
+                }
+            },
+            f"repos/s0673468/Recall/commits/{sha}/check-runs?per_page=100": {
+                "check_runs": []
+            },
+        }
+
+        with self.assertRaisesRegex(
+            delivery.DeliveryError, "required GitHub check 'flutter' is missing"
+        ):
+            delivery.verify_github_release(
+                "main", api_get=lambda path: responses[path]
+            )
+
+
+class TestFlightReadbackTests(unittest.TestCase):
+    def target(self) -> delivery.BuildTarget:
+        return delivery.BuildTarget(
+            app_id="app-recall",
+            product_id="product-recall",
+            workflow_id="workflow-recall",
+            workflow_name=delivery.DEFAULT_WORKFLOW,
+            repository_id="repository-recall",
+            reference_id="reference-main",
+            branch="main",
+        )
+
+    def test_requires_valid_build_attached_to_internal_german_group(self) -> None:
+        group_query = urllib.parse.urlencode(
+            {
+                "filter[app]": "app-recall",
+                "filter[name]": "German",
+                "filter[isInternalGroup]": "true",
+                "filter[builds]": "build-52",
+                "limit": 200,
+            }
+        )
+        client = FakeClient(
+            {
+                (
+                    "GET",
+                    "/ciBuildRuns/run-52/builds?"
+                    "fields[builds]=version,processingState,"
+                    "usesNonExemptEncryption",
+                ): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": "build-52",
+                                "attributes": {
+                                    "version": "52",
+                                    "processingState": "VALID",
+                                    "usesNonExemptEncryption": False,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                ("GET", f"/betaGroups?{group_query}"): [
+                    {
+                        "data": [
+                            {
+                                "type": "betaGroups",
+                                "id": "group-german",
+                                "attributes": {
+                                    "name": "German",
+                                    "isInternalGroup": True,
+                                },
+                            }
+                        ]
+                    }
+                ],
+            }
+        )
+        output = io.StringIO()
+
+        self.assertEqual(
+            delivery.poll_testflight(
+                client,
+                run_id="run-52",
+                target=self.target(),
+                output=output,
+                sleep=lambda _seconds: None,
+            ),
+            "build-52",
+        )
+        self.assertIn(
+            "VALID and attached to internal group German",
+            output.getvalue(),
+        )
+
+    def test_times_out_when_german_group_is_not_attached(self) -> None:
+        group_query = urllib.parse.urlencode(
+            {
+                "filter[app]": "app-recall",
+                "filter[name]": "German",
+                "filter[isInternalGroup]": "true",
+                "filter[builds]": "build-53",
+                "limit": 200,
+            }
+        )
+        client = FakeClient(
+            {
+                (
+                    "GET",
+                    "/ciBuildRuns/run-53/builds?"
+                    "fields[builds]=version,processingState,"
+                    "usesNonExemptEncryption",
+                ): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": "build-53",
+                                "attributes": {
+                                    "version": "53",
+                                    "processingState": "VALID",
+                                    "usesNonExemptEncryption": False,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                ("GET", f"/betaGroups?{group_query}"): [{"data": []}],
+            }
+        )
+        clock = iter([0.0, 2.0])
+
+        with self.assertRaisesRegex(
+            delivery.DeliveryError,
+            "timed out waiting for a VALID TestFlight build",
+        ):
+            delivery.poll_testflight(
+                client,
+                run_id="run-53",
+                target=self.target(),
+                output=io.StringIO(),
+                sleep=lambda _seconds: None,
+                timeout=1,
+                monotonic=lambda: next(clock),
+            )
 
 
 class MissingPrerequisiteTests(unittest.TestCase):
@@ -353,6 +561,7 @@ class MissingPrerequisiteTests(unittest.TestCase):
             client_factory=lambda _token_provider: self.fail(
                 "network client created"
             ),
+            release_gate=lambda _branch: "a" * 40,
             output=output,
             error_output=error,
         )

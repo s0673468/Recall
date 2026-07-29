@@ -24,6 +24,14 @@ void main() {
     expect(plist, contains('<string>Recall</string>'));
     expect(plist, contains('<key>NSFaceIDUsageDescription</key>'));
     expect(plist, contains('Unlock Recall with Face ID'));
+    expect(
+      plist,
+      contains(
+        '<key>ITSAppUsesNonExemptEncryption</key>\n'
+        '\t<false/>',
+      ),
+      reason: 'TestFlight export compliance must be declared in source',
+    );
 
     final phoneOrientations = RegExp(
       r'<key>UISupportedInterfaceOrientations</key>\s*<array>(.*?)</array>',
