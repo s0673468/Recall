@@ -75,19 +75,28 @@ class PrimerScreen extends StatelessWidget {
                     if (page.figureSvg case final figureSvg?)
                       Padding(
                         padding: const EdgeInsets.only(bottom: UiSpacing.lg),
-                        child: SvgPicture.string(
-                          figureSvg,
-                          key: ValueKey('recall_primer_figure_${page.nodeId}'),
-                          width: double.infinity,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                        // The scroll view gives no height bound, and an
+                        // unbounded SvgPicture asserts in layout — pin the
+                        // figure to the spec's ~600x360 canvas ratio and let
+                        // BoxFit.contain letterbox any other aspect.
+                        child: AspectRatio(
+                          aspectRatio: 600 / 360,
+                          child: SvgPicture.string(
+                            figureSvg,
+                            key: ValueKey('recall_primer_figure_${page.nodeId}'),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                          ),
                         ),
                       ),
                     CardFace(
                       html: page.bodyHtml,
                       hasLatex: true,
                       revealCloze: true,
-                      cacheKey: 'primer:${page.nodeId}',
+                      // Unlike card faces, a primer body can change server-side
+                      // within a session (rows are updated in place), so the
+                      // memo key must vary with content, not just identity.
+                      cacheKey: 'primer:${page.nodeId}:${page.bodyHtml.hashCode}',
                       style: bodyStyle,
                     ),
                   ],
