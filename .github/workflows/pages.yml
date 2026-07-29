@@ -1,12 +1,15 @@
 name: Deploy Recall to Pages
 
-# Manual-only on purpose. Recall is a PRIVATE org repo, and GitHub Pages for
-# private repos requires a paid plan the S067-experiment-org free plan does not
-# have — so this workflow is NOT wired to `push` and will not auto-deploy or
-# show up as a failing required check. Until Pages is enabled for this repo, the
-# live Recall PWA is still served from the Health site (/Health/recall/); this
-# workflow is the correct, ready-to-arm standalone deploy for after cutover.
-# Trigger it by hand from the Actions tab once Pages is available.
+# Manual-only on purpose. Recall is a public repo on the personal account
+# (s0673468/Recall), so Pages is available on the free plan and the site is live
+# at https://s0673468.github.io/Recall/. Health no longer serves the PWA.
+#
+# It stays `workflow_dispatch` rather than push-triggered because publishing is a
+# release decision, not a side effect of merging: main carries work that is not
+# meant to be live yet, so the deployed build is intentionally allowed to lag
+# main. Trigger a deploy by hand from the Actions tab when the live site should
+# move. PRs are gated by CI's `flutter` job; this workflow is never a required
+# check.
 on:
   workflow_dispatch:
 
