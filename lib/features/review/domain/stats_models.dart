@@ -100,6 +100,22 @@ class ConceptNodeInfo {
   });
 }
 
+/// A read-only primer for one concept-graph node. [bodyHtml] uses the same
+/// light-HTML + inline-LaTeX format as a card face.
+class ConceptPage {
+  final String nodeId;
+  final String title;
+  final String bodyHtml;
+  final DateTime updatedAt;
+
+  const ConceptPage({
+    required this.nodeId,
+    required this.title,
+    required this.bodyHtml,
+    required this.updatedAt,
+  });
+}
+
 /// Per-node retention over the Concepts window: how a concept's tagged cards
 /// fared. Mirrors `metis recall-signal`'s Again-rate — pass = rating ≥ 2,
 /// fail = rating 1 (Again). [title]/[module] are null when the node carries a

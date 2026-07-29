@@ -19,6 +19,7 @@ typedef _ConceptInputs = ({
   List<ReviewLogEntry> log,
   Map<String, String> tags,
   List<ConceptNodeInfo> nodes,
+  List<ConceptPage> pages,
 });
 
 /// Stats v2: headline tiles, a 26-week review heatmap, a 14-day due forecast,
@@ -51,12 +52,24 @@ class StatsScreenState extends State<StatsScreen> {
     _reviewLog = _service.loadReviewLog();
     _dueDates = _service.loadDueDates();
     // The Concepts section needs the review log plus the node<->card tag map and
-    // the concept metadata. Bundle them so it resolves (and fails) as one unit.
+    // concept metadata/primers. Start each one-time fetch together and bundle
+    // them so the section resolves (and fails) as one unit.
     _conceptData = () async {
-      final tags = await _service.loadNoteTags();
-      final nodes = await _service.loadConceptNodes();
-      final log = await _reviewLog;
-      return (log: log, tags: tags, nodes: nodes);
+      final tagsFuture = _service.loadNoteTags();
+      final nodesFuture = _service.loadConceptNodes();
+      final pagesFuture = _service.loadConceptPages();
+      final results = await Future.wait<Object>([
+        _reviewLog,
+        tagsFuture,
+        nodesFuture,
+        pagesFuture,
+      ]);
+      return (
+        log: results[0] as List<ReviewLogEntry>,
+        tags: results[1] as Map<String, String>,
+        nodes: results[2] as List<ConceptNodeInfo>,
+        pages: results[3] as List<ConceptPage>,
+      );
     }();
   }
 
@@ -70,6 +83,7 @@ class StatsScreenState extends State<StatsScreen> {
           log: <ReviewLogEntry>[],
           tags: <String, String>{},
           nodes: <ConceptNodeInfo>[],
+          pages: <ConceptPage>[],
         ),
       ),
     ]);
@@ -171,6 +185,8 @@ class StatsScreenState extends State<StatsScreen> {
                 notEnoughData: result.notEnoughData,
                 coveredNodeCount: result.coveredNodeCount,
                 totalConcepts: data.nodes.length,
+                conceptPages: data.pages,
+                conceptNodes: data.nodes,
               );
             },
           ),

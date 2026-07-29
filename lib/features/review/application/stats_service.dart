@@ -34,6 +34,8 @@ class StatsService {
 
   Future<List<ConceptNodeInfo>> loadConceptNodes() => api.fetchConceptNodes();
 
+  Future<List<ConceptPage>> loadConceptPages() => api.fetchConceptPages();
+
   static DateTime dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
   // ── Heatmap ──
