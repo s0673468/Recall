@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
 import os
 import stat
@@ -345,7 +346,17 @@ class AppStoreConnectClient:
             with self._opener(
                 request, timeout=REQUEST_TIMEOUT_SECONDS
             ) as response:
-                parsed = json.loads(response.read().decode("utf-8") or "{}")
+                response_body = response.read()
+                if not response_body:
+                    if method == "GET":
+                        raise TransientReadError(
+                            "App Store Connect returned an empty read response"
+                        )
+                    raise DeliveryError(
+                        "App Store Connect publishing response was empty; "
+                        "inspect Xcode Cloud before starting another build"
+                    )
+                parsed = json.loads(response_body.decode("utf-8"))
         except urllib.error.HTTPError as error:
             if method == "GET" and (
                 error.code == 429 or 500 <= error.code < 600
@@ -377,7 +388,8 @@ class AppStoreConnectClient:
                     "App Store Connect read was interrupted"
                 ) from None
             raise DeliveryError(
-                f"cannot reach App Store Connect: {error.reason}"
+                "App Store Connect publishing response was interrupted; "
+                "inspect Xcode Cloud before starting another build"
             ) from None
         except TimeoutError:
             if method == "GET":
@@ -388,9 +400,23 @@ class AppStoreConnectClient:
                 "App Store Connect publishing request timed out; inspect "
                 "Xcode Cloud before starting another build"
             ) from None
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (http.client.IncompleteRead, ConnectionError):
+            if method == "GET":
+                raise TransientReadError(
+                    "App Store Connect response body was interrupted"
+                ) from None
             raise DeliveryError(
-                "App Store Connect returned an unreadable response"
+                "App Store Connect publishing response body was interrupted; "
+                "inspect Xcode Cloud before starting another build"
+            ) from None
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            if method == "GET":
+                raise TransientReadError(
+                    "App Store Connect returned an unreadable read response"
+                ) from None
+            raise DeliveryError(
+                "App Store Connect publishing response was unreadable; "
+                "inspect Xcode Cloud before starting another build"
             ) from None
         if not isinstance(parsed, Mapping):
             raise DeliveryError("App Store Connect returned an invalid response")

@@ -60,7 +60,7 @@ xcrun devicectl device install app \
 Use `xcrun devicectl list devices` to find the paired iPhone ID.
 The paid-team project includes the widget and App Group. A free Personal Team
 cannot sign that configuration directly. For that temporary fallback, work on a
-disposable copy and run
+disposable copy under `/tmp` or `/private/tmp` and run
 `ruby ios/tool/prepare_personal_team_build.rb ios/Runner.xcodeproj` before the
 Flutter build; see `ios/RecallWidget/README.md`.
 

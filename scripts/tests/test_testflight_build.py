@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import io
 import json
 import subprocess
@@ -477,6 +478,85 @@ class AppStoreConnectClientTests(unittest.TestCase):
         self.assertNotIsInstance(
             raised.exception, delivery.TransientReadError
         )
+
+    def test_get_incomplete_or_reset_body_is_retryable(self) -> None:
+        for read_error in (
+            http.client.IncompleteRead(b"partial"),
+            ConnectionResetError("peer reset"),
+        ):
+            with self.subTest(error=type(read_error).__name__):
+                response = mock.MagicMock()
+                response.__enter__.return_value.read.side_effect = read_error
+                client = delivery.AppStoreConnectClient(
+                    lambda: "token",
+                    opener=mock.Mock(return_value=response),
+                )
+
+                with self.assertRaises(delivery.TransientReadError):
+                    client.request("GET", "/ciBuildRuns/run-1")
+
+    def test_post_incomplete_body_requires_inspection_before_retry(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = (
+            http.client.IncompleteRead(b"partial")
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.DeliveryError) as raised:
+            client.request("POST", "/ciBuildRuns", {"data": {}})
+
+        self.assertNotIsInstance(
+            raised.exception, delivery.TransientReadError
+        )
+        self.assertIn("inspect Xcode Cloud", str(raised.exception))
+
+    def test_post_url_error_requires_inspection_before_retry(self) -> None:
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(
+                side_effect=urllib.error.URLError("connection lost")
+            ),
+        )
+
+        with self.assertRaises(delivery.DeliveryError) as raised:
+            client.request("POST", "/ciBuildRuns", {"data": {}})
+
+        self.assertNotIsInstance(
+            raised.exception, delivery.TransientReadError
+        )
+        self.assertIn("inspect Xcode Cloud", str(raised.exception))
+
+    def test_get_truncated_json_is_retryable(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"data":'
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.TransientReadError):
+            client.request("GET", "/ciBuildRuns/run-1")
+
+    def test_post_truncated_or_empty_json_requires_inspection(self) -> None:
+        for body in (b'{"data":', b""):
+            with self.subTest(body=body):
+                response = mock.MagicMock()
+                response.__enter__.return_value.read.return_value = body
+                client = delivery.AppStoreConnectClient(
+                    lambda: "token",
+                    opener=mock.Mock(return_value=response),
+                )
+
+                with self.assertRaises(delivery.DeliveryError) as raised:
+                    client.request("POST", "/ciBuildRuns", {"data": {}})
+
+                self.assertNotIsInstance(
+                    raised.exception, delivery.TransientReadError
+                )
+                self.assertIn("inspect Xcode Cloud", str(raised.exception))
 
 
 class GitHubReleaseGateTests(unittest.TestCase):
