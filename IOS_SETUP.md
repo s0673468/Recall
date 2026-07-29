@@ -58,11 +58,19 @@ xcrun devicectl device install app \
 ```
 
 Use `xcrun devicectl list devices` to find the paired iPhone ID.
+The paid-team project includes the widget and App Group. A free Personal Team
+cannot sign that configuration directly. For that temporary fallback, work on a
+disposable copy and run
+`ruby ios/tool/prepare_personal_team_build.rb ios/Runner.xcodeproj` before the
+Flutter build; see `ios/RecallWidget/README.md`.
 
 ### One-time Apple setup
 
-- [ ] In App Store Connect, register `com.german.ankiReview` if needed. Create
-  the iOS app record named **Recall**.
+- [ ] Use the paid Apple Developer Program team. Register the main App ID
+  `com.german.ankiReview` and the widget App ID
+  `com.german.ankiReview.RecallWidget` if needed. Register the App Group
+  `group.com.german.ankiReview` and attach it to both App IDs. Create the iOS
+  app record named **Recall** for the main App ID.
 - [ ] Under TestFlight, create the internal group **German**. Add the Account
   Holder as its only tester.
 - [ ] Open `ios/Runner.xcworkspace` in Xcode. Choose Integrate > Create
