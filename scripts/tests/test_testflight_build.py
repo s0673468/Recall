@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 import urllib.parse
 from pathlib import Path
 from unittest import mock
@@ -23,7 +25,9 @@ def decode_segment(segment: str) -> dict[str, object]:
 
 
 class FakeClient:
-    def __init__(self, responses: dict[tuple[str, str], list[dict]]) -> None:
+    def __init__(
+        self, responses: dict[tuple[str, str], list[object]]
+    ) -> None:
         self.responses = {key: list(value) for key, value in responses.items()}
         self.calls: list[tuple[str, str, object]] = []
 
@@ -32,7 +36,10 @@ class FakeClient:
         key = (method, path)
         if key not in self.responses or not self.responses[key]:
             raise AssertionError(f"unexpected HTTP request: {method} {path}")
-        return self.responses[key].pop(0)
+        response = self.responses[key].pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 def product_response() -> dict:
@@ -350,6 +357,207 @@ class PollingTests(unittest.TestCase):
         self.assertEqual(error.getvalue(), "")
         self.assertIn("completion FAILED", output.getvalue())
 
+    def test_transient_build_poll_is_retried_without_new_post(self) -> None:
+        path = (
+            "/ciBuildRuns/run-42?fields[ciBuildRuns]="
+            "number,executionProgress,completionStatus,sourceCommit,finishedDate"
+        )
+        client = FakeClient(
+            {
+                ("GET", path): [
+                    delivery.TransientReadError(
+                        "temporary throttling", retry_after=2.0
+                    ),
+                    {
+                        "data": {
+                            "id": "run-42",
+                            "attributes": {
+                                "number": 42,
+                                "executionProgress": "COMPLETE",
+                                "completionStatus": "SUCCEEDED",
+                            },
+                        }
+                    },
+                ]
+            }
+        )
+        sleeps: list[float] = []
+
+        self.assertEqual(
+            delivery.poll_build(
+                client,
+                {
+                    "data": {
+                        "id": "run-42",
+                        "attributes": {
+                            "number": 42,
+                            "executionProgress": "PENDING",
+                        },
+                    }
+                },
+                output=io.StringIO(),
+                sleep=sleeps.append,
+                poll_interval=0.25,
+            ),
+            "SUCCEEDED",
+        )
+        self.assertEqual(sleeps, [0.25, 2.0])
+        self.assertEqual(
+            [call[0] for call in client.calls],
+            ["GET", "GET"],
+        )
+
+
+class AppStoreConnectClientTests(unittest.TestCase):
+    def test_get_429_exposes_retry_after_without_credentials(self) -> None:
+        key_id = "NEVER-LOG-THIS"
+        http_error = urllib.error.HTTPError(
+            f"{delivery.API_BASE}/ciBuildRuns/run-1",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "3"},
+            None,
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: f"token-for-{key_id}",
+            opener=mock.Mock(side_effect=http_error),
+        )
+
+        with self.assertRaises(delivery.TransientReadError) as raised:
+            client.request("GET", "/ciBuildRuns/run-1")
+
+        self.assertEqual(raised.exception.retry_after, 3.0)
+        self.assertNotIn(key_id, str(raised.exception))
+
+    def test_post_429_is_not_retryable(self) -> None:
+        http_error = urllib.error.HTTPError(
+            f"{delivery.API_BASE}/ciBuildRuns",
+            429,
+            "Too Many Requests",
+            {"Retry-After": "3"},
+            None,
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(side_effect=http_error),
+        )
+
+        with self.assertRaises(delivery.DeliveryError) as raised:
+            client.request("POST", "/ciBuildRuns", {"data": {}})
+
+        self.assertNotIsInstance(
+            raised.exception, delivery.TransientReadError
+        )
+
+    def test_get_response_read_timeout_is_retryable(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = TimeoutError(
+            "read timed out"
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.TransientReadError):
+            client.request("GET", "/ciBuildRuns/run-1")
+
+    def test_post_response_read_timeout_is_not_retryable(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = TimeoutError(
+            "read timed out"
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.DeliveryError) as raised:
+            client.request("POST", "/ciBuildRuns", {"data": {}})
+
+        self.assertNotIsInstance(
+            raised.exception, delivery.TransientReadError
+        )
+
+    def test_get_incomplete_or_reset_body_is_retryable(self) -> None:
+        for read_error in (
+            http.client.IncompleteRead(b"partial"),
+            ConnectionResetError("peer reset"),
+        ):
+            with self.subTest(error=type(read_error).__name__):
+                response = mock.MagicMock()
+                response.__enter__.return_value.read.side_effect = read_error
+                client = delivery.AppStoreConnectClient(
+                    lambda: "token",
+                    opener=mock.Mock(return_value=response),
+                )
+
+                with self.assertRaises(delivery.TransientReadError):
+                    client.request("GET", "/ciBuildRuns/run-1")
+
+    def test_post_incomplete_body_requires_inspection_before_retry(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = (
+            http.client.IncompleteRead(b"partial")
+        )
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.DeliveryError) as raised:
+            client.request("POST", "/ciBuildRuns", {"data": {}})
+
+        self.assertNotIsInstance(
+            raised.exception, delivery.TransientReadError
+        )
+        self.assertIn("inspect Xcode Cloud", str(raised.exception))
+
+    def test_post_url_error_requires_inspection_before_retry(self) -> None:
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(
+                side_effect=urllib.error.URLError("connection lost")
+            ),
+        )
+
+        with self.assertRaises(delivery.DeliveryError) as raised:
+            client.request("POST", "/ciBuildRuns", {"data": {}})
+
+        self.assertNotIsInstance(
+            raised.exception, delivery.TransientReadError
+        )
+        self.assertIn("inspect Xcode Cloud", str(raised.exception))
+
+    def test_get_truncated_json_is_retryable(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"data":'
+        client = delivery.AppStoreConnectClient(
+            lambda: "token",
+            opener=mock.Mock(return_value=response),
+        )
+
+        with self.assertRaises(delivery.TransientReadError):
+            client.request("GET", "/ciBuildRuns/run-1")
+
+    def test_post_truncated_or_empty_json_requires_inspection(self) -> None:
+        for body in (b'{"data":', b""):
+            with self.subTest(body=body):
+                response = mock.MagicMock()
+                response.__enter__.return_value.read.return_value = body
+                client = delivery.AppStoreConnectClient(
+                    lambda: "token",
+                    opener=mock.Mock(return_value=response),
+                )
+
+                with self.assertRaises(delivery.DeliveryError) as raised:
+                    client.request("POST", "/ciBuildRuns", {"data": {}})
+
+                self.assertNotIsInstance(
+                    raised.exception, delivery.TransientReadError
+                )
+                self.assertIn("inspect Xcode Cloud", str(raised.exception))
+
 
 class GitHubReleaseGateTests(unittest.TestCase):
     def test_requires_strict_green_required_check_on_exact_tip(self) -> None:
@@ -597,14 +805,27 @@ class MissingPrerequisiteTests(unittest.TestCase):
 
     def test_missing_private_key_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            self.assert_single_error(
+            key_id = "NEVER-LOG-THIS"
+            output = io.StringIO()
+            error = io.StringIO()
+            exit_code = delivery.run(
+                ["--dry-run"],
                 environ={
-                    "ASC_KEY_ID": "KEY",
+                    "ASC_KEY_ID": key_id,
                     "ASC_ISSUER_ID": "issuer",
                 },
-                expected="App Store Connect API private key is missing",
                 home=Path(directory),
+                release_gate=lambda _branch: "a" * 40,
+                output=output,
+                error_output=error,
             )
+            self.assertEqual(exit_code, 1)
+            self.assertIn(
+                "App Store Connect API private key is missing",
+                error.getvalue(),
+            )
+            self.assertIn("AuthKey_<KEY_ID>.p8", error.getvalue())
+            self.assertNotIn(key_id, error.getvalue())
 
     def test_missing_product(self) -> None:
         client = FakeClient(

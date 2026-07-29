@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
 import os
 import stat
@@ -30,10 +31,21 @@ SUCCESS_STATUS = "SUCCEEDED"
 TERMINAL_PROGRESS = "COMPLETE"
 GITHUB_REPOSITORY = "s0673468/Recall"
 TESTFLIGHT_GROUP = "German"
+KEY_PATH_TEMPLATE = "~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8"
 
 
 class DeliveryError(RuntimeError):
     """A configuration or App Store Connect error safe to show to the user."""
+
+
+class TransientReadError(DeliveryError):
+    """A retryable App Store Connect failure from a read-only request."""
+
+    def __init__(
+        self, message: str, *, retry_after: float | None = None
+    ) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True)
@@ -183,7 +195,7 @@ def credentials_from_environment(
     if not key_path.is_file():
         raise DeliveryError(
             "App Store Connect API private key is missing: download the Team "
-            f"API key and save it as {key_path}"
+            f"API key and save it as {KEY_PATH_TEMPLATE}"
         )
     key_stat = key_path.stat()
     if (
@@ -197,8 +209,8 @@ def credentials_from_environment(
         )
     if stat.S_IMODE(key_stat.st_mode) & 0o077:
         raise DeliveryError(
-            f"App Store Connect API private key is too permissive; run "
-            f"chmod 600 {key_path}"
+            "App Store Connect API private key is too permissive; run "
+            f"chmod 600 {KEY_PATH_TEMPLATE}"
         )
     return Credentials(key_id=key_id, issuer_id=issuer_id, key_path=key_path)
 
@@ -334,24 +346,107 @@ class AppStoreConnectClient:
             with self._opener(
                 request, timeout=REQUEST_TIMEOUT_SECONDS
             ) as response:
-                parsed = json.loads(response.read().decode("utf-8") or "{}")
+                response_body = response.read()
+                if not response_body:
+                    if method == "GET":
+                        raise TransientReadError(
+                            "App Store Connect returned an empty read response"
+                        )
+                    raise DeliveryError(
+                        "App Store Connect publishing response was empty; "
+                        "inspect Xcode Cloud before starting another build"
+                    )
+                parsed = json.loads(response_body.decode("utf-8"))
         except urllib.error.HTTPError as error:
+            if method == "GET" and (
+                error.code == 429 or 500 <= error.code < 600
+            ):
+                retry_after: float | None = None
+                raw_retry_after = (
+                    error.headers.get("Retry-After")
+                    if error.headers is not None
+                    else None
+                )
+                if raw_retry_after is not None:
+                    try:
+                        retry_after = max(0.0, float(raw_retry_after))
+                    except ValueError:
+                        retry_after = None
+                raise TransientReadError(
+                    f"App Store Connect temporarily returned HTTP {error.code} "
+                    f"for GET {urllib.parse.urlparse(url).path}",
+                    retry_after=retry_after,
+                ) from None
             raise DeliveryError(
                 f"App Store Connect returned HTTP {error.code} for "
                 f"{method} {urllib.parse.urlparse(url).path}; check the API "
                 "key role and Xcode Cloud setup"
             ) from None
         except urllib.error.URLError as error:
+            if method == "GET":
+                raise TransientReadError(
+                    "App Store Connect read was interrupted"
+                ) from None
             raise DeliveryError(
-                f"cannot reach App Store Connect: {error.reason}"
+                "App Store Connect publishing response was interrupted; "
+                "inspect Xcode Cloud before starting another build"
+            ) from None
+        except TimeoutError:
+            if method == "GET":
+                raise TransientReadError(
+                    "App Store Connect read timed out"
+                ) from None
+            raise DeliveryError(
+                "App Store Connect publishing request timed out; inspect "
+                "Xcode Cloud before starting another build"
+            ) from None
+        except (http.client.IncompleteRead, ConnectionError):
+            if method == "GET":
+                raise TransientReadError(
+                    "App Store Connect response body was interrupted"
+                ) from None
+            raise DeliveryError(
+                "App Store Connect publishing response body was interrupted; "
+                "inspect Xcode Cloud before starting another build"
             ) from None
         except (json.JSONDecodeError, UnicodeDecodeError):
+            if method == "GET":
+                raise TransientReadError(
+                    "App Store Connect returned an unreadable read response"
+                ) from None
             raise DeliveryError(
-                "App Store Connect returned an unreadable response"
+                "App Store Connect publishing response was unreadable; "
+                "inspect Xcode Cloud before starting another build"
             ) from None
         if not isinstance(parsed, Mapping):
             raise DeliveryError("App Store Connect returned an invalid response")
         return parsed
+
+
+def _polling_get(
+    client: Any,
+    path: str,
+    *,
+    deadline: float,
+    timeout_message: str,
+    sleep: Callable[[float], None],
+    poll_interval: float,
+    monotonic: Callable[[], float],
+) -> Mapping[str, Any]:
+    """Retry only idempotent GETs, bounded by the caller's poll deadline."""
+    while True:
+        try:
+            return client.request("GET", path)
+        except TransientReadError as error:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise DeliveryError(timeout_message) from None
+            delay = (
+                poll_interval
+                if error.retry_after is None
+                else error.retry_after
+            )
+            sleep(min(delay, remaining))
 
 
 def _resource_list(
@@ -595,10 +690,19 @@ def poll_build(
                 f"{number if number is not None else run_id}"
             )
         sleep(poll_interval)
-        payload = client.request(
-            "GET",
+        timeout_message = (
+            f"timed out waiting for Xcode Cloud build "
+            f"{number if number is not None else run_id}"
+        )
+        payload = _polling_get(
+            client,
             f"/ciBuildRuns/{run_id}?fields[ciBuildRuns]="
             "number,executionProgress,completionStatus,sourceCommit,finishedDate",
+            deadline=deadline,
+            timeout_message=timeout_message,
+            sleep=sleep,
+            poll_interval=poll_interval,
+            monotonic=monotonic,
         )
 
 
@@ -621,8 +725,20 @@ def poll_testflight(
         "fields[builds]=version,processingState,usesNonExemptEncryption"
     )
     while True:
+        timeout_message = (
+            "timed out waiting for a VALID TestFlight build attached to "
+            f"internal group {TESTFLIGHT_GROUP}"
+        )
         builds = _resource_list(
-            client.request("GET", builds_path),
+            _polling_get(
+                client,
+                builds_path,
+                deadline=deadline,
+                timeout_message=timeout_message,
+                sleep=sleep,
+                poll_interval=poll_interval,
+                monotonic=monotonic,
+            ),
             "TestFlight builds",
         )
         if len(builds) > 1:
@@ -663,7 +779,15 @@ def poll_testflight(
                     }
                 )
                 groups = _resource_list(
-                    client.request("GET", f"/betaGroups?{group_query}"),
+                    _polling_get(
+                        client,
+                        f"/betaGroups?{group_query}",
+                        deadline=deadline,
+                        timeout_message=timeout_message,
+                        sleep=sleep,
+                        poll_interval=poll_interval,
+                        monotonic=monotonic,
+                    ),
                     "TestFlight beta groups",
                 )
                 exact_groups = [
@@ -688,10 +812,7 @@ def poll_testflight(
                     )
                     return build_id
         if monotonic() >= deadline:
-            raise DeliveryError(
-                "timed out waiting for a VALID TestFlight build attached to "
-                f"internal group {TESTFLIGHT_GROUP}"
-            )
+            raise DeliveryError(timeout_message)
         sleep(poll_interval)
 
 
