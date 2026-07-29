@@ -21,6 +21,7 @@ import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
 import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/decks_screen.dart';
+import 'package:health_anki_flutter/features/review/presentation/screens/read_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/stats_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
@@ -490,6 +491,9 @@ class _FakeRecallApi implements RecallApi {
   /// Fixtures + failure toggles for the stats screen.
   List<ReviewLogEntry> reviewLog = const [];
   List<DateTime> dueDates = const [];
+  Map<String, String> noteTags = const {};
+  List<ConceptNodeInfo> conceptNodes = const [];
+  List<ConceptPage> conceptPages = const [];
   bool failReviewLog = false;
   bool failDueDates = false;
 
@@ -512,13 +516,13 @@ class _FakeRecallApi implements RecallApi {
   }
 
   @override
-  Future<Map<String, String>> fetchNoteTags() async => const {};
+  Future<Map<String, String>> fetchNoteTags() async => noteTags;
 
   @override
-  Future<List<ConceptNodeInfo>> fetchConceptNodes() async => const [];
+  Future<List<ConceptNodeInfo>> fetchConceptNodes() async => conceptNodes;
 
   @override
-  Future<List<ConceptPage>> fetchConceptPages() async => const [];
+  Future<List<ConceptPage>> fetchConceptPages() async => conceptPages;
 
   @override
   Future<void> signIn({
@@ -1952,6 +1956,101 @@ void main() {
       );
       expect(find.byType(ReviewHeatmap), findsOneWidget);
       expect(find.text('Could not load forecast.'), findsOneWidget);
+    });
+  });
+
+  group('Read tab', () {
+    const node = ConceptNodeInfo(
+      nodeId: 'm00-vector-geometry',
+      title: 'Vector geometry',
+      module: 'M00',
+    );
+
+    Future<void> pumpShell(WidgetTester tester, _FakeRecallApi api) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      final prefs = RecallPrefsController(api: api);
+      addTearDown(controller.dispose);
+      addTearDown(prefs.dispose);
+      await controller.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppShell(
+            controller: controller,
+            api: api,
+            prefs: prefs,
+            linkSource: _SilentLinkSource(),
+            nativeIos: false,
+          ),
+        ),
+      );
+      await tester.tap(find.text('Read'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('shows a primer reviewed today above the grouped library', (
+      tester,
+    ) async {
+      final page = ConceptPage(
+        nodeId: node.nodeId,
+        title: 'Vector geometry primer',
+        bodyHtml: 'Projection',
+        updatedAt: DateTime.utc(2026, 7, 29),
+      );
+      final api = _FakeRecallApi([_card()])
+        ..reviewLog = [
+          ReviewLogEntry(guid: 'g1', at: DateTime.now(), rating: 3),
+        ]
+        ..noteTags = const {'g1': 'node::m00-vector-geometry'}
+        ..conceptNodes = const [node]
+        ..conceptPages = [page];
+
+      await pumpShell(tester, api);
+
+      expect(find.byType(ReadScreen), findsOneWidget);
+      expect(find.text('Today'), findsOneWidget);
+      expect(find.text('Library'), findsOneWidget);
+      expect(find.text('Vector geometry primer'), findsNWidgets(2));
+      expect(find.text('M00'), findsOneWidget);
+      expect(
+        find.text('Nothing studied yet today — the library is below.'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('shows the empty-today line while keeping the library', (
+      tester,
+    ) async {
+      final page = ConceptPage(
+        nodeId: node.nodeId,
+        title: 'Vector geometry primer',
+        bodyHtml: 'Projection',
+        updatedAt: DateTime.utc(2026, 7, 29),
+      );
+      final api = _FakeRecallApi([_card()])
+        ..reviewLog = [
+          ReviewLogEntry(
+            guid: 'g1',
+            at: DateTime.now().subtract(const Duration(days: 1)),
+            rating: 3,
+          ),
+        ]
+        ..noteTags = const {'g1': 'node::m00-vector-geometry'}
+        ..conceptNodes = const [node]
+        ..conceptPages = [page];
+
+      await pumpShell(tester, api);
+
+      expect(
+        find.text('Nothing studied yet today — the library is below.'),
+        findsOneWidget,
+      );
+      expect(find.text('Vector geometry primer'), findsOneWidget);
+      expect(find.text('M00'), findsOneWidget);
     });
   });
 

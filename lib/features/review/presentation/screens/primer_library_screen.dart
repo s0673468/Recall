@@ -16,6 +16,45 @@ class PrimerLibraryScreen extends StatelessWidget {
   });
 
   @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: UiColors.canvas,
+    appBar: AppBar(
+      backgroundColor: UiColors.sidebar,
+      foregroundColor: UiColors.textPrimary,
+      elevation: 0,
+      title: const Text('Concept primers'),
+    ),
+    body: ColoredBox(
+      color: UiColors.canvas,
+      child: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            UiSpacing.md,
+            UiSpacing.lg,
+            UiSpacing.md,
+            UiSpacing.xl,
+          ),
+          children: [
+            PrimerLibraryContent(pages: pages, conceptNodes: conceptNodes),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Reusable grouped primer rows for the standalone library and Read tab.
+class PrimerLibraryContent extends StatelessWidget {
+  final List<ConceptPage> pages;
+  final List<ConceptNodeInfo> conceptNodes;
+
+  const PrimerLibraryContent({
+    super.key,
+    required this.pages,
+    required this.conceptNodes,
+  });
+
+  @override
   Widget build(BuildContext context) {
     final moduleByNode = {
       for (final node in conceptNodes) node.nodeId: node.module,
@@ -37,68 +76,47 @@ class PrimerLibraryScreen extends StatelessWidget {
       group.sort((a, b) => a.title.compareTo(b.title));
     }
 
-    return Scaffold(
-      backgroundColor: UiColors.canvas,
-      appBar: AppBar(
-        backgroundColor: UiColors.sidebar,
-        foregroundColor: UiColors.textPrimary,
-        elevation: 0,
-        title: const Text('Concept primers'),
-      ),
-      body: ColoredBox(
-        color: UiColors.canvas,
-        child: SafeArea(
-          child: ListView(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final module in modules) ...[
+          Padding(
             padding: const EdgeInsets.fromLTRB(
+              UiSpacing.sm,
               UiSpacing.md,
-              UiSpacing.lg,
-              UiSpacing.md,
-              UiSpacing.xl,
+              UiSpacing.sm,
+              UiSpacing.xs,
             ),
-            children: [
-              for (final module in modules) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                    UiSpacing.sm,
-                    UiSpacing.md,
-                    UiSpacing.sm,
-                    UiSpacing.xs,
-                  ),
-                  child: Text(
-                    module,
-                    style: const TextStyle(
-                      color: UiColors.textMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                for (final page in grouped[module]!)
-                  _PrimerRow(
-                    page: page,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => PrimerScreen(
-                          page: page,
-                          conceptNodes: conceptNodes,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ],
+            child: Text(
+              module,
+              style: const TextStyle(
+                color: UiColors.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-        ),
-      ),
+          for (final page in grouped[module]!)
+            PrimerRow(
+              page: page,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) =>
+                      PrimerScreen(page: page, conceptNodes: conceptNodes),
+                ),
+              ),
+            ),
+        ],
+      ],
     );
   }
 }
 
-class _PrimerRow extends StatelessWidget {
+class PrimerRow extends StatelessWidget {
   final ConceptPage page;
   final VoidCallback onTap;
 
-  const _PrimerRow({required this.page, required this.onTap});
+  const PrimerRow({super.key, required this.page, required this.onTap});
 
   @override
   Widget build(BuildContext context) => Material(

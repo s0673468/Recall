@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
@@ -68,12 +69,37 @@ class PrimerScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(UiRadii.group),
                   border: Border.all(color: UiColors.border),
                 ),
-                child: CardFace(
-                  html: page.bodyHtml,
-                  hasLatex: true,
-                  revealCloze: true,
-                  cacheKey: 'primer:${page.nodeId}',
-                  style: bodyStyle,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (page.figureSvg case final figureSvg?)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: UiSpacing.lg),
+                        // The scroll view gives no height bound, and an
+                        // unbounded SvgPicture asserts in layout — pin the
+                        // figure to the spec's ~600x360 canvas ratio and let
+                        // BoxFit.contain letterbox any other aspect.
+                        child: AspectRatio(
+                          aspectRatio: 600 / 360,
+                          child: SvgPicture.string(
+                            figureSvg,
+                            key: ValueKey('recall_primer_figure_${page.nodeId}'),
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                          ),
+                        ),
+                      ),
+                    CardFace(
+                      html: page.bodyHtml,
+                      hasLatex: true,
+                      revealCloze: true,
+                      // Unlike card faces, a primer body can change server-side
+                      // within a session (rows are updated in place), so the
+                      // memo key must vary with content, not just identity.
+                      cacheKey: 'primer:${page.nodeId}:${page.bodyHtml.hashCode}',
+                      style: bodyStyle,
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: UiSpacing.xl),

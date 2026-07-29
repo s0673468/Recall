@@ -9,6 +9,7 @@ import '../features/review/application/review_controller.dart';
 import '../features/reminders/application/study_reminder_controller.dart';
 import '../features/review/data/recall_api.dart';
 import '../features/review/presentation/screens/decks_screen.dart';
+import '../features/review/presentation/screens/read_screen.dart';
 import '../features/review/presentation/screens/stats_screen.dart';
 import '../features/review/presentation/screens/study_screen.dart';
 import '../features/settings/application/recall_prefs_controller.dart';
@@ -43,6 +44,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   final _decksKey = GlobalKey<DecksScreenState>();
   final _statsKey = GlobalKey<StatsScreenState>();
+  final _readKey = GlobalKey<ReadScreenState>();
   int _index = 0;
   late final bool _nativeIos = widget.nativeIos ?? recallRunsAsNativeIos();
   late final RecallDeepLinkController _deepLinks;
@@ -112,6 +114,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       },
     ),
     StatsScreen(key: _statsKey, api: widget.api, controller: widget.controller),
+    ReadScreen(key: _readKey, api: widget.api),
   ];
 
   void _selectIndex(int index) {
@@ -122,6 +125,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _reloadQuietly(_decksKey.currentState?.reload(), 'Reload decks');
     } else if (index == 2) {
       _reloadQuietly(_statsKey.currentState?.reload(), 'Reload stats');
+    } else if (index == 3) {
+      _reloadQuietly(_readKey.currentState?.reload(), 'Reload reading');
     }
     setState(() => _index = index);
   }
@@ -235,6 +240,11 @@ class RecallBottomNavigation extends StatelessWidget {
       activeIcon: Icon(Icons.bar_chart),
       label: 'Stats',
     ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.menu_book_outlined),
+      activeIcon: Icon(Icons.menu_book),
+      label: 'Read',
+    ),
   ];
 
   @override
@@ -298,6 +308,11 @@ class RecallBottomNavigation extends StatelessWidget {
               icon: Icon(Icons.bar_chart_outlined),
               selectedIcon: Icon(Icons.bar_chart),
               label: 'Stats',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.menu_book_outlined),
+              selectedIcon: Icon(Icons.menu_book),
+              label: 'Read',
             ),
           ],
         ),

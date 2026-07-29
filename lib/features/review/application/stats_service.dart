@@ -173,6 +173,30 @@ class StatsService {
     return out;
   }
 
+  /// Primers whose tagged cards have at least one review on [today]'s local
+  /// device day. Attribution matches the Stats Concepts section.
+  static List<ConceptPage> todayConceptPages({
+    required List<ReviewLogEntry> reviewLog,
+    required Map<String, String> noteTags,
+    required List<ConceptPage> conceptPages,
+    required DateTime today,
+  }) {
+    final targetDay = dayOnly(today);
+    final reviewedNodeIds = <String>{};
+    for (final review in reviewLog) {
+      if (dayOnly(review.at) != targetDay) continue;
+      final guid = review.guid;
+      if (guid == null) continue;
+      reviewedNodeIds.addAll(nodeTags(noteTags[guid]));
+    }
+
+    final matched = [
+      for (final page in conceptPages)
+        if (reviewedNodeIds.contains(page.nodeId)) page,
+    ]..sort((a, b) => a.title.compareTo(b.title));
+    return matched;
+  }
+
   /// Per-node Again-rate over the last [window] days, weakest-first — the Stats
   /// "Concepts" section. Semantics mirror `metis recall-signal` exactly:
   ///
