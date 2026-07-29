@@ -518,6 +518,9 @@ class _FakeRecallApi implements RecallApi {
   Future<List<ConceptNodeInfo>> fetchConceptNodes() async => const [];
 
   @override
+  Future<List<ConceptPage>> fetchConceptPages() async => const [];
+
+  @override
   Future<void> signIn({
     required String email,
     required String password,

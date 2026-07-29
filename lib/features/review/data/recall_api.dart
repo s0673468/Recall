@@ -597,6 +597,28 @@ class RecallApi implements ReviewReplayGateway {
     ];
   }
 
+  /// Read-only concept primers. The table is deployed independently of this
+  /// client, so any PostgREST failure is treated as "no primers available".
+  /// This keeps the feature entirely absent until the table is ready.
+  Future<List<ConceptPage>> fetchConceptPages() async {
+    try {
+      final rows = await client
+          .from('concept_pages')
+          .select('node_id,title,body_html,updated_at');
+      return [
+        for (final r in rows)
+          ConceptPage(
+            nodeId: r['node_id'] as String,
+            title: (r['title'] as String?) ?? r['node_id'] as String,
+            bodyHtml: (r['body_html'] as String?) ?? '',
+            updatedAt: DateTime.parse(r['updated_at'] as String),
+          ),
+      ];
+    } on PostgrestException {
+      return const [];
+    }
+  }
+
   /// Upcoming due dates (local) for scheduled (non-new) cards — powers the due
   /// forecast. Suspended cards are dormant and generate no upcoming workload,
   /// so they're excluded here too. With ~1.2k cards a plain ranged select is
