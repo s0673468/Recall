@@ -58,29 +58,6 @@ jobs:
 
       - uses: actions/configure-pages@v5
 
-      # actions/upload-pages-artifact shells out to `gtar --hard-dereference`,
-      # which BSD tar on the macOS runner does not support. Shim it to /usr/bin/tar.
-      - name: Provide gtar for Pages upload (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          shim_dir="$RUNNER_TEMP/gtar-shim"
-          mkdir -p "$shim_dir"
-          cat > "$shim_dir/gtar" <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          args=()
-          for arg in "$@"; do
-            if [[ "$arg" == "--hard-dereference" ]]; then
-              continue
-            fi
-            args+=("$arg")
-          done
-          exec /usr/bin/tar "${args[@]}"
-          EOF
-          chmod +x "$shim_dir/gtar"
-          echo "$shim_dir" >> "$GITHUB_PATH"
-          "$shim_dir/gtar" --version
-
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
