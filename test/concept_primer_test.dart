@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -29,6 +30,9 @@ void main() {
                 'node_id': 'm00-vector-geometry',
                 'title': 'Vector geometry',
                 'body_html': r'<b>Projection</b>: \(x\)',
+                'figure_svg':
+                    '<svg xmlns="http://www.w3.org/2000/svg" '
+                    'viewBox="0 0 10 5"><rect width="10" height="5"/></svg>',
                 'updated_at': '2026-07-29T12:00:00.000Z',
               },
             ]),
@@ -46,12 +50,13 @@ void main() {
       expect(requestedUri.path, '/rest/v1/concept_pages');
       expect(
         requestedUri.queryParameters['select'],
-        'node_id,title,body_html,updated_at',
+        'node_id,title,body_html,figure_svg,updated_at',
       );
       expect(pages, hasLength(1));
       expect(pages.single.nodeId, 'm00-vector-geometry');
       expect(pages.single.title, 'Vector geometry');
       expect(pages.single.bodyHtml, r'<b>Projection</b>: \(x\)');
+      expect(pages.single.figureSvg, contains('<svg'));
       expect(
         pages.single.updatedAt,
         DateTime.parse('2026-07-29T12:00:00.000Z'),
@@ -96,6 +101,9 @@ void main() {
       nodeId: node.nodeId,
       title: 'Vector geometry primer',
       bodyHtml: r'Use <b>projection</b> with \(x\).',
+      figureSvg:
+          '<svg xmlns="http://www.w3.org/2000/svg" '
+          'viewBox="0 0 20 10"><rect width="20" height="10"/></svg>',
       updatedAt: DateTime.utc(2026, 7, 29),
     );
     const retention = NodeRetention(
@@ -131,6 +139,7 @@ void main() {
       expect(find.text('Vector geometry primer'), findsOneWidget);
       expect(find.text('M00'), findsOneWidget);
       expect(find.byType(Math), findsOneWidget);
+      expect(find.byType(SvgPicture), findsOneWidget);
 
       final selectable = tester.widget<SelectableText>(
         find.byType(SelectableText),
@@ -141,6 +150,29 @@ void main() {
         return true;
       });
       expect((projection as TextSpan?)?.style?.fontWeight, FontWeight.w700);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('malformed primer SVG is omitted without crashing', (
+      tester,
+    ) async {
+      final malformed = ConceptPage(
+        nodeId: node.nodeId,
+        title: 'Malformed figure primer',
+        bodyHtml: 'The body still renders.',
+        figureSvg: '<svg><not-closed>',
+        updatedAt: DateTime.utc(2026, 7, 29),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          home: PrimerScreen(page: malformed, conceptNodes: const [node]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('The body still renders.'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
@@ -68,12 +69,28 @@ class PrimerScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(UiRadii.group),
                   border: Border.all(color: UiColors.border),
                 ),
-                child: CardFace(
-                  html: page.bodyHtml,
-                  hasLatex: true,
-                  revealCloze: true,
-                  cacheKey: 'primer:${page.nodeId}',
-                  style: bodyStyle,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (page.figureSvg case final figureSvg?)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: UiSpacing.lg),
+                        child: SvgPicture.string(
+                          figureSvg,
+                          key: ValueKey('recall_primer_figure_${page.nodeId}'),
+                          width: double.infinity,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                        ),
+                      ),
+                    CardFace(
+                      html: page.bodyHtml,
+                      hasLatex: true,
+                      revealCloze: true,
+                      cacheKey: 'primer:${page.nodeId}',
+                      style: bodyStyle,
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: UiSpacing.xl),

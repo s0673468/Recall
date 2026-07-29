@@ -106,12 +106,14 @@ class ConceptPage {
   final String nodeId;
   final String title;
   final String bodyHtml;
+  final String? figureSvg;
   final DateTime updatedAt;
 
   const ConceptPage({
     required this.nodeId,
     required this.title,
     required this.bodyHtml,
+    this.figureSvg,
     required this.updatedAt,
   });
 }

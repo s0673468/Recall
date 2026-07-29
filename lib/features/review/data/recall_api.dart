@@ -604,13 +604,14 @@ class RecallApi implements ReviewReplayGateway {
     try {
       final rows = await client
           .from('concept_pages')
-          .select('node_id,title,body_html,updated_at');
+          .select('node_id,title,body_html,figure_svg,updated_at');
       return [
         for (final r in rows)
           ConceptPage(
             nodeId: r['node_id'] as String,
             title: (r['title'] as String?) ?? r['node_id'] as String,
             bodyHtml: (r['body_html'] as String?) ?? '',
+            figureSvg: r['figure_svg'] as String?,
             updatedAt: DateTime.parse(r['updated_at'] as String),
           ),
       ];

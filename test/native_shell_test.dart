@@ -33,6 +33,7 @@ void main() {
 
     final bar = tester.widget<CupertinoTabBar>(find.byType(CupertinoTabBar));
     expect(bar.backgroundColor?.a, lessThan(1));
+    expect(bar.items.map((item) => item.label), contains('Read'));
     expect(find.byType(NavigationBar), findsNothing);
   });
 
@@ -49,7 +50,9 @@ void main() {
       ),
     );
 
-    expect(find.byType(NavigationBar), findsOneWidget);
+    final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
+    expect(bar.destinations, hasLength(4));
+    expect(find.text('Read'), findsOneWidget);
     expect(find.byType(CupertinoTabBar), findsNothing);
   });
 
