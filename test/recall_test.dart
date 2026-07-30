@@ -596,6 +596,41 @@ void main() {
       expect(!p[Rating.good]!.isAfter(p[Rating.easy]!), isTrue);
     });
 
+    test('preview is stable and matches the interval persisted on tap', () {
+      // Regression for the reported mature-card profile: its UI showed
+      // Hard 5d / Good 5d / Easy 16d, but tapping Good actually persisted 8d.
+      // The package's random fuzz was drawn separately for each preview and
+      // again for the tap.
+      final configured = FsrsEngine(parameters: _desktopFsrsParameters);
+      final card = _card(
+        id: 42,
+        state: 2,
+        stability: 2.17292,
+        difficulty: 5.08338,
+        reps: 2,
+        due: DateTime.utc(2026, 7, 30, 9, 50, 23, 757, 335),
+        lastReview: DateTime.utc(2026, 7, 28, 9, 50, 23, 757, 335),
+      );
+      final reviewedAt = DateTime.utc(2026, 7, 30, 12, 22, 39, 421, 193);
+      final expected = {
+        Rating.again: const Duration(minutes: 10),
+        Rating.hard: const Duration(days: 5),
+        Rating.good: const Duration(days: 8),
+        Rating.easy: const Duration(days: 15),
+      };
+
+      for (var attempt = 0; attempt < 10; attempt++) {
+        final preview = configured.preview(card, now: reviewedAt);
+        for (final rating in Rating.values) {
+          expect(preview[rating]!.difference(reviewedAt), expected[rating]);
+          expect(
+            configured.review(card, rating, now: reviewedAt).due,
+            preview[rating],
+          );
+        }
+      }
+    });
+
     test('preview restores a persisted relearning card without its step', () {
       final p = engine.preview(
         _card(
@@ -1641,6 +1676,21 @@ void main() {
   });
 
   group('UI widgets', () {
+    test('rating intervals round future time up instead of shaving a unit', () {
+      expect(
+        humanizeRatingInterval(
+          const Duration(minutes: 10) - const Duration(milliseconds: 1),
+        ),
+        '10m',
+      );
+      expect(
+        humanizeRatingInterval(
+          const Duration(days: 6) - const Duration(milliseconds: 1),
+        ),
+        '6d',
+      );
+    });
+
     testWidgets('RatingBar shows all four ratings and reports taps', (
       tester,
     ) async {

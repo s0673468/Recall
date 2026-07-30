@@ -34,7 +34,9 @@ class RatingBar extends StatelessWidget {
 
   Widget _button(Rating rating, String label, Color color, DateTime now) {
     final due = preview[rating];
-    final interval = due == null ? '' : _humanize(due.difference(now));
+    final interval = due == null
+        ? ''
+        : humanizeRatingInterval(due.difference(now));
     return FilledButton(
       onPressed: () => onRate(rating),
       style: FilledButton.styleFrom(
@@ -67,11 +69,27 @@ class RatingBar extends StatelessWidget {
   }
 }
 
-String _humanize(Duration d) {
-  if (d.isNegative || d.inMinutes < 1) return 'now';
-  if (d.inMinutes < 60) return '${d.inMinutes}m';
-  if (d.inHours < 24) return '${d.inHours}h';
-  final days = d.inDays;
+/// Format a future interval without shaving off its last partial unit.
+///
+/// The scheduler and widget read the clock a few milliseconds apart. Flooring
+/// that duration made an exact 10-minute interval display as 9m and an exact
+/// 6-day interval as 5d.
+String humanizeRatingInterval(Duration d) {
+  if (d <= Duration.zero) return 'now';
+
+  final minutes =
+      (d.inMicroseconds + Duration.microsecondsPerMinute - 1) ~/
+      Duration.microsecondsPerMinute;
+  if (minutes < 60) return '${minutes}m';
+
+  final hours =
+      (d.inMicroseconds + Duration.microsecondsPerHour - 1) ~/
+      Duration.microsecondsPerHour;
+  if (hours < 24) return '${hours}h';
+
+  final days =
+      (d.inMicroseconds + Duration.microsecondsPerDay - 1) ~/
+      Duration.microsecondsPerDay;
   if (days < 30) return '${days}d';
   if (days < 365) return '${(days / 30).round()}mo';
   final years = days / 365;
