@@ -83,7 +83,9 @@ class PrimerScreen extends StatelessWidget {
                           aspectRatio: 600 / 360,
                           child: SvgPicture.string(
                             figureSvg,
-                            key: ValueKey('recall_primer_figure_${page.nodeId}'),
+                            key: ValueKey(
+                              'recall_primer_figure_${page.nodeId}',
+                            ),
                             fit: BoxFit.contain,
                             errorBuilder: (_, _, _) => const SizedBox.shrink(),
                           ),
@@ -93,10 +95,12 @@ class PrimerScreen extends StatelessWidget {
                       html: page.bodyHtml,
                       hasLatex: true,
                       revealCloze: true,
+                      selectable: false,
                       // Unlike card faces, a primer body can change server-side
                       // within a session (rows are updated in place), so the
                       // memo key must vary with content, not just identity.
-                      cacheKey: 'primer:${page.nodeId}:${page.bodyHtml.hashCode}',
+                      cacheKey:
+                          'primer:${page.nodeId}:${page.bodyHtml.hashCode}',
                       style: bodyStyle,
                     ),
                   ],

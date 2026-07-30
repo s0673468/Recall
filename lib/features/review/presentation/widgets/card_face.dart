@@ -40,6 +40,11 @@ class CardFace extends StatelessWidget {
   /// caching (tests / one-off renders).
   final String? cacheKey;
 
+  /// Whether the rendered face supports text selection. Disable this when the
+  /// face fills a parent scroll view: SelectableText's internal gesture layer
+  /// otherwise wins drags that start on the text instead of scrolling the page.
+  final bool selectable;
+
   const CardFace({
     super.key,
     required this.html,
@@ -48,6 +53,7 @@ class CardFace extends StatelessWidget {
     this.latexSvg,
     this.revealCloze = false,
     this.cacheKey,
+    this.selectable = true,
   });
 
   /// Math delimiters, as a single alternation with one capture group each:
@@ -70,9 +76,8 @@ class CardFace extends StatelessWidget {
     // available. Whenever any renderable delimiter is present the client path
     // wins. Empty in practice.
     final svg = latexSvg;
-    final hasRenderableMath = html.contains(r'\(') ||
-        html.contains(r'\[') ||
-        html.contains(r'$$');
+    final hasRenderableMath =
+        html.contains(r'\(') || html.contains(r'\[') || html.contains(r'$$');
     if (hasLatex && svg != null && !hasRenderableMath) {
       return _SvgFace(svg: svg, style: _readingStyle);
     }
@@ -88,10 +93,13 @@ class CardFace extends StatelessWidget {
             ? _buildClozeSpans(maxWidth)
             : _buildHtmlSpans(html, maxWidth, cacheKey: cacheKey);
 
-        return SelectableText.rich(
-          TextSpan(style: _readingStyle, children: _trimSpans(spans)),
-          textAlign: TextAlign.center,
+        final textSpan = TextSpan(
+          style: _readingStyle,
+          children: _trimSpans(spans),
         );
+        return selectable
+            ? SelectableText.rich(textSpan, textAlign: TextAlign.center)
+            : Text.rich(textSpan, textAlign: TextAlign.center);
       },
     );
   }
