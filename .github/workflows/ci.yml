@@ -12,6 +12,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  concept-sync-safety:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install concept-sync test dependencies
+        run: python -m pip install -r tools/recall_sync/requirements.txt
+
+      - name: Test additive concept sync
+        run: python -m unittest discover -s tools/recall_sync/tests
+
   flutter:
     # Public repo: GitHub-hosted runners are free & unlimited. Self-hosted must
     # NEVER run on a public repo (fork PRs would execute on the M1 hub).
