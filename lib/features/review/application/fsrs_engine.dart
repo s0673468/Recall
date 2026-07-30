@@ -45,6 +45,12 @@ class FsrsEngine {
     _scheduler = Scheduler(
       parameters: _parameters,
       desiredRetention: _desiredRetention,
+      // Recall calculates the four button previews separately, then schedules
+      // the selected rating in a later call. Random fuzz therefore produced
+      // five independent answers: labels could collapse or invert, and the
+      // interval persisted on tap often differed from the label. Deterministic
+      // FSRS intervals keep the choices ordered and make the preview truthful.
+      enableFuzzing: false,
     );
   }
 
