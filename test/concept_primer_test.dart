@@ -12,8 +12,11 @@ import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/primer_library_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
+import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/concept_retention_panel.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
+import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
+    show AppScrollBehavior;
 
 void main() {
   group('RecallApi.fetchConceptPages', () {
@@ -141,14 +144,18 @@ void main() {
       expect(find.byType(Math), findsOneWidget);
       expect(find.byType(SvgPicture), findsOneWidget);
 
-      final selectable = tester.widget<SelectableText>(
-        find.byType(SelectableText),
-      );
       InlineSpan? projection;
-      selectable.textSpan!.visitChildren((span) {
-        if (span is TextSpan && span.text == 'projection') projection = span;
-        return true;
-      });
+      for (final richText in tester.widgetList<RichText>(
+        find.descendant(
+          of: find.byType(CardFace),
+          matching: find.byType(RichText),
+        ),
+      )) {
+        richText.text.visitChildren((span) {
+          if (span is TextSpan && span.text == 'projection') projection = span;
+          return true;
+        });
+      }
       expect((projection as TextSpan?)?.style?.fontWeight, FontWeight.w700);
       expect(tester.takeException(), isNull);
     });
@@ -174,6 +181,49 @@ void main() {
 
       expect(find.text('The body still renders.'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('long primer scrolls when the drag starts on its body', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final longPage = ConceptPage(
+        nodeId: node.nodeId,
+        title: 'Long primer',
+        bodyHtml: List.generate(
+          24,
+          (index) => 'Paragraph ${index + 1} explains the concept in detail.',
+        ).join('<br><br>'),
+        updatedAt: DateTime.utc(2026, 7, 29),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          scrollBehavior: const AppScrollBehavior(),
+          home: PrimerScreen(page: longPage, conceptNodes: const [node]),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final body = tester.getRect(find.byType(CardFace));
+      final dragStart = Offset(body.center.dx, 760);
+      expect(body.contains(dragStart), isTrue);
+      final pageScroll = tester
+          .stateList<ScrollableState>(find.byType(Scrollable))
+          .firstWhere((state) => state.position.maxScrollExtent > 500);
+      expect(pageScroll.position.pixels, 0);
+
+      final gesture = await tester.startGesture(dragStart);
+      await gesture.moveBy(const Offset(0, -400));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(pageScroll.position.pixels, greaterThan(100));
     });
 
     testWidgets('zero primers preserves the legacy panel widget output', (
