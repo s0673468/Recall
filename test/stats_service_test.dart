@@ -149,6 +149,20 @@ void main() {
       expect(t.streak, 2); // today + yesterday
     });
 
+    test('streak counts past the recall window', () {
+      // The streak day-set was built from the 30-day-windowed reviews, so any
+      // streak longer than the window was silently capped at windowDays + 1.
+      final today = DateTime(2026, 7, 7, 12);
+      final entries = [
+        for (var i = 0; i < 90; i++) _entry(today.subtract(Duration(days: i)), 3),
+      ];
+
+      final t = StatsService.tileStats(entries, today: today);
+
+      expect(t.streak, 90);
+      expect(t.reviews, 31); // the window still bounds the counted reviews
+    });
+
     test('empty log → dash recall, zero streak', () {
       final t = StatsService.tileStats([], today: DateTime(2026, 7, 7));
       expect(t.recall, '—');
