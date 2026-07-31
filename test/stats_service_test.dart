@@ -6,7 +6,13 @@ ReviewLogEntry _entry(
   DateTime at,
   int rating, {
   DateTime? dueAfter,
-}) => ReviewLogEntry(at: at, rating: rating, dueAfter: dueAfter);
+  int? stateAfter,
+}) => ReviewLogEntry(
+  at: at,
+  rating: rating,
+  dueAfter: dueAfter,
+  stateAfter: stateAfter,
+);
 
 ReviewLogEntry _review(String? guid, DateTime at, int rating) =>
     ReviewLogEntry(guid: guid, at: at, rating: rating);
@@ -144,6 +150,32 @@ void main() {
       ], now: now);
       expect(r.total, 1);
       expect(r.hasCohorts, isFalse);
+    });
+
+    test('counts only review-state events for true retention', () {
+      final now = DateTime(2026, 7, 7, 12);
+      final at = now.subtract(const Duration(days: 1));
+      final r = StatsService.computeRetention([
+        _entry(at, 3, stateAfter: 1), // learning step
+        _entry(at, 3, stateAfter: 2), // genuine review
+        _entry(at, 3, stateAfter: 3), // relearning step
+        _entry(at, 1, stateAfter: 2), // genuine lapse
+      ], now: now);
+
+      expect(r.total, 2);
+      expect(r.passed, 1);
+    });
+
+    test('retention uses the same local-day window as the headline tile', () {
+      final now = DateTime(2026, 7, 31, 12);
+      final at = DateTime(2026, 7, 1, 0, 1);
+      final r = StatsService.computeRetention(
+        [_entry(at, 3, stateAfter: 2)],
+        now: now,
+        windowDays: 30,
+      );
+
+      expect(r.total, 1);
     });
   });
 
@@ -347,7 +379,7 @@ void main() {
       expect(result.coveredNodeCount, 0);
     });
 
-    test('leaves title/module null when no concept_nodes row resolves the id', () {
+    test('ignores tagged ids that are absent from the concept graph', () {
       final result = StatsService.computeNodeRetention(
         reviewLog: [
           for (var i = 0; i < 4; i++) _review('g1', daysAgo(1), 1),
@@ -356,11 +388,22 @@ void main() {
         conceptNodes: const [], // table empty / id absent
         now: now,
       );
-      final node = result.ranked.single;
-      expect(node.nodeId, 'm99-orphan');
-      expect(node.title, isNull);
-      expect(node.module, isNull);
-      expect(node.againRate, 1.0);
+      expect(result.ranked, isEmpty);
+      expect(result.notEnoughData, 0);
+      expect(result.coveredNodeCount, 0);
+    });
+
+    test('coverage counts only resolved graph nodes', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [for (var i = 0; i < 4; i++) _review('g1', daysAgo(1), 3)],
+        noteTags: {'g1': 'node::known node::m99-orphan'},
+        conceptNodes: [_node('known')],
+        now: now,
+      );
+
+      expect(result.ranked.map((n) => n.nodeId), ['known']);
+      expect(result.notEnoughData, 0);
+      expect(result.coveredNodeCount, 1);
     });
 
     test('empty inputs → empty result, no throw', () {

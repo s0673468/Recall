@@ -8,9 +8,15 @@ import '../../../../theme/ui_tokens.dart';
 /// Good=indigo, Easy=success.
 class RatingBar extends StatelessWidget {
   final Map<Rating, DateTime> preview;
+  final DateTime? previewAt;
   final ValueChanged<Rating> onRate;
 
-  const RatingBar({super.key, required this.preview, required this.onRate});
+  const RatingBar({
+    super.key,
+    required this.preview,
+    this.previewAt,
+    required this.onRate,
+  });
 
   static const List<(Rating, String, Color)> _defs = [
     (Rating.again, 'Again', UiColors.danger),
@@ -21,7 +27,7 @@ class RatingBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now().toUtc();
+    final now = (previewAt ?? DateTime.now()).toUtc();
     return Row(
       children: [
         for (final (rating, label, color) in _defs) ...[

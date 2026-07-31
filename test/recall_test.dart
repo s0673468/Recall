@@ -1844,6 +1844,29 @@ void main() {
       );
     });
 
+    testWidgets('rating intervals stay anchored to the preview timestamp', (
+      tester,
+    ) async {
+      final previewAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 4),
+      );
+      final due = previewAt.add(const Duration(minutes: 10));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RatingBar(
+              preview: {for (final r in Rating.values) r: due},
+              previewAt: previewAt,
+              onRate: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('10m'), findsNWidgets(Rating.values.length));
+    });
+
     testWidgets('RatingBar shows all four ratings and reports taps', (
       tester,
     ) async {

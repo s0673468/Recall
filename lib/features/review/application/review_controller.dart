@@ -97,6 +97,7 @@ class ReviewController extends ChangeNotifier {
 
     engine.setDesiredRetention(next.desiredRetention);
     _previewForCardId = null; // rating-button intervals must re-price
+    _previewAt = null;
 
     // Only reload once a session-driven load has happened. On the initial
     // startup hydration (prefs.load() before any queue load) the auth-driven
@@ -265,6 +266,7 @@ class ReviewController extends ChangeNotifier {
       ),
     );
     _previewForCardId = null;
+    _previewAt = null;
 
     // Cold start: paint the cached snapshot immediately (a card in hand beats
     // a spinner) and let the network fetch below replace it in the background.
@@ -354,6 +356,7 @@ class ReviewController extends ChangeNotifier {
         );
       }
       _previewForCardId = null;
+      _previewAt = null;
       // Persist off the critical path — the UI shouldn't wait on storage.
       unawaited(
         _saveSnapshotQuietly(
@@ -493,6 +496,7 @@ class ReviewController extends ChangeNotifier {
     _undo = null; // the finished queue's positions stop meaning anything
     _set(_state.copyWith(loading: true, error: null));
     _previewForCardId = null;
+    _previewAt = null;
 
     await _flushOutbox();
     if (loadToken != _loadSequence) return;
@@ -522,6 +526,7 @@ class ReviewController extends ChangeNotifier {
         ),
       );
       _previewForCardId = null;
+      _previewAt = null;
     } catch (e) {
       debugPrint('Recall: keep-going fetch failed (offline?): $e');
       if (loadToken != _loadSequence) return;
@@ -563,12 +568,16 @@ class ReviewController extends ChangeNotifier {
   /// rebuild (e.g. a pending-sync tick) doesn't re-run the scheduler 4×.
   int? _previewForCardId;
   Map<Rating, DateTime> _preview = const {};
+  DateTime? _previewAt;
+
+  DateTime? get previewCurrentAt => _previewAt;
 
   Map<Rating, DateTime> previewCurrent() {
     final card = _state.current;
     if (card == null) return const {};
     if (_previewForCardId != card.id) {
-      _preview = engine.preview(card);
+      _previewAt = clock().toUtc();
+      _preview = engine.preview(card, now: _previewAt);
       _previewForCardId = card.id;
     }
     return _preview;

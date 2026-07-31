@@ -120,8 +120,8 @@ class ConceptPage {
 
 /// Per-node retention over the Concepts window: how a concept's tagged cards
 /// fared. Mirrors `metis recall-signal`'s Again-rate — pass = rating ≥ 2,
-/// fail = rating 1 (Again). [title]/[module] are null when the node carries a
-/// tag but no `concept_nodes` row resolves it (fall back to the raw [nodeId]).
+/// fail = rating 1 (Again). Only node IDs resolved by `concept_nodes` are
+/// included, so coverage stays aligned with the synced concept graph.
 class NodeRetention {
   final String nodeId;
   final String? title;
