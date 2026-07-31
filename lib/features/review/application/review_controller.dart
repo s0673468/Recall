@@ -302,7 +302,7 @@ class ReviewController extends ChangeNotifier {
       // _refreshFsrsSettings never throws (it falls back to defaults).
       final active = _activePrefs;
       final results = await Future.wait<Object?>([
-        _refreshFsrsSettings(),
+        _refreshFsrsSettings(loadToken),
         api.fetchDecks(),
         api.fetchQueue(
           deckId: _state.deckFilter,
@@ -357,6 +357,7 @@ class ReviewController extends ChangeNotifier {
       // Persist off the critical path — the UI shouldn't wait on storage.
       unawaited(
         _saveSnapshotQuietly(
+          loadToken: loadToken,
           decks: decks,
           queue: queue,
           globalDueCount: globalDueCount,
@@ -393,17 +394,20 @@ class ReviewController extends ChangeNotifier {
   }
 
   Future<void> _saveSnapshotQuietly({
+    required int loadToken,
     required List<DeckRow> decks,
     required List<ReviewCard> queue,
     required int? globalDueCount,
     required DateTime? globalDueUpdatedAt,
   }) async {
     try {
+      if (loadToken != _loadSequence) return;
       await store.saveSnapshot(
         decks: decks,
         queue: queue,
         globalDueCount: globalDueCount,
         globalDueUpdatedAt: globalDueUpdatedAt,
+        canWrite: () => loadToken == _loadSequence,
       );
     } catch (e) {
       debugPrint('Recall: snapshot save failed (non-fatal): $e');
@@ -428,20 +432,23 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  Future<void> _refreshFsrsSettings() async {
+  Future<void> _refreshFsrsSettings(int loadToken) async {
     try {
       final settings = await api.fetchFsrsSettings();
+      if (loadToken != _loadSequence) return;
       if (settings != null) {
         engine.configure(settings);
       } else {
         engine.resetToDefaults();
       }
     } catch (e) {
+      if (loadToken != _loadSequence) return;
       engine.resetToDefaults();
       debugPrint('Recall: FSRS settings unavailable, using defaults: $e');
     }
     // Stored study prefs are the source of truth for desired retention; the
     // fsrs_params retention above only fills in when the user hasn't set one.
+    if (loadToken != _loadSequence) return;
     final p = prefs;
     if (p != null && p.hasStoredPrefs) {
       engine.setDesiredRetention(p.value.desiredRetention);

@@ -7,7 +7,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating, defaultParameters;
 import 'package:supabase_flutter/supabase_flutter.dart'
-    show AuthState, SupabaseClient, User;
+    show AuthChangeEvent, AuthState, SupabaseClient, User;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
@@ -534,6 +534,25 @@ class _FakeRecallApi implements RecallApi {
   Future<void> signOut() async => signedOut = true;
 }
 
+class _GatedFsrsRecallApi extends _FakeRecallApi {
+  final StreamController<AuthState> authStates =
+      StreamController<AuthState>.broadcast();
+  final Completer<void> fsrsStarted = Completer<void>();
+  final Completer<void> releaseFsrs = Completer<void>();
+
+  _GatedFsrsRecallApi(super.queue, {super.fsrsSettings});
+
+  @override
+  Stream<AuthState> get onAuthStateChange => authStates.stream;
+
+  @override
+  Future<FsrsSettings?> fetchFsrsSettings() async {
+    fsrsStarted.complete();
+    await releaseFsrs.future;
+    return fsrsSettings;
+  }
+}
+
 class _SilentLinkSource implements RecallLinkSource {
   @override
   Future<Uri?> getInitialLink() async => null;
@@ -921,6 +940,32 @@ void main() {
     );
 
     test(
+      'sign-out blocks a snapshot save that passed the load token check',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final store = _GatedSnapshotStore();
+        final controller = ReviewController(
+          api: _FakeRecallApi([_card(id: 42)]),
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        final loading = controller.load();
+        await store.saveStarted.future;
+
+        await controller.signOut();
+        expect(await store.loadSnapshot(), isNull);
+
+        store.releaseSave.complete();
+        await store.saveFinished.future;
+        await loading;
+
+        expect(await store.loadSnapshot(), isNull);
+      },
+    );
+
+    test(
       'load stores the global due count rather than the active queue',
       () async {
         SharedPreferences.setMockInitialValues({});
@@ -1263,6 +1308,36 @@ void main() {
       await controller.load();
       expect(engine.parameters, _desktopFsrsParameters);
       expect(engine.desiredRetention, 0.84);
+    });
+
+    test('a superseded load cannot reapply signed-out FSRS settings', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _GatedFsrsRecallApi(
+        [_card()],
+        fsrsSettings: const FsrsSettings(
+          parameters: _desktopFsrsParameters,
+          desiredRetention: 0.84,
+        ),
+      );
+      final engine = FsrsEngine();
+      final controller = ReviewController(
+        api: api,
+        engine: engine,
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      addTearDown(api.authStates.close);
+
+      final loading = controller.load();
+      await api.fsrsStarted.future;
+
+      api.authStates.add(const AuthState(AuthChangeEvent.signedOut, null));
+      await Future<void>.delayed(Duration.zero);
+      expect(engine.parameters, defaultParameters);
+
+      api.releaseFsrs.complete();
+      await loading;
+      expect(engine.parameters, defaultParameters);
     });
 
     test('load resets stale FSRS settings when the row is absent', () async {
@@ -3307,5 +3382,36 @@ class _GatedFlagStore extends LocalReviewStore {
   Future<int> enqueueFlag(Map<String, dynamic> entry) async {
     await enqueueGate.future;
     return super.enqueueFlag(entry);
+  }
+}
+
+/// Holds the first snapshot write after the controller has passed its load
+/// token check, so sign-out can clear the store in the middle of that write.
+class _GatedSnapshotStore extends LocalReviewStore {
+  final Completer<void> saveStarted = Completer<void>();
+  final Completer<void> releaseSave = Completer<void>();
+  final Completer<void> saveFinished = Completer<void>();
+
+  @override
+  Future<void> saveSnapshot({
+    required List<DeckRow> decks,
+    required List<ReviewCard> queue,
+    int? globalDueCount,
+    DateTime? globalDueUpdatedAt,
+    bool Function()? canWrite,
+  }) async {
+    saveStarted.complete();
+    await releaseSave.future;
+    try {
+      await super.saveSnapshot(
+        decks: decks,
+        queue: queue,
+        globalDueCount: globalDueCount,
+        globalDueUpdatedAt: globalDueUpdatedAt,
+        canWrite: canWrite,
+      );
+    } finally {
+      saveFinished.complete();
+    }
   }
 }

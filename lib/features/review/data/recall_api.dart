@@ -130,7 +130,7 @@ class RecallApi implements ReviewReplayGateway {
     NewOrder order = NewOrder.oldestFirst,
   }) async {
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    final introducedToday = await _newCardsIntroducedToday();
+    final introducedToday = await _newCardsIntroducedToday(deckId: deckId);
     final remainingNewLimit = (newLimit - introducedToday).clamp(0, newLimit);
 
     // Suspended cards (cards.suspended = true, set one-way by the desktop
@@ -185,7 +185,7 @@ class RecallApi implements ReviewReplayGateway {
   /// current local day. The setting is a daily introduction budget, not a
   /// per-fetch page size. Repeated reviews of a card already present in the
   /// pre-day history do not consume another new-card slot.
-  Future<int> _newCardsIntroducedToday() async {
+  Future<int> _newCardsIntroducedToday({int? deckId}) async {
     final localNow = DateTime.now();
     final localStart = DateTime(localNow.year, localNow.month, localNow.day);
     final startIso = localStart.toUtc().toIso8601String();
@@ -194,22 +194,33 @@ class RecallApi implements ReviewReplayGateway {
         .toUtc()
         .toIso8601String();
 
-    final todayRows = await client
+    final logSelect = deckId == null
+        ? 'card_id'
+        : 'card_id,cards!inner(notes!inner(deck_id))';
+    var todayQ = client
         .from('review_log')
-        .select('card_id')
+        .select(logSelect)
         .gte('rating_at', startIso)
         .lt('rating_at', endIso);
+    if (deckId != null) {
+      todayQ = todayQ.eq('cards.notes.deck_id', deckId);
+    }
+    final todayRows = await todayQ;
     final todayCardIds = {
       for (final row in todayRows)
         if (row['card_id'] != null) (row['card_id'] as num).toInt(),
     };
     if (todayCardIds.isEmpty) return 0;
 
-    final priorRows = await client
+    var priorQ = client
         .from('review_log')
-        .select('card_id')
+        .select(logSelect)
         .inFilter('card_id', todayCardIds.toList())
         .lt('rating_at', startIso);
+    if (deckId != null) {
+      priorQ = priorQ.eq('cards.notes.deck_id', deckId);
+    }
+    final priorRows = await priorQ;
     final seenBefore = {
       for (final row in priorRows)
         if (row['card_id'] != null) (row['card_id'] as num).toInt(),
@@ -240,9 +251,7 @@ class RecallApi implements ReviewReplayGateway {
     if (deckId != null) {
       aheadQ = aheadQ.eq('notes.deck_id', deckId);
     }
-    final aheadRows = await aheadQ
-        .order('due', ascending: true)
-        .limit(limit);
+    final aheadRows = await aheadQ.order('due', ascending: true).limit(limit);
     final ahead = [
       for (final r in aheadRows)
         ReviewCard.fromRow(Map<String, dynamic>.from(r)),
@@ -345,7 +354,10 @@ class RecallApi implements ReviewReplayGateway {
   /// review no matter where a previous attempt died — the gap the client-side
   /// path can only narrow, never close (see README, "Replay is not fully
   /// idempotent").
-  Future<int?> _applyReviewViaRpc(Map<String, dynamic> e, String eventId) async {
+  Future<int?> _applyReviewViaRpc(
+    Map<String, dynamic> e,
+    String eventId,
+  ) async {
     final id = await client.rpc<Object?>(
       'apply_review',
       params: {
@@ -614,7 +626,8 @@ class RecallApi implements ReviewReplayGateway {
         .like('tags', '%node::%');
     return {
       for (final r in rows)
-        if (r['guid'] != null) (r['guid'] as String): (r['tags'] as String?) ?? '',
+        if (r['guid'] != null)
+          (r['guid'] as String): (r['tags'] as String?) ?? '',
     };
   }
 
