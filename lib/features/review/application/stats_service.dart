@@ -83,7 +83,7 @@ class StatsService {
     if (count <= 0) return 0;
     if (maxCount <= 1) return 4;
     final ratio = count / maxCount;
-    return (1 + (ratio * 3).ceil()).clamp(1, 4);
+    return (ratio * 4).ceil().clamp(1, 4);
   }
 
   // ── Due forecast ──

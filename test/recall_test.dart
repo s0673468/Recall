@@ -889,12 +889,45 @@ void main() {
     );
 
     test(
+      'sign-out invalidates a load that is still fetching before it can save',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final gate = Completer<void>();
+        final api = _FakeRecallApi([_card(id: 42)])
+          ..beforeQueue = () => gate.future;
+        final store = LocalReviewStore();
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        final loading = controller.load();
+        while (api.queueFetches == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        await controller.signOut();
+        expect(await store.loadSnapshot(), isNull);
+
+        gate.complete();
+        await loading;
+        for (var i = 0; i < 5; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(await store.loadSnapshot(), isNull);
+      },
+    );
+
+    test(
       'load stores the global due count rather than the active queue',
       () async {
         SharedPreferences.setMockInitialValues({});
         final now = DateTime.utc(2026, 7, 13, 12);
-        final api = _FakeRecallApi([_card(state: 2)])
-          ..deckCounts = const {1: (due: 3, neu: 2), 2: (due: 4, neu: 9)};
+        final api = _FakeRecallApi([
+          _card(state: 2, due: now.subtract(const Duration(hours: 1))),
+        ])..deckCounts = const {1: (due: 3, neu: 2), 2: (due: 4, neu: 9)};
         final controller = ReviewController(
           api: api,
           engine: FsrsEngine(),
@@ -915,6 +948,49 @@ void main() {
 
         await controller.undo();
         expect(controller.state.globalDueCount, 7);
+      },
+    );
+
+    test(
+      'keepGoing cards due later do not reduce the cloud due count',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final api = _FakeRecallApi([
+          _card(
+            state: 2,
+            stability: 10,
+            difficulty: 5,
+            reps: 3,
+            due: DateTime.now().toUtc().subtract(const Duration(hours: 1)),
+            lastReview: DateTime.now().toUtc().subtract(
+              const Duration(days: 10),
+            ),
+          ),
+        ])..deckCounts = const {1: (due: 7, neu: 0)};
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+        controller.flip();
+        await controller.rate(Rating.again);
+        await controller.syncPending();
+        expect(controller.state.globalDueCount, 6);
+
+        await controller.keepGoing();
+        expect(controller.state.current, isNotNull);
+        expect(controller.state.current!.due, isNotNull);
+        expect(
+          controller.state.current!.due!.isAfter(DateTime.now().toUtc()),
+          isTrue,
+        );
+
+        controller.flip();
+        await controller.rate(Rating.good);
+        expect(controller.state.globalDueCount, 6);
       },
     );
 
@@ -1023,13 +1099,15 @@ void main() {
       final now = DateTime.utc(2026, 7, 13, 12);
       await store.saveSnapshot(
         decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
-        queue: [_card(state: 2)],
+        queue: [_card(state: 2, due: now.subtract(const Duration(hours: 1)))],
         globalDueCount: 10,
         globalDueUpdatedAt: now.subtract(const Duration(minutes: 30)),
       );
       final queueStarted = Completer<void>();
       final releaseQueue = Completer<void>();
-      final api = _FakeRecallApi([_card(state: 2)])
+      final api = _FakeRecallApi([
+        _card(state: 2, due: now.subtract(const Duration(hours: 1))),
+      ])
         ..deckCounts = const {1: (due: 10, neu: 0)}
         ..beforeQueue = () async {
           queueStarted.complete();

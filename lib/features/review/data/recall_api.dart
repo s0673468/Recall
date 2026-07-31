@@ -130,6 +130,8 @@ class RecallApi implements ReviewReplayGateway {
     NewOrder order = NewOrder.oldestFirst,
   }) async {
     final nowIso = DateTime.now().toUtc().toIso8601String();
+    final introducedToday = await _newCardsIntroducedToday();
+    final remainingNewLimit = (newLimit - introducedToday).clamp(0, newLimit);
 
     // Suspended cards (cards.suspended = true, set one-way by the desktop
     // importer) are dormant — never queued as due or new. Filtered server-side
@@ -158,7 +160,7 @@ class RecallApi implements ReviewReplayGateway {
     final newAscending = order != NewOrder.newestFirst;
     final results = await Future.wait<List<Map<String, dynamic>>>([
       dueQ.order('due', ascending: true).limit(500),
-      newQ.order('id', ascending: newAscending).limit(newLimit),
+      newQ.order('id', ascending: newAscending).limit(remainingNewLimit),
     ]);
     final dueRows = results[0];
     final newRows = results[1];
@@ -177,6 +179,42 @@ class RecallApi implements ReviewReplayGateway {
       for (final r in dueRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
       ...newCards,
     ];
+  }
+
+  /// Count distinct cards whose first-ever review was recorded during the
+  /// current local day. The setting is a daily introduction budget, not a
+  /// per-fetch page size. Repeated reviews of a card already present in the
+  /// pre-day history do not consume another new-card slot.
+  Future<int> _newCardsIntroducedToday() async {
+    final localNow = DateTime.now();
+    final localStart = DateTime(localNow.year, localNow.month, localNow.day);
+    final startIso = localStart.toUtc().toIso8601String();
+    final endIso = localStart
+        .add(const Duration(days: 1))
+        .toUtc()
+        .toIso8601String();
+
+    final todayRows = await client
+        .from('review_log')
+        .select('card_id')
+        .gte('rating_at', startIso)
+        .lt('rating_at', endIso);
+    final todayCardIds = {
+      for (final row in todayRows)
+        if (row['card_id'] != null) (row['card_id'] as num).toInt(),
+    };
+    if (todayCardIds.isEmpty) return 0;
+
+    final priorRows = await client
+        .from('review_log')
+        .select('card_id')
+        .inFilter('card_id', todayCardIds.toList())
+        .lt('rating_at', startIso);
+    final seenBefore = {
+      for (final row in priorRows)
+        if (row['card_id'] != null) (row['card_id'] as num).toInt(),
+    };
+    return todayCardIds.difference(seenBefore).length;
   }
 
   /// A bonus batch for "Keep going" after the daily queue is done: cards due

@@ -133,6 +133,7 @@ class ReviewController extends ChangeNotifier {
   void _onAuthChanged(AuthState _) {
     if (api.currentUser == null) {
       // Signed out — drop the session state and show the login gate.
+      _invalidateActiveSession();
       engine.resetToDefaults();
       _undo = null; // the session (and its undo snapshot) is gone
       _set(const ReviewState(loading: false));
@@ -177,6 +178,10 @@ class ReviewController extends ChangeNotifier {
         pendingFlags: pendingFlags,
       );
     }
+    // Any load still waiting on the network belongs to the session we are
+    // ending. Invalidate it before clearing the shared device cache so its
+    // completion cannot persist the signed-out user's snapshot again.
+    _invalidateActiveSession();
     // Don't leave one user's snapshot/outbox on disk for the next person on a
     // shared browser — RLS protects the cloud, but the device cache is global.
     await store.clear();
@@ -185,6 +190,12 @@ class ReviewController extends ChangeNotifier {
     // session has actually been released; an offline/failed sign-out above
     // keeps the reminder armed instead of silently disabling every channel.
     await afterSignOut?.call();
+  }
+
+  void _invalidateActiveSession() {
+    _loadSequence++;
+    _interactionGeneration++;
+    _undo = null;
   }
 
   String _authMessage(Object e) {
@@ -607,7 +618,7 @@ class ReviewController extends ChangeNotifier {
         showBack: false,
         reviewedThisSession: _state.reviewedThisSession + 1,
         pendingSync: pending,
-        globalDueCount: card.isNew || globalDueCount == null
+        globalDueCount: !_countsTowardsGlobalDue(card) || globalDueCount == null
             ? globalDueCount
             : (globalDueCount - 1).clamp(0, globalDueCount),
       ),
@@ -732,7 +743,8 @@ class ReviewController extends ChangeNotifier {
           index: u.index,
           showBack: false,
           reviewedThisSession: reviewed > 0 ? reviewed - 1 : 0,
-          globalDueCount: u.card.isNew || globalDueCount == null
+          globalDueCount:
+              !_countsTowardsGlobalDue(u.card) || globalDueCount == null
               ? globalDueCount
               : globalDueCount + 1,
           // Read after every await above, so the badge can't be restored to
@@ -745,6 +757,11 @@ class ReviewController extends ChangeNotifier {
       _undoInFlight = false;
       notifyListeners(); // re-enable rating; also covers the early returns
     }
+  }
+
+  bool _countsTowardsGlobalDue(ReviewCard card) {
+    final due = card.due;
+    return !card.isNew && due != null && !due.isAfter(clock().toUtc());
   }
 
   /// Single-flight outbox flush. Concurrent callers (rate + app-resume +
