@@ -61,6 +61,16 @@ void main() {
       // Any positive count with a max of 1 is the top bucket.
       expect(StatsService.heatmapLevel(1, 1), 4);
     });
+
+    test('uses all four nonzero buckets', () {
+      expect(StatsService.heatmapLevel(1, 100), 1);
+      expect(StatsService.heatmapLevel(25, 100), 1);
+      expect(StatsService.heatmapLevel(26, 100), 2);
+      expect(StatsService.heatmapLevel(50, 100), 2);
+      expect(StatsService.heatmapLevel(51, 100), 3);
+      expect(StatsService.heatmapLevel(75, 100), 3);
+      expect(StatsService.heatmapLevel(76, 100), 4);
+    });
   });
 
   group('buildForecast', () {

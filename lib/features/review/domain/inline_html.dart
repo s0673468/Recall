@@ -302,8 +302,8 @@ int clampColorForDark(int argb) {
     gg = x;
     bb = c;
   } else if (h < 300) {
-    rr = c;
-    bb = x;
+    rr = x;
+    bb = c;
   } else {
     rr = c;
     bb = x;

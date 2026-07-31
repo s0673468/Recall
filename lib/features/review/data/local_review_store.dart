@@ -108,18 +108,22 @@ class LocalReviewStore {
     required List<ReviewCard> queue,
     int? globalDueCount,
     DateTime? globalDueUpdatedAt,
+    bool Function()? canWrite,
   }) async {
-    final prefs = await _prefs;
-    await prefs.setString(
-      _snapshotKey,
-      jsonEncode({
-        'savedAt': DateTime.now().toUtc().toIso8601String(),
-        'globalDueCount': globalDueCount,
-        'globalDueUpdatedAt': globalDueUpdatedAt?.toUtc().toIso8601String(),
-        'decks': [for (final d in decks) d.toJson()],
-        'queue': [for (final c in queue) c.toJson()],
-      }),
-    );
+    await _withOutboxLock(() async {
+      final prefs = await _prefs;
+      if (canWrite != null && !canWrite()) return;
+      await prefs.setString(
+        _snapshotKey,
+        jsonEncode({
+          'savedAt': DateTime.now().toUtc().toIso8601String(),
+          'globalDueCount': globalDueCount,
+          'globalDueUpdatedAt': globalDueUpdatedAt?.toUtc().toIso8601String(),
+          'decks': [for (final d in decks) d.toJson()],
+          'queue': [for (final c in queue) c.toJson()],
+        }),
+      );
+    });
   }
 
   Future<

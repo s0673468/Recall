@@ -177,6 +177,16 @@ void main() {
       expect(r, greaterThan(b));
       expect(r, greaterThan(0x80)); // and lightened
     });
+
+    test('a dark blue stays blue-dominant when lightened', () {
+      final out = clampColorForDark(0xFF0000FF);
+      final r = (out >> 16) & 0xFF;
+      final g = (out >> 8) & 0xFF;
+      final b = out & 0xFF;
+
+      expect(b, greaterThan(r));
+      expect(b, greaterThan(g));
+    });
   });
 
   group('parseCssColor', () {

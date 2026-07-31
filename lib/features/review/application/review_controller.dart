@@ -133,6 +133,7 @@ class ReviewController extends ChangeNotifier {
   void _onAuthChanged(AuthState _) {
     if (api.currentUser == null) {
       // Signed out — drop the session state and show the login gate.
+      _invalidateActiveSession();
       engine.resetToDefaults();
       _undo = null; // the session (and its undo snapshot) is gone
       _set(const ReviewState(loading: false));
@@ -177,6 +178,10 @@ class ReviewController extends ChangeNotifier {
         pendingFlags: pendingFlags,
       );
     }
+    // Any load still waiting on the network belongs to the session we are
+    // ending. Invalidate it before clearing the shared device cache so its
+    // completion cannot persist the signed-out user's snapshot again.
+    _invalidateActiveSession();
     // Don't leave one user's snapshot/outbox on disk for the next person on a
     // shared browser — RLS protects the cloud, but the device cache is global.
     await store.clear();
@@ -185,6 +190,12 @@ class ReviewController extends ChangeNotifier {
     // session has actually been released; an offline/failed sign-out above
     // keeps the reminder armed instead of silently disabling every channel.
     await afterSignOut?.call();
+  }
+
+  void _invalidateActiveSession() {
+    _loadSequence++;
+    _interactionGeneration++;
+    _undo = null;
   }
 
   String _authMessage(Object e) {
@@ -291,7 +302,7 @@ class ReviewController extends ChangeNotifier {
       // _refreshFsrsSettings never throws (it falls back to defaults).
       final active = _activePrefs;
       final results = await Future.wait<Object?>([
-        _refreshFsrsSettings(),
+        _refreshFsrsSettings(loadToken),
         api.fetchDecks(),
         api.fetchQueue(
           deckId: _state.deckFilter,
@@ -346,6 +357,7 @@ class ReviewController extends ChangeNotifier {
       // Persist off the critical path — the UI shouldn't wait on storage.
       unawaited(
         _saveSnapshotQuietly(
+          loadToken: loadToken,
           decks: decks,
           queue: queue,
           globalDueCount: globalDueCount,
@@ -382,17 +394,20 @@ class ReviewController extends ChangeNotifier {
   }
 
   Future<void> _saveSnapshotQuietly({
+    required int loadToken,
     required List<DeckRow> decks,
     required List<ReviewCard> queue,
     required int? globalDueCount,
     required DateTime? globalDueUpdatedAt,
   }) async {
     try {
+      if (loadToken != _loadSequence) return;
       await store.saveSnapshot(
         decks: decks,
         queue: queue,
         globalDueCount: globalDueCount,
         globalDueUpdatedAt: globalDueUpdatedAt,
+        canWrite: () => loadToken == _loadSequence,
       );
     } catch (e) {
       debugPrint('Recall: snapshot save failed (non-fatal): $e');
@@ -417,20 +432,23 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  Future<void> _refreshFsrsSettings() async {
+  Future<void> _refreshFsrsSettings(int loadToken) async {
     try {
       final settings = await api.fetchFsrsSettings();
+      if (loadToken != _loadSequence) return;
       if (settings != null) {
         engine.configure(settings);
       } else {
         engine.resetToDefaults();
       }
     } catch (e) {
+      if (loadToken != _loadSequence) return;
       engine.resetToDefaults();
       debugPrint('Recall: FSRS settings unavailable, using defaults: $e');
     }
     // Stored study prefs are the source of truth for desired retention; the
     // fsrs_params retention above only fills in when the user hasn't set one.
+    if (loadToken != _loadSequence) return;
     final p = prefs;
     if (p != null && p.hasStoredPrefs) {
       engine.setDesiredRetention(p.value.desiredRetention);
@@ -607,7 +625,7 @@ class ReviewController extends ChangeNotifier {
         showBack: false,
         reviewedThisSession: _state.reviewedThisSession + 1,
         pendingSync: pending,
-        globalDueCount: card.isNew || globalDueCount == null
+        globalDueCount: !_countsTowardsGlobalDue(card) || globalDueCount == null
             ? globalDueCount
             : (globalDueCount - 1).clamp(0, globalDueCount),
       ),
@@ -732,7 +750,8 @@ class ReviewController extends ChangeNotifier {
           index: u.index,
           showBack: false,
           reviewedThisSession: reviewed > 0 ? reviewed - 1 : 0,
-          globalDueCount: u.card.isNew || globalDueCount == null
+          globalDueCount:
+              !_countsTowardsGlobalDue(u.card) || globalDueCount == null
               ? globalDueCount
               : globalDueCount + 1,
           // Read after every await above, so the badge can't be restored to
@@ -745,6 +764,11 @@ class ReviewController extends ChangeNotifier {
       _undoInFlight = false;
       notifyListeners(); // re-enable rating; also covers the early returns
     }
+  }
+
+  bool _countsTowardsGlobalDue(ReviewCard card) {
+    final due = card.due;
+    return !card.isNew && due != null && !due.isAfter(clock().toUtc());
   }
 
   /// Single-flight outbox flush. Concurrent callers (rate + app-resume +
