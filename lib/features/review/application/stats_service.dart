@@ -290,7 +290,9 @@ class StatsService {
     final total = windowed.length;
     final retained = windowed.where((r) => r.rating >= 2).length;
     final recall = total == 0 ? '—' : '${(retained / total * 100).round()}%';
-    final days = {for (final r in windowed) dayOnly(r.at)};
+    // Streak spans the whole log, not the recall window: building the day-set
+    // from `windowed` capped it at windowDays + 1.
+    final days = {for (final r in reviews) dayOnly(r.at)};
     return (recall: recall, reviews: total, streak: _streak(days, today));
   }
 
