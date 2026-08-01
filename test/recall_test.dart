@@ -1844,6 +1844,29 @@ void main() {
       );
     });
 
+    testWidgets('rating intervals stay anchored to the preview timestamp', (
+      tester,
+    ) async {
+      final previewAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 4),
+      );
+      final due = previewAt.add(const Duration(minutes: 10));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: RatingBar(
+              preview: {for (final r in Rating.values) r: due},
+              previewAt: previewAt,
+              onRate: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('10m'), findsNWidgets(Rating.values.length));
+    });
+
     testWidgets('RatingBar shows all four ratings and reports taps', (
       tester,
     ) async {
@@ -1851,6 +1874,7 @@ void main() {
       final now = DateTime.now().toUtc();
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(
             body: RatingBar(
               preview: {
@@ -1973,6 +1997,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -2017,6 +2042,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -2054,6 +2080,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: AppShell(
             controller: controller,
             api: api,
@@ -2182,6 +2209,7 @@ void main() {
       await controller.load();
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: AppShell(
             controller: controller,
             api: api,
@@ -3173,6 +3201,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3208,6 +3237,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3243,6 +3273,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(
             body: StudyScreen(controller: controller, nativeIos: true),
           ),
@@ -3276,6 +3307,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3314,6 +3346,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3349,6 +3382,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );

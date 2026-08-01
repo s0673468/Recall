@@ -120,7 +120,9 @@ void main() {
     testWidgets('primer row opens a CardFace-rendered primer', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
-          theme: buildRecallTheme(),
+          theme: buildRecallTheme().copyWith(
+            splashFactory: InkRipple.splashFactory,
+          ),
           home: Scaffold(
             body: ConceptRetentionPanel(
               ranked: const [retention],

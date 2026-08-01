@@ -111,6 +111,7 @@ class StudyScreen extends StatelessWidget {
             if (s.showBack)
               RatingBar(
                 preview: controller.previewCurrent(),
+                previewAt: controller.previewCurrentAt,
                 onRate: controller.rate,
               )
             else

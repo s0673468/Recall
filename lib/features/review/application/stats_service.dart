@@ -123,13 +123,16 @@ class StatsService {
     required DateTime now,
     int windowDays = 30,
   }) {
-    final cutoff = now.subtract(Duration(days: windowDays));
+    final cutoff = dayOnly(now).subtract(Duration(days: windowDays));
     var total = 0, passed = 0;
     var youngTotal = 0, youngPassed = 0;
     var matureTotal = 0, maturePassed = 0;
 
     for (final r in reviews) {
       if (r.at.isBefore(cutoff)) continue;
+      // Legacy rows may not carry state_after. Keep those rows visible, but
+      // exclude learning and relearning presses when the state is known.
+      if (r.stateAfter != null && r.stateAfter != 2) continue;
       final ok = r.rating >= 2;
       total++;
       if (ok) passed++;
@@ -203,10 +206,11 @@ class StatsService {
   ///  * pass = rating ≥ 2, fail = rating 1 (Again);
   ///  * a note's reviews attribute to EVERY `node::<id>` tag it carries
   ///    (`node::none` excluded via [nodeTags]);
+  ///  * unresolved node IDs are ignored until their `concept_nodes` row syncs;
   ///  * only nodes with ≥ [minReviews] reviews in the window are ranked
   ///    (Again-rate descending); the rest are counted in `notEnoughData`;
-  ///  * `coveredNodeCount` is every node with ≥ 1 review in the window (the
-  ///    coverage numerator).
+  ///  * `coveredNodeCount` is every resolved node with ≥ 1 review in the window
+  ///    (the coverage numerator).
   ///
   /// [noteTags] maps note guid -> raw tags string. Reviews whose guid is absent
   /// from the map (untagged, or the log row predates guid capture) contribute to
@@ -251,13 +255,14 @@ class StatsService {
     final info = {for (final c in conceptNodes) c.nodeId: c};
     final all = [
       for (final entry in reviews.entries)
-        NodeRetention(
-          nodeId: entry.key,
-          title: info[entry.key]?.title,
-          module: info[entry.key]?.module,
-          reviews: entry.value,
-          againCount: again[entry.key] ?? 0,
-        ),
+        if (info.containsKey(entry.key))
+          NodeRetention(
+            nodeId: entry.key,
+            title: info[entry.key]?.title,
+            module: info[entry.key]?.module,
+            reviews: entry.value,
+            againCount: again[entry.key] ?? 0,
+          ),
     ];
 
     final ranked = all.where((n) => n.reviews >= minReviews).toList()
