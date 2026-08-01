@@ -1874,6 +1874,7 @@ void main() {
       final now = DateTime.now().toUtc();
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(
             body: RatingBar(
               preview: {
@@ -1996,6 +1997,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -2040,6 +2042,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -2077,6 +2080,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: AppShell(
             controller: controller,
             api: api,
@@ -2205,6 +2209,7 @@ void main() {
       await controller.load();
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: AppShell(
             controller: controller,
             api: api,
@@ -3196,6 +3201,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3231,6 +3237,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3266,6 +3273,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(
             body: StudyScreen(controller: controller, nativeIos: true),
           ),
@@ -3299,6 +3307,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3337,6 +3346,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
@@ -3372,6 +3382,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );

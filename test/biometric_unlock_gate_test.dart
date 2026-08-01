@@ -108,6 +108,7 @@ void main() {
     final prompt = _FakeBiometricPrompt(results: [false, true]);
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
         home: BiometricUnlockGate(
           prompt: prompt,
           child: const Text('private recall data'),
@@ -139,6 +140,7 @@ void main() {
     final elapsedTime = _FakeElapsedTime();
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
         home: BiometricUnlockGate(
           prompt: prompt,
           elapsedTime: elapsedTime.call,
@@ -172,6 +174,7 @@ void main() {
       final elapsedTime = _FakeElapsedTime();
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
           home: BiometricUnlockGate(
             prompt: prompt,
             elapsedTime: elapsedTime.call,
@@ -342,6 +345,7 @@ void main() {
     final elapsedTime = _FakeElapsedTime();
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
         builder: (context, navigator) => BiometricUnlockGate(
           prompt: prompt,
           elapsedTime: elapsedTime.call,
@@ -429,6 +433,7 @@ void main() {
     final prompt = _FakeBiometricPrompt(results: [false]);
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
         home: BiometricUnlockGate(
           prompt: prompt,
           onSignOut: () async => throw StateError('pending study actions'),
