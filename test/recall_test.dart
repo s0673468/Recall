@@ -561,6 +561,21 @@ class _SilentLinkSource implements RecallLinkSource {
   Stream<Uri> get links => const Stream.empty();
 }
 
+Future<void> _enqueuePendingReview({
+  required LocalReviewStore store,
+  required RecallApi api,
+  required ReviewCard card,
+}) async {
+  final outcome = FsrsEngine().review(
+    card,
+    Rating.good,
+    now: DateTime.utc(2026, 8, 1, 12),
+  );
+  final entry = api.reviewEntry(card, outcome);
+  entry['client_id'] = await store.newEventId();
+  await store.enqueueReview(entry);
+}
+
 void main() {
   test('review events identify the native iOS client', () {
     expect(
@@ -1387,6 +1402,107 @@ void main() {
       // The background fetch replaced the snapshot with the fresh queue.
       expect(controller.state.queue.single.id, 1);
       expect(controller.state.offline, isFalse);
+    });
+
+    test('offline restart never repaints cards with pending reviews', () async {
+      SharedPreferences.setMockInitialValues({});
+      final cards = [_card(id: 1), _card(id: 2), _card(id: 3)];
+      final store = LocalReviewStore();
+      final firstApi = _FakeRecallApi(cards)
+        ..beforeApplyReview = () async => throw StateError('offline');
+      final first = ReviewController(
+        api: firstApi,
+        engine: FsrsEngine(),
+        store: store,
+      );
+
+      await first.load();
+      while (await store.loadSnapshot() == null) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      first.flip();
+      await first.rate(Rating.good);
+      first.flip();
+      await first.rate(Rating.good);
+      await first.syncPending();
+      expect(await store.outbox(), hasLength(2));
+      first.dispose();
+
+      final fetchGate = Completer<void>();
+      final restartApi = _FakeRecallApi(cards);
+      restartApi.beforeApplyReview = () async => throw StateError('offline');
+      restartApi.beforeQueue = () async {
+        await fetchGate.future;
+        throw StateError('offline fetch');
+      };
+      final restarted = ReviewController(
+        api: restartApi,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(restarted.dispose);
+
+      final loading = restarted.load();
+      while (restartApi.queueFetches == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(restarted.state.queue.map((card) => card.id), [3]);
+      expect(restarted.state.pendingSync, 2);
+
+      fetchGate.complete();
+      await loading;
+      expect(restarted.state.queue.map((card) => card.id), [3]);
+      expect(restarted.state.pendingSync, 2);
+      expect(restarted.state.offline, isTrue);
+    });
+
+    test(
+      'a failed partial flush filters the fetched queue by card id',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final cards = [_card(id: 1), _card(id: 2), _card(id: 3)];
+        final store = LocalReviewStore();
+        final api = _FakeRecallApi(cards);
+        await _enqueuePendingReview(store: store, api: api, card: cards[0]);
+        await _enqueuePendingReview(store: store, api: api, card: cards[1]);
+        api.beforeApplyReview = () async => throw StateError('transient 5xx');
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+
+        expect(controller.state.queue.map((card) => card.id), [3]);
+        expect(controller.state.pendingSync, 2);
+        expect(await store.outbox(), hasLength(2));
+      },
+    );
+
+    test('a fully flushed outbox does not filter the fetched queue', () async {
+      SharedPreferences.setMockInitialValues({});
+      final cards = [_card(id: 1), _card(id: 2), _card(id: 3)];
+      final store = LocalReviewStore();
+      final api = _FakeRecallApi(cards);
+      await _enqueuePendingReview(store: store, api: api, card: cards[0]);
+      await _enqueuePendingReview(store: store, api: api, card: cards[1]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(await store.outbox(), isEmpty);
+      expect(controller.state.pendingSync, 0);
+      // The fake intentionally returns all three cards even after delivery.
+      // Recomputing the outbox after the flush must therefore leave them all.
+      expect(controller.state.queue.map((card) => card.id), [1, 2, 3]);
     });
 
     test('background refresh never clobbers a session in progress', () async {
