@@ -271,22 +271,30 @@ class ReviewController extends ChangeNotifier {
     // Cold start: paint the cached snapshot immediately (a card in hand beats
     // a spinner) and let the network fetch below replace it in the background.
     // Not on a deck switch — the snapshot holds the previous filter's queue.
+    var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
       final snapshot = await store.loadSnapshot();
       if (loadToken != _loadSequence) return; // superseded by a newer load
       if (snapshot != null && snapshot.queue.isNotEmpty) {
+        final pending = await store.outbox();
+        if (loadToken != _loadSequence) return; // superseded while reading disk
+        final queue = _withoutPendingReviews(snapshot.queue, pending);
         _set(
           _state.copyWith(
-            loading: false,
+            // If every cached card is still pending sync, keep the loading
+            // state until the fetch resolves instead of briefly announcing
+            // "All caught up". The final empty state uses the existing screen.
+            loading: queue.isEmpty,
             decks: snapshot.decks,
-            queue: snapshot.queue,
+            queue: queue,
             index: 0,
             showBack: false,
-            pendingSync: (await store.outbox()).length,
+            pendingSync: pending.length,
             globalDueCount: snapshot.globalDueCount,
             globalDueUpdatedAt: snapshot.globalDueUpdatedAt,
           ),
         );
+        snapshotPainted = true;
       }
     }
 
@@ -314,10 +322,15 @@ class ReviewController extends ChangeNotifier {
         _fetchGlobalDueSnapshot(),
       ]);
       final decks = results[1] as List<DeckRow>;
-      final queue = results[2] as List<ReviewCard>;
+      final fetchedQueue = results[2] as List<ReviewCard>;
       final fetchedDue = results[3] as ({int count, DateTime updatedAt})?;
-      final pendingSync = (await store.outbox()).length;
+      // A partial flush is deliberately swallowed by _flushOnce. Re-read the
+      // outbox after that attempt and never serve a card whose review remains
+      // queued locally, even if the server fetch still returns it.
+      final pending = await store.outbox();
       if (loadToken != _loadSequence) return; // superseded by a newer load
+      final queue = _withoutPendingReviews(fetchedQueue, pending);
+      final pendingSync = pending.length;
       final sessionUnchanged = _interactionGeneration == generationAtFetch;
       final globalDueCount = sessionUnchanged && fetchedDue != null
           ? fetchedDue.count
@@ -374,18 +387,28 @@ class ReviewController extends ChangeNotifier {
         _set(_state.copyWith(loading: false, error: null, offline: true));
         return;
       }
+      if (snapshotPainted) {
+        // The initial snapshot was valid but every card may have been filtered
+        // as pending. Do not reload its raw queue after a successful flush has
+        // emptied the outbox; those cards were already reviewed and delivered.
+        _set(_state.copyWith(loading: false, error: null, offline: true));
+        return;
+      }
       final snapshot = await store.loadSnapshot();
+      if (loadToken != _loadSequence) return; // superseded while reading disk
       if (snapshot != null) {
+        final pending = await store.outbox();
+        if (loadToken != _loadSequence) return; // superseded while reading disk
         _set(
           _state.copyWith(
             loading: false,
             error: null,
             offline: true,
             decks: snapshot.decks,
-            queue: snapshot.queue,
+            queue: _withoutPendingReviews(snapshot.queue, pending),
             index: 0,
             showBack: false,
-            pendingSync: (await store.outbox()).length,
+            pendingSync: pending.length,
             globalDueCount: snapshot.globalDueCount,
             globalDueUpdatedAt: snapshot.globalDueUpdatedAt,
           ),
@@ -394,6 +417,22 @@ class ReviewController extends ChangeNotifier {
         _set(_state.copyWith(loading: false, error: e.toString()));
       }
     }
+  }
+
+  List<ReviewCard> _withoutPendingReviews(
+    List<ReviewCard> queue,
+    List<Map<String, dynamic>> pending,
+  ) {
+    final pendingCardIds = pending
+        .map((entry) => entry['card_id'])
+        .whereType<num>()
+        .map((id) => id.toInt())
+        .toSet();
+    if (pendingCardIds.isEmpty) return queue;
+    return [
+      for (final card in queue)
+        if (!pendingCardIds.contains(card.id)) card,
+    ];
   }
 
   Future<void> _saveSnapshotQuietly({
