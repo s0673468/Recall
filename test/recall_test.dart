@@ -1406,7 +1406,7 @@ void main() {
 
     test('offline restart never repaints cards with pending reviews', () async {
       SharedPreferences.setMockInitialValues({});
-      final cards = [_card(id: 1), _card(id: 2), _card(id: 3)];
+      final cards = [_card(id: 1), _card(id: 2)];
       final store = LocalReviewStore();
       final firstApi = _FakeRecallApi(cards)
         ..beforeApplyReview = () async => throw StateError('offline');
@@ -1447,12 +1447,14 @@ void main() {
         await Future<void>.delayed(Duration.zero);
       }
 
-      expect(restarted.state.queue.map((card) => card.id), [3]);
+      expect(restarted.state.queue, isEmpty);
+      expect(restarted.state.loading, isTrue);
       expect(restarted.state.pendingSync, 2);
 
       fetchGate.complete();
       await loading;
-      expect(restarted.state.queue.map((card) => card.id), [3]);
+      expect(restarted.state.queue, isEmpty);
+      expect(restarted.state.isDone, isTrue);
       expect(restarted.state.pendingSync, 2);
       expect(restarted.state.offline, isTrue);
     });
@@ -1479,6 +1481,13 @@ void main() {
         expect(controller.state.queue.map((card) => card.id), [3]);
         expect(controller.state.pendingSync, 2);
         expect(await store.outbox(), hasLength(2));
+        for (var i = 0; i < 5; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(
+          (await store.loadSnapshot())!.queue.map((card) => card.id),
+          [3],
+        );
       },
     );
 
@@ -1504,6 +1513,36 @@ void main() {
       // Recomputing the outbox after the flush must therefore leave them all.
       expect(controller.state.queue.map((card) => card.id), [1, 2, 3]);
     });
+
+    test(
+      'a successful flush cannot revive a stale snapshot when fetch fails',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final cards = [_card(id: 1), _card(id: 2)];
+        final store = LocalReviewStore();
+        await store.saveSnapshot(
+          decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+          queue: cards,
+        );
+        final api = _FakeRecallApi(cards);
+        await _enqueuePendingReview(store: store, api: api, card: cards[0]);
+        await _enqueuePendingReview(store: store, api: api, card: cards[1]);
+        api.beforeQueue = () async => throw StateError('offline fetch');
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+
+        expect(await store.outbox(), isEmpty);
+        expect(controller.state.pendingSync, 0);
+        expect(controller.state.queue, isEmpty);
+        expect(controller.state.offline, isTrue);
+      },
+    );
 
     test('background refresh never clobbers a session in progress', () async {
       SharedPreferences.setMockInitialValues({});
@@ -1892,8 +1931,8 @@ void main() {
         final at = DateTime.utc(2026, 7, 20, 12);
         final server = _FakeServer();
         final store = LocalReviewStore();
-        ReviewCard due() => _card(
-          id: 1,
+        ReviewCard due(int id) => _card(
+          id: id,
           state: 2,
           stability: 10,
           difficulty: 5,
@@ -1902,8 +1941,8 @@ void main() {
           lastReview: DateTime.utc(2026, 6, 25),
         );
 
-        Future<ReviewController> session() async {
-          final api = _FakeRecallApi([due()], server: server)
+        Future<ReviewController> session(ReviewCard card) async {
+          final api = _FakeRecallApi([card], server: server)
             ..beforeApplyReview = () async => throw StateError('offline');
           final controller = ReviewController(
             api: api,
@@ -1917,9 +1956,11 @@ void main() {
           return controller;
         }
 
-        final first = await session();
+        final first = await session(due(1));
         first.dispose(); // app killed; sequence counters reset
-        final second = await session();
+        // A pending card is intentionally not served again after WP1. Use a
+        // second real card to keep this ID-uniqueness fixture realizable.
+        final second = await session(due(2));
         addTearDown(second.dispose);
 
         final queued = await store.outbox();
@@ -1927,7 +1968,7 @@ void main() {
         expect(queued[0]['client_id'], isNot(queued[1]['client_id']));
 
         // Back online: both must land as separate reviews.
-        final api = _FakeRecallApi([due()], server: server);
+        final api = _FakeRecallApi([due(1), due(2)], server: server);
         final online = ReviewController(
           api: api,
           engine: FsrsEngine(),
@@ -1939,7 +1980,8 @@ void main() {
 
         expect(await store.outbox(), isEmpty);
         expect(server.reviewLog, hasLength(2));
-        expect(server.cards[1]!.reps, 5);
+        expect(server.cards[1]!.reps, 4);
+        expect(server.cards[2]!.reps, 4);
       },
     );
   });
