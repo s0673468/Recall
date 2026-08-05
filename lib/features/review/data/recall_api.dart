@@ -139,7 +139,7 @@ class RecallApi implements ReviewReplayGateway {
       await _upsertUserSetting(_fsrsSettingsKey, settingsValue);
       final after = await _fetchUserSetting(_fsrsSettingsKey);
       if (!_jsonValuesEqual(after, settingsValue)) {
-        await _restoreFsrsSetting(before);
+        await _restoreFsrsSetting(before, expectedCurrent: settingsValue);
         throw const FsrsOptimizerApplyException(
           'fsrs_params readback mismatch; previous settings were restored',
         );
@@ -147,7 +147,7 @@ class RecallApi implements ReviewReplayGateway {
       final parsed = FsrsSettings.tryParse(after);
       if (parsed == null ||
           parsed.optimizerStatus != FsrsConfigurationStatus.applied) {
-        await _restoreFsrsSetting(before);
+        await _restoreFsrsSetting(before, expectedCurrent: settingsValue);
         throw const FsrsOptimizerApplyException(
           'applied fsrs_params failed client validation; previous settings '
           'were restored',
@@ -158,7 +158,7 @@ class RecallApi implements ReviewReplayGateway {
       rethrow;
     } catch (error) {
       try {
-        await _restoreFsrsSetting(before);
+        await _restoreFsrsSetting(before, expectedCurrent: settingsValue);
       } catch (rollbackError) {
         throw FsrsOptimizerApplyException(
           'fsrs_params write failed and rollback could not be proven: '
@@ -202,27 +202,62 @@ class RecallApi implements ReviewReplayGateway {
     }, onConflict: 'user_id,settings_key');
   }
 
-  Future<void> _restoreFsrsSetting(Object? before) async {
-    if (before == null) {
-      await client
-          .from('user_settings')
-          .delete()
-          .eq('settings_key', _fsrsSettingsKey);
-      final readback = await _fetchUserSetting(_fsrsSettingsKey);
-      if (readback != null) {
-        throw const FsrsOptimizerApplyException(
-          'rollback left an fsrs_params row behind',
-        );
-      }
-      return;
+  /// Restore only while the row still contains the value this apply wrote.
+  ///
+  /// The `settings_value` predicate is the only compare-and-swap primitive
+  /// available without a schema version column. If another device changed the
+  /// row, the conditional update/delete affects zero rows and this method
+  /// fails closed instead of overwriting that newer value.
+  Future<void> _restoreFsrsSetting(
+    Object? before, {
+    required Object expectedCurrent,
+  }) async {
+    final current = await _fetchUserSetting(_fsrsSettingsKey);
+    if (_jsonValuesEqual(current, before)) return;
+    if (!_jsonValuesEqual(current, expectedCurrent)) {
+      throw const FsrsOptimizerApplyException(
+        'rollback skipped because fsrs_params changed concurrently',
+      );
     }
-    await _upsertUserSetting(_fsrsSettingsKey, before);
+
+    final restoredRows = before == null
+        ? await _deleteFsrsSettingWhereValue(expectedCurrent)
+        : await _updateFsrsSettingWhereValue(expectedCurrent, before);
+    if (restoredRows == 0) {
+      throw const FsrsOptimizerApplyException(
+        'rollback skipped because fsrs_params changed concurrently',
+      );
+    }
+
     final readback = await _fetchUserSetting(_fsrsSettingsKey);
     if (!_jsonValuesEqual(readback, before)) {
       throw const FsrsOptimizerApplyException(
         'rollback fsrs_params readback mismatch',
       );
     }
+  }
+
+  Future<int> _updateFsrsSettingWhereValue(
+    Object expectedCurrent,
+    Object before,
+  ) async {
+    final updated = await client
+        .from('user_settings')
+        .update({'settings_value': before})
+        .eq('settings_key', _fsrsSettingsKey)
+        .eq('settings_value', jsonEncode(expectedCurrent))
+        .select('settings_key');
+    return updated.length;
+  }
+
+  Future<int> _deleteFsrsSettingWhereValue(Object expectedCurrent) async {
+    final deleted = await client
+        .from('user_settings')
+        .delete()
+        .eq('settings_key', _fsrsSettingsKey)
+        .eq('settings_value', jsonEncode(expectedCurrent))
+        .select('settings_key');
+    return deleted.length;
   }
 
   /// The study queue: every due review/learning card (due <= now), then up to

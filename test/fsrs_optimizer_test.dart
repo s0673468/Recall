@@ -24,6 +24,8 @@ class _SettingsStub {
   Map<String, dynamic>? value;
   bool mismatchNextRead = false;
   bool mismatchAfterWrite = false;
+  Map<String, dynamic>? concurrentValueBeforeReadback;
+  bool _hasWritten = false;
   final List<http.BaseRequest> requests = [];
 
   Future<http.Response> handle(http.BaseRequest request) async {
@@ -32,9 +34,19 @@ class _SettingsStub {
       if (value == null) {
         return _response(request, '[]');
       }
+      if (_hasWritten && concurrentValueBeforeReadback != null) {
+        value = Map<String, dynamic>.from(concurrentValueBeforeReadback!);
+        concurrentValueBeforeReadback = null;
+      }
       if (mismatchNextRead) {
-        value = {...value!, 'desired_retention': 0.71};
         mismatchNextRead = false;
+        final mismatch = {...value!, 'desired_retention': 0.71};
+        return _response(
+          request,
+          jsonEncode([
+            {'settings_value': mismatch},
+          ]),
+        );
       }
       return _response(
         request,
@@ -47,17 +59,50 @@ class _SettingsStub {
       final body =
           jsonDecode((request as http.Request).body) as Map<String, dynamic>;
       value = Map<String, dynamic>.from(body['settings_value'] as Map);
+      _hasWritten = true;
       if (mismatchAfterWrite) {
         mismatchAfterWrite = false;
         mismatchNextRead = true;
       }
       return _response(request, '', status: 201);
     }
+    if (request.method == 'PATCH') {
+      final body =
+          jsonDecode((request as http.Request).body) as Map<String, dynamic>;
+      final expected = _expectedValue(request);
+      if (expected != null && !_sameJson(value, expected)) {
+        return _response(request, '[]');
+      }
+      value = Map<String, dynamic>.from(body['settings_value'] as Map);
+      return _response(
+        request,
+        jsonEncode([
+          {'settings_key': 'fsrs_params'},
+        ]),
+      );
+    }
     if (request.method == 'DELETE') {
-      value = null;
-      return _response(request, '', status: 204);
+      final expected = _expectedValue(request);
+      final matched = expected == null || _sameJson(value, expected);
+      if (matched) value = null;
+      return _response(
+        request,
+        jsonEncode(
+          matched
+              ? [
+                  {'settings_key': 'fsrs_params'},
+                ]
+              : [],
+        ),
+      );
     }
     return _response(request, '{}', status: 405);
+  }
+
+  Object? _expectedValue(http.BaseRequest request) {
+    final filter = request.url.queryParameters['settings_value'];
+    if (filter == null || !filter.startsWith('eq.')) return null;
+    return jsonDecode(filter.substring(3));
   }
 
   http.Response _response(
@@ -181,7 +226,8 @@ void main() {
         'GET',
         'POST',
         'GET',
-        'POST',
+        'GET',
+        'PATCH',
         'GET',
       ]);
     });
@@ -204,7 +250,46 @@ void main() {
         'GET',
         'POST',
         'GET',
+        'GET',
         'DELETE',
+        'GET',
+      ]);
+    });
+
+    test('does not roll back over a newer concurrent settings row', () async {
+      final before = <String, dynamic>{
+        'parameters': List<double>.filled(21, 1),
+        'desired_retention': 0.90,
+      };
+      final newer = <String, dynamic>{
+        'parameters': List<double>.filled(21, 2),
+        'desired_retention': 0.88,
+        'optimizer_status': 'applied',
+        'applied_at': '2026-08-05T12:31:00.000Z',
+      };
+      final stub = _SettingsStub()
+        ..value = before
+        ..concurrentValueBeforeReadback = newer;
+      final api = _apiFor(stub);
+
+      await expectLater(
+        api.applyFsrsOptimizerResult(
+          _report(),
+          approved: true,
+          confirmation: RecallApi.fsrsApplyConfirmation,
+        ),
+        throwsA(
+          predicate<FsrsOptimizerApplyException>(
+            (error) => error.message.contains('changed concurrently'),
+          ),
+        ),
+      );
+
+      expect(stub.value, newer);
+      expect(stub.requests.map((request) => request.method), [
+        'GET',
+        'POST',
+        'GET',
         'GET',
       ]);
     });
@@ -260,4 +345,29 @@ void main() {
     );
     expect(engine.parameters, _parameters);
   });
+}
+
+bool _sameJson(Object? left, Object? right) {
+  if (left is num && right is num) return left == right;
+  if (left == null || right == null || left is String || left is bool) {
+    return left == right;
+  }
+  if (left is List && right is List) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (!_sameJson(left[i], right[i])) return false;
+    }
+    return true;
+  }
+  if (left is Map && right is Map) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key) ||
+          !_sameJson(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return left == right;
 }
