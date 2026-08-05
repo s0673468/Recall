@@ -149,12 +149,13 @@ class StatsService {
       // Legacy rows may not carry state_after. Keep those rows visible. A real
       // lapse from review enters relearning (state_after=3), so rating 1 with
       // that state is counted. Without state_before the same row shape is also
-      // possible for Again during relearning. When the previous row for this
-      // card is available, exclude that already-relearning press; rows without
-      // a derivable predecessor retain the documented conservative over-count.
+      // possible for Again during relearning. A successful press can graduate
+      // relearning back to state_after=2, which is likewise excluded when the
+      // previous row is available. Rows without a derivable predecessor retain
+      // the documented conservative over-count.
       final isReviewState =
           r.stateAfter == null ||
-          r.stateAfter == 2 ||
+          (r.stateAfter == 2 && previousStateAfter != 3) ||
           (r.stateAfter == 3 && r.rating == 1 && previousStateAfter != 3);
       if (!isReviewState) continue;
       final ok = r.rating >= 2;

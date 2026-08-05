@@ -946,6 +946,7 @@ class ReviewController extends ChangeNotifier {
       card: card,
       index: _state.index,
       catchUp: _state.catchUp,
+      catchUpSourceQueue: List<ReviewCard>.unmodifiable(_catchUpSourceQueue),
       previousLastReviewedAt: _state.lastReviewedAt,
       previousReviewActivityKnown: _state.reviewActivityKnown,
     );
@@ -958,6 +959,10 @@ class ReviewController extends ChangeNotifier {
     // card so the review can never be lost); it also returns the new pending
     // count so advancing doesn't re-read + re-decode the whole outbox.
     final pending = await store.enqueueReview(entry);
+    _catchUpSourceQueue = [
+      for (final sourceCard in _catchUpSourceQueue)
+        if (sourceCard.id != card.id) sourceCard,
+    ];
     if (remediationNodeIds.isNotEmpty) {
       try {
         await store.enqueueRemediation(remediationNodeIds, now: clock());
@@ -1044,7 +1049,8 @@ class ReviewController extends ChangeNotifier {
     final now = clock();
     final raw = await store.loadCatchUpState();
     final local = BacklogCatchUp.normalizeLocalState(raw, now);
-    final completedToday = raw.dayKey == BacklogCatchUp.dayKey(now)
+    final completedToday = raw.mode == CatchUpMode.none ||
+            raw.dayKey == BacklogCatchUp.dayKey(now)
         ? view.completedToday
         : local.completedToday;
     await _saveCatchUpStateQuietly(
@@ -1143,6 +1149,7 @@ class ReviewController extends ChangeNotifier {
           // Neither queued nor delivered — should be unreachable with the
           // flush settled above. Bail rather than restore state that never
           // applied.
+          _catchUpSourceQueue = u.catchUpSourceQueue;
           debugPrint('Recall: undo skipped — review neither queued nor synced');
           return;
         }
@@ -1165,6 +1172,7 @@ class ReviewController extends ChangeNotifier {
       final reviewed = _state.reviewedThisSession;
       final globalDueCount = _state.globalDueCount;
       await _restoreCatchUpState(u.catchUp);
+      _catchUpSourceQueue = u.catchUpSourceQueue;
       _set(
         _state.copyWith(
           index: u.index,
@@ -1341,13 +1349,14 @@ class PendingSyncException implements Exception {
 /// scheduling snapshot — stability/difficulty/due/state/reps/lapses/
 /// last_review/cloud_seen), the queue position to return to, the outbox
 /// identity of the review, and — once a flush delivers it — the review_log
-/// row id to delete. It also keeps the presentation-only catch-up progress
-/// before the rating so undo cannot consume a daily slot permanently.
+/// row id to delete. It also keeps the presentation-only catch-up source and
+/// progress before the rating so undo cannot consume a daily slot permanently.
 class _UndoRecord {
   final String clientId;
   final ReviewCard card;
   final int index;
   final CatchUpView catchUp;
+  final List<ReviewCard> catchUpSourceQueue;
   final DateTime? previousLastReviewedAt;
   final bool previousReviewActivityKnown;
   bool flushed = false;
@@ -1358,6 +1367,7 @@ class _UndoRecord {
     required this.card,
     required this.index,
     required this.catchUp,
+    required this.catchUpSourceQueue,
     required this.previousLastReviewedAt,
     required this.previousReviewActivityKnown,
   });

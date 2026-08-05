@@ -3903,6 +3903,33 @@ void main() {
       expect(api.applied, isEmpty);
     });
 
+    test('does not reintroduce a card reviewed before catch-up opt-in', () async {
+      final queue = _catchUpQueue(82);
+      final reviewed = queue.first;
+      final api = _FakeRecallApi(queue);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+      expect(await controller.store.outbox(), isEmpty);
+
+      await controller.startCatchUp();
+
+      expect(controller.state.catchUp.dueCount, 81);
+      expect(
+        controller.state.queue.any((card) => card.id == reviewed.id),
+        isFalse,
+      );
+    });
+
     test(
       'filters a pending review before catch-up eligibility and ordering',
       () async {
@@ -4005,6 +4032,50 @@ void main() {
         isNot(equals(CatchUpLocalState.none)),
       );
       expect(controller.state.current, isNotNull);
+    });
+
+    test('undo restores progress when the final catch-up card clears the mode',
+        () async {
+      final now = DateTime.utc(2026, 8, 5, 12);
+      final store = LocalReviewStore();
+      await store.saveCatchUpState(
+        CatchUpLocalState(
+          mode: CatchUpMode.active,
+          dayKey: '2026-08-05',
+          completedToday: 19,
+        ),
+      );
+      final controller = ReviewController(
+        api: _FakeRecallApi([
+          _card(
+            id: 904,
+            state: 2,
+            stability: 5,
+            difficulty: 5,
+            due: now.subtract(const Duration(hours: 1)),
+            lastReview: now.subtract(const Duration(days: 1)),
+          ),
+        ]),
+        engine: FsrsEngine(),
+        store: store,
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+      expect(controller.state.catchUp.isActive, isTrue);
+      expect(controller.state.catchUp.completedToday, 19);
+      controller.flip();
+      await controller.rate(Rating.good);
+      expect(controller.state.catchUp.isNone, isTrue);
+
+      await controller.undo();
+
+      final restored = await store.loadCatchUpState();
+      expect(restored.mode, CatchUpMode.active);
+      expect(restored.completedToday, 19);
+      expect(controller.state.catchUp.isActive, isTrue);
+      expect(controller.state.catchUp.completedToday, 19);
     });
 
     test(
