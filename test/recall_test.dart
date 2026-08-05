@@ -1014,13 +1014,19 @@ void main() {
         expect(controller.state.queue, hasLength(1));
         expect(controller.state.globalDueCount, 7);
         expect(controller.state.globalDueUpdatedAt, now);
+        expect(controller.state.reviewActivityKnown, isTrue);
+        expect(controller.state.lastReviewedAt, isNull);
 
         controller.flip();
         await controller.rate(Rating.good);
         expect(controller.state.globalDueCount, 6);
+        expect(controller.state.lastReviewedAt, now);
+        expect(controller.state.reviewActivityKnown, isTrue);
 
         await controller.undo();
         expect(controller.state.globalDueCount, 7);
+        expect(controller.state.lastReviewedAt, isNull);
+        expect(controller.state.reviewActivityKnown, isTrue);
       },
     );
 

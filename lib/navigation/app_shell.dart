@@ -53,6 +53,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.controller.addListener(_reconcileStudyReminder);
     _deepLinks = RecallDeepLinkController(
       source: widget.linkSource,
       onDestination: (destination) {
@@ -60,10 +61,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       },
     );
     unawaited(_deepLinks.start());
+    _reconcileStudyReminder();
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_reconcileStudyReminder);
     WidgetsBinding.instance.removeObserver(this);
     _deepLinks.dispose();
     super.dispose();
@@ -74,14 +77,30 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       // Drain durable writes and refresh stale aggregate state when no card is
       // active. An in-progress study card is never displaced on foreground.
-      unawaited(
-        runRecallForegroundSync(
-          diagnostics: widget.diagnostics,
-          syncPending: widget.controller.syncPending,
-          refreshIfIdle: widget.controller.refreshIfIdle,
-        ),
-      );
+      unawaited(_resumeAndReconcileStudyReminder());
     }
+  }
+
+  Future<void> _resumeAndReconcileStudyReminder() async {
+    await runRecallForegroundSync(
+      diagnostics: widget.diagnostics,
+      syncPending: widget.controller.syncPending,
+      refreshIfIdle: widget.controller.refreshIfIdle,
+    );
+    _reconcileStudyReminder(force: true);
+  }
+
+  void _reconcileStudyReminder({bool force = false}) {
+    final reminder = widget.reminder;
+    if (reminder == null || widget.controller.currentUser == null) return;
+    unawaited(
+      reminder.reconcile(
+        dueCount: widget.controller.state.globalDueCount,
+        lastReviewedAt: widget.controller.state.lastReviewedAt,
+        reviewActivityKnown: widget.controller.state.reviewActivityKnown,
+        force: force,
+      ),
+    );
   }
 
   void _openSettings() {
