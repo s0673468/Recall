@@ -191,6 +191,7 @@ class RecallApi implements ReviewReplayGateway {
     for (var offset = 0; ; offset += _duePageSize) {
       final page = await query
           .order('due', ascending: true)
+          .order('id', ascending: true)
           .range(offset, offset + _duePageSize - 1);
       rows.addAll(page);
       if (page.length < _duePageSize) return rows;

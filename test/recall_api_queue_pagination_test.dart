@@ -30,6 +30,7 @@ Map<String, dynamic> _dueRow(int id) => {
 void main() {
   test('fetchQueue pages past the existing 500-row due window', () async {
     var duePage = 0;
+    final orders = <String>[];
     final client = SupabaseClient(
       'https://example.supabase.co',
       'anon-key',
@@ -38,6 +39,7 @@ void main() {
         List<Map<String, dynamic>> rows;
         if (path.endsWith('/cards') && request.url.query.contains('state=neq.0')) {
           duePage++;
+          orders.add(request.url.queryParameters['order'] ?? '');
           rows = duePage == 1
               ? [for (var i = 0; i < 500; i++) _dueRow(i)]
               : [_dueRow(500)];
@@ -58,6 +60,10 @@ void main() {
     final queue = await RecallApi(client).fetchQueue(newLimit: 20);
 
     expect(duePage, 2);
+    expect(orders, [
+      'due.asc.nullslast,id.asc.nullslast',
+      'due.asc.nullslast,id.asc.nullslast',
+    ]);
     expect(queue, hasLength(501));
     expect(queue.last.id, 500);
   });

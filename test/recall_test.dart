@@ -3999,6 +3999,63 @@ void main() {
       expect(controller.state.current, isNotNull);
     });
 
+    test(
+      'resets catch-up daily progress after midnight without reload',
+      () async {
+        var now = DateTime.utc(2026, 8, 5, 23, 30);
+        final store = LocalReviewStore();
+        final controller = ReviewController(
+          api: _FakeRecallApi(_catchUpQueue(82)),
+          engine: FsrsEngine(),
+          store: store,
+          clock: () => now,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+        await controller.startCatchUp();
+        controller.flip();
+        await controller.rate(Rating.good);
+        expect((await store.loadCatchUpState()).completedToday, 1);
+
+        now = DateTime.utc(2026, 8, 6, 0, 30);
+        controller.flip();
+        await controller.rate(Rating.good);
+
+        final state = await store.loadCatchUpState();
+        expect(state.dayKey, '2026-08-06');
+        expect(state.completedToday, 1);
+        expect(controller.state.catchUp.completedToday, 1);
+      },
+    );
+
+    test('an older overlapping load cannot replace the newer queue', () async {
+      final first = _card(id: 901, deckId: 1, state: 2);
+      final second = _card(id: 902, deckId: 2, state: 2);
+      final api = _FakeRecallApi([first, second])..failApplyReview = true;
+      final store = _GatedCatchUpStore();
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+
+      final firstLoad = controller.load();
+      await store.catchUpLoadStarted.future;
+      await _enqueuePendingReview(store: store, api: api, card: first);
+
+      await controller.selectDeck(2);
+      expect(controller.state.deckFilter, 2);
+      expect(controller.state.queue.map((card) => card.id), [902]);
+
+      store.releaseCatchUpLoad.complete();
+      await firstLoad;
+      expect(controller.state.deckFilter, 2);
+      expect(controller.state.queue.map((card) => card.id), [902]);
+    });
+
     testWidgets('shows the plan banner before the user opts in', (
       tester,
     ) async {
@@ -4080,5 +4137,23 @@ class _GatedSnapshotStore extends LocalReviewStore {
     } finally {
       saveFinished.complete();
     }
+  }
+}
+
+/// Holds the first catch-up state read so a newer deck load can win while an
+/// older load is still building its presentation-only queue.
+class _GatedCatchUpStore extends LocalReviewStore {
+  final Completer<void> catchUpLoadStarted = Completer<void>();
+  final Completer<void> releaseCatchUpLoad = Completer<void>();
+  bool _gateNextCatchUpLoad = true;
+
+  @override
+  Future<CatchUpLocalState> loadCatchUpState() async {
+    if (_gateNextCatchUpLoad) {
+      _gateNextCatchUpLoad = false;
+      catchUpLoadStarted.complete();
+      await releaseCatchUpLoad.future;
+    }
+    return super.loadCatchUpState();
   }
 }

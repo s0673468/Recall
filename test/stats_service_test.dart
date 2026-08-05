@@ -199,6 +199,24 @@ void main() {
       expect(r.overallRate, closeTo(0.85, 1e-9));
     });
 
+    test('excludes repeated Again presses during relearning', () {
+      final now = DateTime(2026, 7, 7, 12);
+      final at = now.subtract(const Duration(days: 1));
+      final r = StatsService.computeRetention([
+        _entry(
+          at.subtract(const Duration(days: 2)),
+          3,
+          cardId: 77,
+          stateAfter: 2,
+        ),
+        _entry(at, 1, cardId: 77, stateAfter: 3),
+        _entry(now, 1, cardId: 77, stateAfter: 3),
+      ], now: now);
+
+      expect(r.total, 2);
+      expect(r.passed, 1);
+    });
+
     test('retention uses the same local-day window as the headline tile', () {
       final now = DateTime(2026, 7, 31, 12);
       final at = DateTime(2026, 7, 1, 0, 1);

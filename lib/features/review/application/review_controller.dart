@@ -316,6 +316,7 @@ class ReviewController extends ChangeNotifier {
           const [],
           clearWhenEmpty: false,
         );
+        if (loadToken != _loadSequence) return;
         _catchUpSourceQueue = queue;
         final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
@@ -381,6 +382,7 @@ class ReviewController extends ChangeNotifier {
       if (loadToken != _loadSequence) return; // superseded by a newer load
       final queue = _withoutPendingReviews(fetchedQueue, pending);
       final catchUp = await _buildCatchUpView(queue, recentReviews);
+      if (loadToken != _loadSequence) return;
       final presentedQueue = _presentedQueue(queue, catchUp);
       _catchUpSourceQueue = queue;
       final pendingSync = pending.length;
@@ -474,6 +476,7 @@ class ReviewController extends ChangeNotifier {
           const [],
           clearWhenEmpty: false,
         );
+        if (loadToken != _loadSequence) return;
         _catchUpSourceQueue = queue;
         final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
@@ -994,10 +997,22 @@ class ReviewController extends ChangeNotifier {
     final current = _state.catchUp;
     if (card.isNew || current.dueCount <= 0) return current;
 
+    final now = clock();
+    final local = current.isActive
+        ? BacklogCatchUp.normalizeLocalState(
+            await store.loadCatchUpState(),
+            now,
+          )
+        : null;
     final dueCount = math.max(0, current.dueCount - 1);
     var mode = current.mode;
     var completedToday = current.completedToday;
-    if (current.isActive) completedToday++;
+    if (current.isActive) {
+      final baseCompleted = local?.mode == CatchUpMode.active
+          ? local!.completedToday
+          : current.completedToday;
+      completedToday = baseCompleted + 1;
+    }
 
     if (dueCount == 0 ||
         (current.isDismissed && dueCount <= current.threshold)) {
@@ -1005,7 +1020,6 @@ class ReviewController extends ChangeNotifier {
       completedToday = 0;
       await _saveCatchUpStateQuietly(CatchUpLocalState.none);
     } else if (current.isActive) {
-      final now = clock();
       await _saveCatchUpStateQuietly(
         CatchUpLocalState(
           mode: CatchUpMode.active,
@@ -1027,11 +1041,17 @@ class ReviewController extends ChangeNotifier {
       await _saveCatchUpStateQuietly(CatchUpLocalState.none);
       return;
     }
+    final now = clock();
+    final raw = await store.loadCatchUpState();
+    final local = BacklogCatchUp.normalizeLocalState(raw, now);
+    final completedToday = raw.dayKey == BacklogCatchUp.dayKey(now)
+        ? view.completedToday
+        : local.completedToday;
     await _saveCatchUpStateQuietly(
       CatchUpLocalState(
         mode: view.mode,
-        dayKey: BacklogCatchUp.dayKey(clock()),
-        completedToday: view.completedToday,
+        dayKey: BacklogCatchUp.dayKey(now),
+        completedToday: completedToday,
       ),
     );
   }

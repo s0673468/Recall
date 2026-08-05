@@ -134,20 +134,28 @@ class StatsService {
     final ordered = List<ReviewLogEntry>.from(reviews)
       ..sort((a, b) => a.at.compareTo(b.at));
     final previousAtByCard = <int, DateTime>{};
+    final previousStateAfterByCard = <int, int?>{};
 
     for (final r in ordered) {
       final previousAt = r.cardId == null ? null : previousAtByCard[r.cardId!];
-      if (r.cardId != null) previousAtByCard[r.cardId!] = r.at;
+      final previousStateAfter = r.cardId == null
+          ? null
+          : previousStateAfterByCard[r.cardId!];
+      if (r.cardId != null) {
+        previousAtByCard[r.cardId!] = r.at;
+        previousStateAfterByCard[r.cardId!] = r.stateAfter;
+      }
       if (r.at.isBefore(cutoff)) continue;
       // Legacy rows may not carry state_after. Keep those rows visible. A real
       // lapse from review enters relearning (state_after=3), so rating 1 with
       // that state is counted. Without state_before the same row shape is also
-      // possible for Again during relearning; that small over-count is safer
-      // than the old 100%-always result and needs a schema field to remove.
+      // possible for Again during relearning. When the previous row for this
+      // card is available, exclude that already-relearning press; rows without
+      // a derivable predecessor retain the documented conservative over-count.
       final isReviewState =
           r.stateAfter == null ||
           r.stateAfter == 2 ||
-          (r.stateAfter == 3 && r.rating == 1);
+          (r.stateAfter == 3 && r.rating == 1 && previousStateAfter != 3);
       if (!isReviewState) continue;
       final ok = r.rating >= 2;
       total++;
