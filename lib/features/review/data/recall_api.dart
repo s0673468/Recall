@@ -19,6 +19,11 @@ class RecallApi implements ReviewReplayGateway {
   final Future<void> Function(String)? _persistSession;
   final Future<void> Function()? _removePersistedSession;
 
+  /// The exact confirmation phrase required before a DIR-1b optimizer result
+  /// can write the user's scheduling settings.
+  static const fsrsApplyConfirmation = 'APPLY_PERSONAL_FSRS';
+  static const _fsrsSettingsKey = 'fsrs_params';
+
   const RecallApi(
     this.client, {
     Future<void> Function(String)? persistSession,
@@ -90,23 +95,87 @@ class RecallApi implements ReviewReplayGateway {
   }
 
   Future<FsrsSettings?> fetchFsrsSettings() async {
-    final row = await client
-        .from('user_settings')
-        .select('settings_value')
-        .eq('settings_key', 'fsrs_params')
-        .maybeSingle();
-    return FsrsSettings.tryParse(row?['settings_value']);
+    return FsrsSettings.tryParse(await _fetchUserSetting(_fsrsSettingsKey));
+  }
+
+  /// Apply one accepted DIR-1a result to the existing `fsrs_params` setting.
+  ///
+  /// This is deliberately not reachable through a normal settings update. A
+  /// caller must provide both an approval boolean and the exact confirmation
+  /// phrase. The method validates the 21-weight payload before any network
+  /// write, reads the previous value, verifies exact post-write readback, and
+  /// restores the previous value (or removes a newly-created row) on any
+  /// mismatch. It is not called by the app UI; the first production call
+  /// remains an explicitly supervised operator action.
+  Future<FsrsSettings> applyFsrsOptimizerResult(
+    Object result, {
+    bool approved = false,
+    String? confirmation,
+    DateTime? appliedAt,
+  }) async {
+    final optimizerResult = FsrsOptimizerResult.tryParse(result);
+    if (optimizerResult == null) {
+      throw const FsrsOptimizerApplyException(
+        'invalid optimizer result; expected 21 finite parameters and '
+        'desired_retention between 0.70 and 0.97',
+      );
+    }
+    if (!approved || confirmation != fsrsApplyConfirmation) {
+      throw const FsrsOptimizerApplyException(
+        'refusing to apply without explicit approval and confirmation',
+      );
+    }
+
+    final before = await _fetchUserSetting(_fsrsSettingsKey);
+    final applied = (appliedAt ?? DateTime.now()).toUtc();
+    final settingsValue = <String, dynamic>{
+      ...optimizerResult.toJson(),
+      'optimizer_status': 'applied',
+      if (optimizerResult.fittedAt != null)
+        'fitted_at': optimizerResult.fittedAt!.toUtc().toIso8601String(),
+      'applied_at': applied.toIso8601String(),
+    };
+
+    try {
+      await _upsertUserSetting(_fsrsSettingsKey, settingsValue);
+      final after = await _fetchUserSetting(_fsrsSettingsKey);
+      if (!_jsonValuesEqual(after, settingsValue)) {
+        await _restoreFsrsSetting(before, expectedCurrent: settingsValue);
+        throw const FsrsOptimizerApplyException(
+          'fsrs_params readback mismatch; previous settings were restored',
+        );
+      }
+      final parsed = FsrsSettings.tryParse(after);
+      if (parsed == null ||
+          parsed.optimizerStatus != FsrsConfigurationStatus.applied) {
+        await _restoreFsrsSetting(before, expectedCurrent: settingsValue);
+        throw const FsrsOptimizerApplyException(
+          'applied fsrs_params failed client validation; previous settings '
+          'were restored',
+        );
+      }
+      return parsed;
+    } on FsrsOptimizerApplyException {
+      rethrow;
+    } catch (error) {
+      try {
+        await _restoreFsrsSetting(before, expectedCurrent: settingsValue);
+      } catch (rollbackError) {
+        throw FsrsOptimizerApplyException(
+          'fsrs_params write failed and rollback could not be proven: '
+          '$rollbackError',
+        );
+      }
+      throw FsrsOptimizerApplyException(
+        'fsrs_params write failed; previous settings were restored: $error',
+      );
+    }
   }
 
   /// Recall's study preferences row (new-card limit, retention, ordering).
   /// Returns null when the row is absent so the caller keeps its defaults.
   Future<Map<String, dynamic>?> fetchRecallPrefs() async {
-    final row = await client
-        .from('user_settings')
-        .select('settings_value')
-        .eq('settings_key', 'recall_prefs')
-        .maybeSingle();
-    final value = row?['settings_value'];
+    final value = await _fetchUserSetting('recall_prefs');
     return value is Map ? Map<String, dynamic>.from(value) : null;
   }
 
@@ -114,11 +183,82 @@ class RecallApi implements ReviewReplayGateway {
   /// user_id the review-log inserts use, and the (user_id, settings_key)
   /// unique constraint for the upsert.
   Future<void> saveRecallPrefs(Map<String, dynamic> value) async {
+    await _upsertUserSetting('recall_prefs', value);
+  }
+
+  Future<Object?> _fetchUserSetting(String key) async {
+    final row = await client
+        .from('user_settings')
+        .select('settings_value')
+        .eq('settings_key', key)
+        .maybeSingle();
+    return row?['settings_value'];
+  }
+
+  Future<void> _upsertUserSetting(String key, Object? value) async {
     await client.from('user_settings').upsert({
       'user_id': ?currentUser?.id,
-      'settings_key': 'recall_prefs',
+      'settings_key': key,
       'settings_value': value,
     }, onConflict: 'user_id,settings_key');
+  }
+
+  /// Restore only while the row still contains the value this apply wrote.
+  ///
+  /// The `settings_value` predicate is the only compare-and-swap primitive
+  /// available without a schema version column. If another device changed the
+  /// row, the conditional update/delete affects zero rows and this method
+  /// fails closed instead of overwriting that newer value.
+  Future<void> _restoreFsrsSetting(
+    Object? before, {
+    required Object expectedCurrent,
+  }) async {
+    final current = await _fetchUserSetting(_fsrsSettingsKey);
+    if (_jsonValuesEqual(current, before)) return;
+    if (!_jsonValuesEqual(current, expectedCurrent)) {
+      throw const FsrsOptimizerApplyException(
+        'rollback skipped because fsrs_params changed concurrently',
+      );
+    }
+
+    final restoredRows = before == null
+        ? await _deleteFsrsSettingWhereValue(expectedCurrent)
+        : await _updateFsrsSettingWhereValue(expectedCurrent, before);
+    if (restoredRows == 0) {
+      throw const FsrsOptimizerApplyException(
+        'rollback skipped because fsrs_params changed concurrently',
+      );
+    }
+
+    final readback = await _fetchUserSetting(_fsrsSettingsKey);
+    if (!_jsonValuesEqual(readback, before)) {
+      throw const FsrsOptimizerApplyException(
+        'rollback fsrs_params readback mismatch',
+      );
+    }
+  }
+
+  Future<int> _updateFsrsSettingWhereValue(
+    Object expectedCurrent,
+    Object before,
+  ) async {
+    final updated = await client
+        .from('user_settings')
+        .update({'settings_value': before})
+        .eq('settings_key', _fsrsSettingsKey)
+        .eq('settings_value', jsonEncode(expectedCurrent))
+        .select('settings_key');
+    return updated.length;
+  }
+
+  Future<int> _deleteFsrsSettingWhereValue(Object expectedCurrent) async {
+    final deleted = await client
+        .from('user_settings')
+        .delete()
+        .eq('settings_key', _fsrsSettingsKey)
+        .eq('settings_value', jsonEncode(expectedCurrent))
+        .select('settings_key');
+    return deleted.length;
   }
 
   /// The study queue: every due review/learning card (due <= now), then up to
@@ -720,6 +860,38 @@ class RecallApi implements ReviewReplayGateway {
         ),
     };
   }
+}
+
+class FsrsOptimizerApplyException implements Exception {
+  final String message;
+
+  const FsrsOptimizerApplyException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+bool _jsonValuesEqual(Object? left, Object? right) {
+  if (left is num && right is num) return left == right;
+  if (left is String || left is bool || left == null) return left == right;
+  if (left is List && right is List) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (!_jsonValuesEqual(left[i], right[i])) return false;
+    }
+    return true;
+  }
+  if (left is Map && right is Map) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key) ||
+          !_jsonValuesEqual(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return left == right;
 }
 
 String recallDeviceLabel({

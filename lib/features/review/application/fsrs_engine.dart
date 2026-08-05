@@ -8,6 +8,9 @@ class FsrsEngine {
   late Scheduler _scheduler;
   late List<double> _parameters;
   late double _desiredRetention;
+  FsrsConfigurationStatus _configurationStatus =
+      FsrsConfigurationStatus.packageDefaults;
+  DateTime? _fittedAt;
 
   FsrsEngine({List<double>? parameters, double desiredRetention = 0.9}) {
     _configure(
@@ -18,16 +21,32 @@ class FsrsEngine {
 
   List<double> get parameters => List.unmodifiable(_parameters);
   double get desiredRetention => _desiredRetention;
+  FsrsConfigurationStatus get configurationStatus => _configurationStatus;
+  DateTime? get fittedAt => _fittedAt;
 
   void configure(FsrsSettings settings) {
+    if (settings.optimizerStatus == FsrsConfigurationStatus.suggested) {
+      resetToDefaults(
+        status: FsrsConfigurationStatus.suggested,
+        fittedAt: settings.fittedAt,
+      );
+      return;
+    }
     _configure(
       parameters: settings.parameters,
       desiredRetention: settings.desiredRetention,
     );
+    _configurationStatus = FsrsConfigurationStatus.applied;
+    _fittedAt = settings.fittedAt;
   }
 
-  void resetToDefaults() {
+  void resetToDefaults({
+    FsrsConfigurationStatus status = FsrsConfigurationStatus.packageDefaults,
+    DateTime? fittedAt,
+  }) {
     _configure(parameters: defaultParameters, desiredRetention: 0.9);
+    _configurationStatus = status;
+    _fittedAt = fittedAt;
   }
 
   /// Update only the desired retention, keeping the current parameters. Used
