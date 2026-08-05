@@ -34,6 +34,7 @@ class RecallApi implements ReviewReplayGateway {
   static const _cardSelect =
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
       'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg,tags)';
+  static const _duePageSize = 500;
 
   String get device =>
       recallDeviceLabel(isWeb: kIsWeb, targetPlatform: defaultTargetPlatform);
@@ -263,7 +264,9 @@ class RecallApi implements ReviewReplayGateway {
   /// The study queue: every due review/learning card (due <= now), then up to
   /// [newLimit] new cards ordered per [order]. Optionally restricted to one
   /// deck. `random` shuffles the fetched new-card page with a per-(day, deck)
-  /// seed so re-entering the tab mid-day keeps a stable order.
+  /// seed so re-entering the tab mid-day keeps a stable order. Due rows are
+  /// paged in the existing 500-row window so a large backlog is never silently
+  /// truncated before a presentation-only catch-up sort.
   Future<List<ReviewCard>> fetchQueue({
     int? deckId,
     int newLimit = 20,
@@ -299,7 +302,7 @@ class RecallApi implements ReviewReplayGateway {
     // (id asc) and shuffles client-side so the same cards recur across loads.
     final newAscending = order != NewOrder.newestFirst;
     final results = await Future.wait<List<Map<String, dynamic>>>([
-      dueQ.order('due', ascending: true).limit(500),
+      _fetchAllDueRows(dueQ),
       newQ.order('id', ascending: newAscending).limit(remainingNewLimit),
     ]);
     final dueRows = results[0];
@@ -319,6 +322,20 @@ class RecallApi implements ReviewReplayGateway {
       for (final r in dueRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
       ...newCards,
     ];
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchAllDueRows(
+    PostgrestFilterBuilder<List<Map<String, dynamic>>> query,
+  ) async {
+    final rows = <Map<String, dynamic>>[];
+    for (var offset = 0; ; offset += _duePageSize) {
+      final page = await query
+          .order('due', ascending: true)
+          .order('id', ascending: true)
+          .range(offset, offset + _duePageSize - 1);
+      rows.addAll(page);
+      if (page.length < _duePageSize) return rows;
+    }
   }
 
   /// Count distinct cards whose first-ever review was recorded during the
@@ -737,12 +754,13 @@ class RecallApi implements ReviewReplayGateway {
         .toIso8601String();
     final rows = await client
         .from('review_log')
-        .select('guid,rating_at,rating,state_after,due_after')
+        .select('card_id,guid,rating_at,rating,state_after,due_after')
         .gte('rating_at', since)
         .order('rating_at', ascending: true);
     return [
       for (final r in rows)
         ReviewLogEntry(
+          cardId: (r['card_id'] as num?)?.toInt(),
           guid: r['guid'] as String?,
           at: DateTime.parse(r['rating_at'] as String).toLocal(),
           rating: (r['rating'] as num).toInt(),

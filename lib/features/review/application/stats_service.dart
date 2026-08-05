@@ -117,7 +117,7 @@ class StatsService {
 
   /// True retention over [windowDays]: the share of reviews the card was
   /// recalled (rating ≥ Hard, i.e. not Again — Anki's convention), split into
-  /// young/mature cohorts by the scheduled interval where derivable.
+  /// young/mature cohorts by the interval that was tested where derivable.
   static RetentionSummary computeRetention(
     List<ReviewLogEntry> reviews, {
     required DateTime now,
@@ -128,15 +128,46 @@ class StatsService {
     var youngTotal = 0, youngPassed = 0;
     var matureTotal = 0, maturePassed = 0;
 
-    for (final r in reviews) {
+    // The API orders rows, but keeping this transform pure and order-safe makes
+    // it usable with cached or test fixtures too. The previous review remains
+    // available even when it falls outside the retention window.
+    final ordered = List<ReviewLogEntry>.from(reviews)
+      ..sort((a, b) => a.at.compareTo(b.at));
+    final previousAtByCard = <int, DateTime>{};
+    final previousStateAfterByCard = <int, int?>{};
+
+    for (final r in ordered) {
+      final previousAt = r.cardId == null ? null : previousAtByCard[r.cardId!];
+      final previousStateAfter = r.cardId == null
+          ? null
+          : previousStateAfterByCard[r.cardId!];
+      if (r.cardId != null) {
+        previousAtByCard[r.cardId!] = r.at;
+        previousStateAfterByCard[r.cardId!] = r.stateAfter;
+      }
       if (r.at.isBefore(cutoff)) continue;
-      // Legacy rows may not carry state_after. Keep those rows visible, but
-      // exclude learning and relearning presses when the state is known.
-      if (r.stateAfter != null && r.stateAfter != 2) continue;
+      // Legacy rows may not carry state_after. Keep those rows visible. A real
+      // lapse from review enters relearning (state_after=3), so rating 1 with
+      // that state is counted. Without state_before the same row shape is also
+      // possible for Again during relearning. A successful press can graduate
+      // relearning back to state_after=2, which is likewise excluded when the
+      // previous row is available. Rows without a derivable predecessor retain
+      // the documented conservative over-count.
+      final isReviewState =
+          r.stateAfter == null ||
+          (r.stateAfter == 2 && previousStateAfter != 3) ||
+          (r.stateAfter == 3 && r.rating == 1 && previousStateAfter != 3);
+      if (!isReviewState) continue;
       final ok = r.rating >= 2;
       total++;
       if (ok) passed++;
-      final interval = r.intervalDays;
+      // Young/mature is based on the interval the learner had to recall, not
+      // the interval FSRS schedules after this press. Old rows without a card
+      // id fall back to due_after-at for continuity.
+      final testedInterval = previousAt == null
+          ? null
+          : r.at.difference(previousAt).inDays;
+      final interval = testedInterval ?? r.intervalDays;
       if (interval == null) continue;
       if (interval >= matureIntervalDays) {
         matureTotal++;

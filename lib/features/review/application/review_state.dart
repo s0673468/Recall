@@ -1,4 +1,5 @@
 import '../data/models.dart';
+import 'backlog_catch_up.dart';
 
 const Object _unset = Object();
 
@@ -19,6 +20,10 @@ class ReviewState {
   final DateTime? lastReviewedAt;
   final bool reviewActivityKnown;
 
+  /// Presentation-only backlog catch-up metadata. It never represents a
+  /// scheduling write or a second source of truth for due dates.
+  final CatchUpView catchUp;
+
   /// True when the last "Keep going" fetch came back empty — there is nothing
   /// due within the look-ahead window and no unseen cards left, so the done
   /// screen stops offering the button until the next normal load.
@@ -38,6 +43,7 @@ class ReviewState {
     this.authSubmitting = false,
     this.globalDueCount,
     this.globalDueUpdatedAt,
+    this.catchUp = const CatchUpView(),
     this.lastReviewedAt,
     this.reviewActivityKnown = false,
     this.aheadExhausted = false,
@@ -64,6 +70,7 @@ class ReviewState {
     bool? authSubmitting,
     Object? globalDueCount = _unset,
     Object? globalDueUpdatedAt = _unset,
+    CatchUpView? catchUp,
     Object? lastReviewedAt = _unset,
     bool? reviewActivityKnown,
     bool? aheadExhausted,
@@ -88,6 +95,7 @@ class ReviewState {
       globalDueUpdatedAt: identical(globalDueUpdatedAt, _unset)
           ? this.globalDueUpdatedAt
           : globalDueUpdatedAt as DateTime?,
+      catchUp: catchUp ?? this.catchUp,
       lastReviewedAt: identical(lastReviewedAt, _unset)
           ? this.lastReviewedAt
           : lastReviewedAt as DateTime?,

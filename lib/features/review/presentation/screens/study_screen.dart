@@ -5,6 +5,7 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
 
 import '../../../../theme/ui_tokens.dart';
 import '../../../../core/platform/recall_platform.dart';
+import '../../application/backlog_catch_up.dart';
 import '../../application/review_controller.dart';
 import '../../data/local_review_store.dart';
 import '../../data/models.dart';
@@ -55,6 +56,20 @@ class StudyScreen extends StatelessWidget {
         }
         if (s.isDone) {
           final n = s.reviewedThisSession;
+          if (s.catchUp.isActive && s.catchUp.dueCount > 0) {
+            return _Message(
+              icon: Icons.pause_circle_outline,
+              title: 'Catch-up paused',
+              subtitle:
+                  'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session. '
+                  'The daily catch-up limit is ${s.catchUp.dailyCap}. '
+                  'Resume tomorrow.',
+              action: 'Reload',
+              onAction: controller.refresh,
+              secondaryAction: undoable ? 'Undo last rating' : null,
+              onSecondaryAction: undoable ? controller.undo : null,
+            );
+          }
           final reviewedLine = n > 0
               ? 'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session.'
               : 'Nothing due right now.';
@@ -109,6 +124,14 @@ class StudyScreen extends StatelessWidget {
 
         return Column(
           children: [
+            if (s.catchUp.shouldOffer)
+              _CatchUpBanner(
+                plan: s.catchUp,
+                onStart: controller.startCatchUp,
+                onShowAll: controller.showAll,
+              )
+            else if (s.catchUp.isActive)
+              _CatchUpProgress(plan: s.catchUp),
             _Header(
               due: s.dueRemaining,
               neu: s.newRemaining,
@@ -153,6 +176,88 @@ class StudyScreen extends StatelessWidget {
       },
     );
   }
+}
+
+class _CatchUpBanner extends StatelessWidget {
+  final CatchUpView plan;
+  final VoidCallback onStart;
+  final VoidCallback onShowAll;
+
+  const _CatchUpBanner({
+    required this.plan,
+    required this.onStart,
+    required this.onShowAll,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('recall_catch_up_banner'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: UiSpacing.sm),
+      padding: const EdgeInsets.all(UiSpacing.md),
+      decoration: BoxDecoration(
+        color: UiColors.panel,
+        borderRadius: BorderRadius.circular(UiRadii.group),
+        border: Border.all(color: UiColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Large due backlog',
+            style: TextStyle(
+              color: UiColors.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: UiSpacing.xs),
+          Text(
+            '${plan.dueCount} due cards · ${plan.planLine}',
+            style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+          ),
+          const SizedBox(height: UiSpacing.sm),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: onStart,
+                  child: const Text('Start catch-up'),
+                ),
+              ),
+              const SizedBox(width: UiSpacing.sm),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: onShowAll,
+                  child: const Text('Show all'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CatchUpProgress extends StatelessWidget {
+  final CatchUpView plan;
+
+  const _CatchUpProgress({required this.plan});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: UiSpacing.sm),
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        'Catch-up · ${plan.completedToday}/${plan.dailyCap} today · '
+        '${plan.dueCount} due · about ${plan.estimatedDays} '
+        '${plan.estimatedDays == 1 ? 'day' : 'days'} left',
+        style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+      ),
+    ),
+  );
 }
 
 class _Header extends StatelessWidget {

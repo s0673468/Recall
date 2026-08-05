@@ -5,9 +5,11 @@ import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 ReviewLogEntry _entry(
   DateTime at,
   int rating, {
+  int? cardId,
   DateTime? dueAfter,
   int? stateAfter,
 }) => ReviewLogEntry(
+  cardId: cardId,
   at: at,
   rating: rating,
   dueAfter: dueAfter,
@@ -111,20 +113,38 @@ void main() {
       expect(r.overallRate, 0.75);
     });
 
-    test('splits young vs mature by the 21-day interval', () {
+    test('uses the tested interval for young vs mature cohorts', () {
       final now = DateTime(2026, 7, 7, 12);
       final at = now.subtract(const Duration(days: 1));
       final r = StatsService.computeRetention([
-        _entry(at, 3, dueAfter: at.add(const Duration(days: 5))), // young pass
-        _entry(at, 1, dueAfter: at.add(const Duration(days: 3))), // young fail
-        _entry(at, 3, dueAfter: at.add(const Duration(days: 40))), // mature pass
+        // The previous review was 10 days ago, but the new interval is 40d.
+        // Cohort must follow the interval that was tested, not the new one.
+        _entry(
+          at.subtract(const Duration(days: 10)),
+          3,
+          cardId: 1,
+          stateAfter: 1,
+          dueAfter: at.subtract(const Duration(days: 5)),
+        ),
+        _entry(
+          at,
+          3,
+          cardId: 1,
+          dueAfter: at.add(const Duration(days: 40)),
+          stateAfter: 2,
+        ),
+        _entry(
+          at,
+          1,
+          cardId: 2,
+          dueAfter: at.add(const Duration(days: 3)),
+          stateAfter: 2,
+        ), // young fail
       ], now: now);
       expect(r.hasCohorts, isTrue);
       expect(r.youngTotal, 2);
       expect(r.youngPassed, 1);
-      expect(r.matureTotal, 1);
-      expect(r.maturePassed, 1);
-      expect(r.matureRate, 1.0);
+      expect(r.matureTotal, 0);
     });
 
     test('excludes reviews outside the window', () {
@@ -159,7 +179,56 @@ void main() {
         _entry(at, 3, stateAfter: 1), // learning step
         _entry(at, 3, stateAfter: 2), // genuine review
         _entry(at, 3, stateAfter: 3), // relearning step
-        _entry(at, 1, stateAfter: 2), // genuine lapse
+        _entry(at, 1, stateAfter: 3), // genuine lapse (review → relearning)
+      ], now: now);
+
+      expect(r.total, 2);
+      expect(r.passed, 1);
+    });
+
+    test('counts real review lapses whose post-state is relearning', () {
+      final now = DateTime(2026, 7, 7, 12);
+      final reviews = [
+        for (var i = 0; i < 85; i++) _entry(now, 3, stateAfter: 2),
+        for (var i = 0; i < 15; i++) _entry(now, 1, stateAfter: 3),
+      ];
+      final r = StatsService.computeRetention(reviews, now: now);
+
+      expect(r.total, 100);
+      expect(r.passed, 85);
+      expect(r.overallRate, closeTo(0.85, 1e-9));
+    });
+
+    test('excludes repeated Again presses during relearning', () {
+      final now = DateTime(2026, 7, 7, 12);
+      final at = now.subtract(const Duration(days: 1));
+      final r = StatsService.computeRetention([
+        _entry(
+          at.subtract(const Duration(days: 2)),
+          3,
+          cardId: 77,
+          stateAfter: 2,
+        ),
+        _entry(at, 1, cardId: 77, stateAfter: 3),
+        _entry(now, 1, cardId: 77, stateAfter: 3),
+      ], now: now);
+
+      expect(r.total, 2);
+      expect(r.passed, 1);
+    });
+
+    test('excludes successful relearning presses from retention', () {
+      final now = DateTime(2026, 7, 7, 12);
+      final at = now.subtract(const Duration(days: 1));
+      final r = StatsService.computeRetention([
+        _entry(
+          at.subtract(const Duration(days: 2)),
+          3,
+          cardId: 78,
+          stateAfter: 2,
+        ),
+        _entry(at, 1, cardId: 78, stateAfter: 3),
+        _entry(now, 3, cardId: 78, stateAfter: 2),
       ], now: now);
 
       expect(r.total, 2);
