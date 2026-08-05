@@ -16,6 +16,7 @@ import '../data/recall_api.dart';
 import '../domain/stats_models.dart';
 import 'backlog_catch_up.dart';
 import 'fsrs_engine.dart';
+import 'stats_service.dart';
 import 'review_haptics.dart';
 import 'review_state.dart';
 
@@ -118,6 +119,11 @@ class ReviewController extends ChangeNotifier {
   ReviewState get state => _state;
 
   User? get currentUser => api.currentUser;
+
+  /// Changes whenever a same-day local remediation item is enqueued. UI
+  /// surfaces use this to refresh their disposable queue after a rating.
+  int _remediationRevision = 0;
+  int get remediationRevision => _remediationRevision;
 
   void _set(ReviewState next) {
     // Every state transition funnels through here, so this is the one spot
@@ -832,6 +838,9 @@ class ReviewController extends ChangeNotifier {
         ? null
         : clock().difference(shownAt).inMilliseconds.clamp(0, maxElapsedMs);
     final entry = api.reviewEntry(card, outcome, elapsedMs: elapsedMs);
+    final remediationNodeIds = entry['lapsed'] == true
+        ? StatsService.nodeTags(card.tags)
+        : const <String>[];
     // Snapshot everything undo needs BEFORE the rating takes effect. The
     // queue's ReviewCard still holds the pre-rating scheduling state (rating
     // never mutates it), so the card itself is the snapshot.
@@ -850,6 +859,16 @@ class ReviewController extends ChangeNotifier {
     // card so the review can never be lost); it also returns the new pending
     // count so advancing doesn't re-read + re-decode the whole outbox.
     final pending = await store.enqueueReview(entry);
+    if (remediationNodeIds.isNotEmpty) {
+      try {
+        await store.enqueueRemediation(remediationNodeIds, now: clock());
+        _remediationRevision++;
+      } catch (error) {
+        // The review is durable and must still advance if the disposable
+        // cache is unavailable; remediation can be retried by a later lapse.
+        debugPrint('Recall: remediation enqueue skipped (non-fatal): $error');
+      }
+    }
     _undo = undo; // replaces any previous record — undo is single-level
     final catchUp = await _recordCatchUpReview(card);
     haptics.rating();

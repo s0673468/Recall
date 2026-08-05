@@ -7,12 +7,17 @@ import '../../../../theme/ui_tokens.dart';
 import '../../../../core/platform/recall_platform.dart';
 import '../../application/backlog_catch_up.dart';
 import '../../application/review_controller.dart';
+import '../../data/local_review_store.dart';
 import '../../data/models.dart';
+import '../../data/recall_api.dart';
 import '../widgets/card_face.dart';
 import '../widgets/rating_bar.dart';
+import '../widgets/remediation_rows.dart';
 
 class StudyScreen extends StatelessWidget {
   final ReviewController controller;
+  final RecallApi? api;
+  final LocalReviewStore? store;
 
   /// Opens the settings screen from the header gear. Null hides the gear.
   final VoidCallback? onOpenSettings;
@@ -21,6 +26,8 @@ class StudyScreen extends StatelessWidget {
   const StudyScreen({
     super.key,
     required this.controller,
+    this.api,
+    this.store,
     this.onOpenSettings,
     this.nativeIos,
   });
@@ -75,20 +82,36 @@ class StudyScreen extends StatelessWidget {
               ? '$reviewedLine Bonus cards need a connection.'
               : reviewedLine;
           final canKeepGoing = !s.aheadExhausted && !s.offline;
-          return _Message(
-            icon: Icons.check_circle_outline,
-            title: 'All caught up',
-            subtitle: subtitle,
-            action: canKeepGoing ? 'Keep going' : 'Reload',
-            onAction: canKeepGoing ? controller.keepGoing : controller.refresh,
-            // A mis-tap on the session's last card lands here — keep it
-            // recoverable (undo survives until the queue is reloaded).
-            secondaryAction: undoable
-                ? 'Undo last rating'
-                : (canKeepGoing ? 'Reload' : null),
-            onSecondaryAction: undoable
-                ? controller.undo
-                : (canKeepGoing ? controller.refresh : null),
+          return ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(UiSpacing.lg),
+            children: [
+              _Message(
+                icon: Icons.check_circle_outline,
+                title: 'All caught up',
+                subtitle: subtitle,
+                action: canKeepGoing ? 'Keep going' : 'Reload',
+                onAction: canKeepGoing
+                    ? controller.keepGoing
+                    : controller.refresh,
+                // A mis-tap on the session's last card lands here — keep it
+                // recoverable (undo survives until the queue is reloaded).
+                secondaryAction: undoable
+                    ? 'Undo last rating'
+                    : (canKeepGoing ? 'Reload' : null),
+                onSecondaryAction: undoable
+                    ? controller.undo
+                    : (canKeepGoing ? controller.refresh : null),
+              ),
+              if (api != null && store != null) ...[
+                const SizedBox(height: UiSpacing.lg),
+                RemediationSection(
+                  api: api!,
+                  store: store!,
+                  revision: controller.remediationRevision,
+                ),
+              ],
+            ],
           );
         }
 
