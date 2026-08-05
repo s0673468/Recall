@@ -120,6 +120,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final List<Widget> _pages = [
     StudyScreen(
       controller: widget.controller,
+      api: widget.api,
+      store: widget.controller.store,
       onOpenSettings: _openSettings,
       nativeIos: _nativeIos,
     ),
@@ -133,7 +135,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       },
     ),
     StatsScreen(key: _statsKey, api: widget.api, controller: widget.controller),
-    ReadScreen(key: _readKey, api: widget.api),
+    ReadScreen(key: _readKey, api: widget.api, store: widget.controller.store),
   ];
 
   void _selectIndex(int index) {

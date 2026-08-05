@@ -27,7 +27,9 @@ class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
+  static const remediationKey = 'recall_remediation_v1';
   static const installIdKey = 'recall_install_id_v1';
+  static const maxDailyRemediations = 3;
 
   Future<void> _outboxTail = Future.value();
   Future<SharedPreferences>? _prefsFuture;
@@ -262,6 +264,78 @@ class LocalReviewStore {
     });
   }
 
+  /// Read the local, disposable primer-remediation queue for [now]'s local
+  /// calendar day. Entries from an earlier day expire when the app next opens;
+  /// the queue is a same-day nudge, not durable user history.
+  Future<List<LocalRemediationItem>> remediationQueue({DateTime? now}) {
+    final today = _dayKey(now ?? DateTime.now());
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final current = _readRemediations(prefs)
+          .where((item) => item.dayKey == today)
+          .take(maxDailyRemediations)
+          .toList();
+      final all = _readRemediations(prefs);
+      if (current.length != all.length) {
+        await _writeList(prefs, remediationKey, [
+          for (final item in current) item.toJson(),
+        ]);
+      }
+      return current;
+    });
+  }
+
+  /// Add unique same-day concept ids, keeping the oldest three. This is a
+  /// local cache only: nothing here is sent to Supabase or the review outbox.
+  Future<List<LocalRemediationItem>> enqueueRemediation(
+    Iterable<String> nodeIds, {
+    DateTime? now,
+  }) {
+    final queuedAt = now ?? DateTime.now();
+    final today = _dayKey(queuedAt);
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final current = _readRemediations(prefs)
+          .where((item) => item.dayKey == today)
+          .take(maxDailyRemediations)
+          .toList();
+      final seen = {for (final item in current) item.nodeId};
+      for (final nodeId in nodeIds) {
+        final normalized = nodeId.trim();
+        if (normalized.isEmpty || normalized == 'none') continue;
+        if (current.length >= maxDailyRemediations) break;
+        if (seen.add(normalized)) {
+          current.add(
+            LocalRemediationItem(nodeId: normalized, queuedAt: queuedAt),
+          );
+        }
+      }
+      await _writeList(prefs, remediationKey, [
+        for (final item in current) item.toJson(),
+      ]);
+      return current;
+    });
+  }
+
+  /// Mark one primer remediation as read. Returns false when it was already
+  /// gone, which makes repeated route completions harmless.
+  Future<bool> completeRemediation(String nodeId, {DateTime? now}) {
+    final today = _dayKey(now ?? DateTime.now());
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final current = _readRemediations(prefs)
+          .where((item) => item.dayKey == today)
+          .take(maxDailyRemediations)
+          .toList();
+      final before = current.length;
+      current.removeWhere((item) => item.nodeId == nodeId);
+      await _writeList(prefs, remediationKey, [
+        for (final item in current) item.toJson(),
+      ]);
+      return current.length != before;
+    });
+  }
+
   /// Drop the cached snapshot + outboxes (called on sign-out so the next user
   /// on a shared browser can't see the previous user's cards/reviews/flags).
   Future<void> clear() {
@@ -270,6 +344,7 @@ class LocalReviewStore {
       await prefs.remove(_snapshotKey);
       await prefs.remove(_outboxKey);
       await prefs.remove(_flagOutboxKey);
+      await prefs.remove(remediationKey);
     });
   }
 
@@ -292,6 +367,12 @@ class LocalReviewStore {
     }
   }
 
+  List<LocalRemediationItem> _readRemediations(SharedPreferences prefs) => [
+    for (final entry in _readList(prefs, remediationKey))
+      if (entry['node_id'] is String && entry['queued_at'] is String)
+        LocalRemediationItem.fromJson(entry),
+  ];
+
   Future<void> _writeList(
     SharedPreferences prefs,
     String key,
@@ -302,6 +383,35 @@ class LocalReviewStore {
       throw LocalOutboxWriteException(key);
     }
   }
+}
+
+/// One same-day local primer-remediation item. It has no server identity and
+/// is intentionally disposable; removing it is the completion state.
+class LocalRemediationItem {
+  final String nodeId;
+  final DateTime queuedAt;
+
+  const LocalRemediationItem({required this.nodeId, required this.queuedAt});
+
+  String get dayKey => _dayKey(queuedAt);
+
+  factory LocalRemediationItem.fromJson(Map<String, dynamic> json) =>
+      LocalRemediationItem(
+        nodeId: json['node_id'] as String,
+        queuedAt: DateTime.parse(json['queued_at'] as String),
+      );
+
+  Map<String, dynamic> toJson() => {
+    'node_id': nodeId,
+    'queued_at': queuedAt.toUtc().toIso8601String(),
+  };
+}
+
+String _dayKey(DateTime value) {
+  final local = value.toLocal();
+  final month = local.month.toString().padLeft(2, '0');
+  final day = local.day.toString().padLeft(2, '0');
+  return '${local.year}-$month-$day';
 }
 
 class LocalOutboxCorruptException implements Exception {

@@ -28,7 +28,7 @@ class RecallApi implements ReviewReplayGateway {
 
   static const _cardSelect =
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
-      'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg)';
+      'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg,tags)';
 
   String get device =>
       recallDeviceLabel(isWeb: kIsWeb, targetPlatform: defaultTargetPlatform);
