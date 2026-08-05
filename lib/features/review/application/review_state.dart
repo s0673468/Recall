@@ -16,6 +16,8 @@ class ReviewState {
   final bool authSubmitting;
   final int? globalDueCount;
   final DateTime? globalDueUpdatedAt;
+  final DateTime? lastReviewedAt;
+  final bool reviewActivityKnown;
 
   /// True when the last "Keep going" fetch came back empty — there is nothing
   /// due within the look-ahead window and no unseen cards left, so the done
@@ -36,6 +38,8 @@ class ReviewState {
     this.authSubmitting = false,
     this.globalDueCount,
     this.globalDueUpdatedAt,
+    this.lastReviewedAt,
+    this.reviewActivityKnown = false,
     this.aheadExhausted = false,
   });
 
@@ -60,6 +64,8 @@ class ReviewState {
     bool? authSubmitting,
     Object? globalDueCount = _unset,
     Object? globalDueUpdatedAt = _unset,
+    Object? lastReviewedAt = _unset,
+    bool? reviewActivityKnown,
     bool? aheadExhausted,
   }) {
     return ReviewState(
@@ -82,6 +88,10 @@ class ReviewState {
       globalDueUpdatedAt: identical(globalDueUpdatedAt, _unset)
           ? this.globalDueUpdatedAt
           : globalDueUpdatedAt as DateTime?,
+      lastReviewedAt: identical(lastReviewedAt, _unset)
+          ? this.lastReviewedAt
+          : lastReviewedAt as DateTime?,
+      reviewActivityKnown: reviewActivityKnown ?? this.reviewActivityKnown,
       aheadExhausted: aheadExhausted ?? this.aheadExhausted,
     );
   }
