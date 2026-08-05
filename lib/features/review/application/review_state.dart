@@ -17,6 +17,8 @@ class ReviewState {
   final bool authSubmitting;
   final int? globalDueCount;
   final DateTime? globalDueUpdatedAt;
+  final DateTime? lastReviewedAt;
+  final bool reviewActivityKnown;
 
   /// Presentation-only backlog catch-up metadata. It never represents a
   /// scheduling write or a second source of truth for due dates.
@@ -42,6 +44,8 @@ class ReviewState {
     this.globalDueCount,
     this.globalDueUpdatedAt,
     this.catchUp = const CatchUpView(),
+    this.lastReviewedAt,
+    this.reviewActivityKnown = false,
     this.aheadExhausted = false,
   });
 
@@ -67,6 +71,8 @@ class ReviewState {
     Object? globalDueCount = _unset,
     Object? globalDueUpdatedAt = _unset,
     CatchUpView? catchUp,
+    Object? lastReviewedAt = _unset,
+    bool? reviewActivityKnown,
     bool? aheadExhausted,
   }) {
     return ReviewState(
@@ -90,6 +96,10 @@ class ReviewState {
           ? this.globalDueUpdatedAt
           : globalDueUpdatedAt as DateTime?,
       catchUp: catchUp ?? this.catchUp,
+      lastReviewedAt: identical(lastReviewedAt, _unset)
+          ? this.lastReviewedAt
+          : lastReviewedAt as DateTime?,
+      reviewActivityKnown: reviewActivityKnown ?? this.reviewActivityKnown,
       aheadExhausted: aheadExhausted ?? this.aheadExhausted,
     );
   }
