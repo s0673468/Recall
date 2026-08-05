@@ -16,6 +16,8 @@ import 'stats_service.dart';
 import 'review_haptics.dart';
 import 'review_state.dart';
 
+typedef ReviewActivitySnapshot = ({bool available, DateTime? latest});
+
 /// Owns auth + the study session: gates on the signed-in user, loads the queue
 /// (cloud, with an offline cache fallback), flips cards, schedules ratings with
 /// FSRS, and persists each review through a durable outbox so a review done
@@ -49,6 +51,7 @@ class ReviewController extends ChangeNotifier {
   final Future<void> Function()? afterSignOut;
   final Future<void> Function()? afterSignIn;
   StreamSubscription<AuthState>? _authSub;
+  String? _activeUserId;
 
   ReviewController({
     required this.api,
@@ -138,19 +141,32 @@ class ReviewController extends ChangeNotifier {
   // --- Auth ---
 
   void _onAuthChanged(AuthState _) {
-    if (api.currentUser == null) {
+    final user = api.currentUser;
+    if (user == null) {
       // Signed out — drop the session state and show the login gate.
+      _activeUserId = null;
       _invalidateActiveSession();
       engine.resetToDefaults();
       _undo = null; // the session (and its undo snapshot) is gone
       _set(const ReviewState(loading: false));
-    } else if (_state.queue.isEmpty && !_state.loading) {
-      // Signed in (or restored session) — load the queue.
-      unawaited(_afterSignIn());
-      unawaited(_loadSafely());
     } else {
-      unawaited(_afterSignIn());
-      notifyListeners();
+      // A provider can switch accounts without emitting an intermediate local
+      // sign-out. Do not let the old queue, due count, or review activity drive
+      // the new owner's reminder while that owner's data is loading.
+      if (_activeUserId != null && _activeUserId != user.id) {
+        _invalidateActiveSession();
+        engine.resetToDefaults();
+        _set(const ReviewState(loading: false));
+      }
+      _activeUserId = user.id;
+      if (_state.queue.isEmpty && !_state.loading) {
+        // Signed in (or restored session) — load the queue.
+        unawaited(_afterSignIn());
+        unawaited(_loadSafely());
+      } else {
+        unawaited(_afterSignIn());
+        notifyListeners();
+      }
     }
   }
 
@@ -285,6 +301,7 @@ class ReviewController extends ChangeNotifier {
         final pending = await store.outbox();
         if (loadToken != _loadSequence) return; // superseded while reading disk
         final queue = _withoutPendingReviews(snapshot.queue, pending);
+        final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
           _state.copyWith(
             // If every cached card is still pending sync, keep the loading
@@ -298,6 +315,12 @@ class ReviewController extends ChangeNotifier {
             pendingSync: pending.length,
             globalDueCount: snapshot.globalDueCount,
             globalDueUpdatedAt: snapshot.globalDueUpdatedAt,
+            lastReviewedAt: _latestReviewAt(
+              _state.lastReviewedAt,
+              pendingLastReviewedAt,
+            ),
+            reviewActivityKnown:
+                _state.reviewActivityKnown || pendingLastReviewedAt != null,
           ),
         );
         snapshotPainted = true;
@@ -326,10 +349,12 @@ class ReviewController extends ChangeNotifier {
           order: active.newOrder,
         ),
         _fetchGlobalDueSnapshot(),
+        _fetchReviewActivity(),
       ]);
       final decks = results[1] as List<DeckRow>;
       final fetchedQueue = results[2] as List<ReviewCard>;
       final fetchedDue = results[3] as ({int count, DateTime updatedAt})?;
+      final fetchedActivity = results[4] as ReviewActivitySnapshot;
       // A partial flush is deliberately swallowed by _flushOnce. Re-read the
       // outbox after that attempt and never serve a card whose review remains
       // queued locally, even if the server fetch still returns it.
@@ -337,6 +362,16 @@ class ReviewController extends ChangeNotifier {
       if (loadToken != _loadSequence) return; // superseded by a newer load
       final queue = _withoutPendingReviews(fetchedQueue, pending);
       final pendingSync = pending.length;
+      final pendingLastReviewedAt = _latestPendingReviewAt(pending);
+      final lastReviewedAt = _latestReviewAt(
+        _state.lastReviewedAt,
+        fetchedActivity.available ? fetchedActivity.latest : null,
+        pendingLastReviewedAt,
+      );
+      final reviewActivityKnown =
+          _state.reviewActivityKnown ||
+          fetchedActivity.available ||
+          pendingLastReviewedAt != null;
       final sessionUnchanged = _interactionGeneration == generationAtFetch;
       final globalDueCount = sessionUnchanged && fetchedDue != null
           ? fetchedDue.count
@@ -357,6 +392,8 @@ class ReviewController extends ChangeNotifier {
             pendingSync: pendingSync,
             globalDueCount: globalDueCount,
             globalDueUpdatedAt: globalDueUpdatedAt,
+            lastReviewedAt: lastReviewedAt,
+            reviewActivityKnown: reviewActivityKnown,
           ),
         );
       } else {
@@ -371,6 +408,8 @@ class ReviewController extends ChangeNotifier {
             pendingSync: pendingSync,
             globalDueCount: globalDueCount,
             globalDueUpdatedAt: globalDueUpdatedAt,
+            lastReviewedAt: lastReviewedAt,
+            reviewActivityKnown: reviewActivityKnown,
           ),
         );
       }
@@ -405,6 +444,7 @@ class ReviewController extends ChangeNotifier {
       if (snapshot != null) {
         final pending = await store.outbox();
         if (loadToken != _loadSequence) return; // superseded while reading disk
+        final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
           _state.copyWith(
             loading: false,
@@ -417,6 +457,12 @@ class ReviewController extends ChangeNotifier {
             pendingSync: pending.length,
             globalDueCount: snapshot.globalDueCount,
             globalDueUpdatedAt: snapshot.globalDueUpdatedAt,
+            lastReviewedAt: _latestReviewAt(
+              _state.lastReviewedAt,
+              pendingLastReviewedAt,
+            ),
+            reviewActivityKnown:
+                _state.reviewActivityKnown || pendingLastReviewedAt != null,
           ),
         );
       } else {
@@ -439,6 +485,33 @@ class ReviewController extends ChangeNotifier {
       for (final card in queue)
         if (!pendingCardIds.contains(card.id)) card,
     ];
+  }
+
+  DateTime? _latestPendingReviewAt(Iterable<Map<String, dynamic>> pending) {
+    DateTime? latest;
+    for (final entry in pending) {
+      final raw = entry['last_review'];
+      if (raw is! String) continue;
+      final at = DateTime.tryParse(raw);
+      if (at == null || (latest != null && !at.isAfter(latest))) continue;
+      latest = at;
+    }
+    return latest;
+  }
+
+  DateTime? _latestReviewAt(
+    DateTime? first, [
+    DateTime? second,
+    DateTime? third,
+  ]) {
+    DateTime? latest;
+    for (final candidate in [first, second, third]) {
+      if (candidate == null || (latest != null && !candidate.isAfter(latest))) {
+        continue;
+      }
+      latest = candidate;
+    }
+    return latest;
   }
 
   Future<void> _saveSnapshotQuietly({
@@ -477,6 +550,26 @@ class ReviewController extends ChangeNotifier {
     } catch (error) {
       debugPrint('Recall: widget due count unavailable (non-fatal): $error');
       return null;
+    }
+  }
+
+  /// Review activity is a safe aggregate signal: only the most recent review
+  /// timestamp crosses into reminder state, never card content or private text.
+  /// A two-day window covers every local calendar day even around UTC offsets
+  /// and daylight-saving transitions; the API returns local timestamps for the
+  /// day comparison performed by the reminder controller.
+  Future<ReviewActivitySnapshot> _fetchReviewActivity() async {
+    try {
+      final reviews = await api.fetchReviewLog(days: 2);
+      DateTime? latest;
+      for (final review in reviews) {
+        if (latest == null || review.at.isAfter(latest)) latest = review.at;
+      }
+      return (available: true, latest: latest?.toLocal());
+    } catch (_) {
+      // Reminder eligibility fails closed when activity is unavailable. The
+      // queue itself remains usable, and a later foreground refresh retries.
+      return (available: false, latest: null);
     }
   }
 
@@ -647,7 +740,8 @@ class ReviewController extends ChangeNotifier {
     if (card == null || !_state.showBack || _undoInFlight) return;
 
     _interactionGeneration++;
-    final outcome = engine.review(card, rating);
+    final reviewedAt = clock().toUtc();
+    final outcome = engine.review(card, rating, now: reviewedAt);
     final shownAt = _cardShownAt;
     final elapsedMs = shownAt == null
         ? null
@@ -663,6 +757,8 @@ class ReviewController extends ChangeNotifier {
       clientId: await store.newEventId(),
       card: card,
       index: _state.index,
+      previousLastReviewedAt: _state.lastReviewedAt,
+      previousReviewActivityKnown: _state.reviewActivityKnown,
     );
     // Two jobs, both of which need this id to be unique forever: it is how an
     // undo finds its own entry in the durable outbox, AND the `client_event_id`
@@ -691,6 +787,8 @@ class ReviewController extends ChangeNotifier {
         index: _state.index + 1,
         showBack: false,
         reviewedThisSession: _state.reviewedThisSession + 1,
+        lastReviewedAt: _latestReviewAt(_state.lastReviewedAt, reviewedAt),
+        reviewActivityKnown: true,
         pendingSync: pending,
         globalDueCount: !_countsTowardsGlobalDue(card) || globalDueCount == null
             ? globalDueCount
@@ -821,6 +919,8 @@ class ReviewController extends ChangeNotifier {
               !_countsTowardsGlobalDue(u.card) || globalDueCount == null
               ? globalDueCount
               : globalDueCount + 1,
+          lastReviewedAt: u.previousLastReviewedAt,
+          reviewActivityKnown: u.previousReviewActivityKnown,
           // Read after every await above, so the badge can't be restored to
           // a count captured before a concurrent flush updated it.
           pendingSync: pendingAfterRemove ?? _state.pendingSync,
@@ -990,6 +1090,8 @@ class _UndoRecord {
   final String clientId;
   final ReviewCard card;
   final int index;
+  final DateTime? previousLastReviewedAt;
+  final bool previousReviewActivityKnown;
   bool flushed = false;
   int? reviewLogId;
 
@@ -997,5 +1099,7 @@ class _UndoRecord {
     required this.clientId,
     required this.card,
     required this.index,
+    required this.previousLastReviewedAt,
+    required this.previousReviewActivityKnown,
   });
 }
