@@ -154,6 +154,10 @@ class ReviewCard {
   /// forces it to true).
   final bool cloudSeen;
 
+  /// Raw note tags used to connect a lapsed card to a concept primer. Tags
+  /// stay local with the card snapshot and are never written by review flow.
+  final String? tags;
+
   /// Server-side rendered SVG for display (block) LaTeX the client can't render
   /// inline. Empty in practice (the pipeline never populated it), so treated as
   /// an optional fallback — see [CardFace]. Extracted to raw `<svg …>` markup.
@@ -174,6 +178,7 @@ class ReviewCard {
     required this.lapses,
     required this.lastReview,
     this.cloudSeen = false,
+    this.tags,
     this.latexSvg,
   });
 
@@ -196,6 +201,7 @@ class ReviewCard {
       lapses: (m['lapses'] as num?)?.toInt() ?? 0,
       lastReview: _parseTs(m['last_review']),
       cloudSeen: (m['cloud_seen'] as bool?) ?? false,
+      tags: note['tags'] as String?,
       latexSvg: _svgString(note['latex_svg']),
     );
   }
@@ -216,6 +222,7 @@ class ReviewCard {
     'lapses': lapses,
     'last_review': lastReview?.toIso8601String(),
     'cloud_seen': cloudSeen,
+    if (tags != null) 'tags': tags,
     if (latexSvg != null) 'latex_svg': latexSvg,
   };
 
@@ -235,6 +242,7 @@ class ReviewCard {
     lastReview: _parseTs(m['last_review']),
     // Tolerant: snapshots written before these fields simply omit the keys.
     cloudSeen: (m['cloud_seen'] as bool?) ?? false,
+    tags: m['tags'] as String?,
     latexSvg: m['latex_svg'] as String?,
   );
 }
