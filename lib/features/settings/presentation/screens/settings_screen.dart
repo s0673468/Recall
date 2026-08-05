@@ -4,6 +4,8 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show SectionCard, SignOutButton, SignOutButtonVariant;
 
 import '../../../../theme/ui_tokens.dart';
+import '../../../review/application/fsrs_engine.dart';
+import '../../../review/data/models.dart';
 import '../../../review/application/review_controller.dart';
 import '../../../reminders/application/study_reminder_controller.dart';
 import '../../application/recall_prefs_controller.dart';
@@ -28,6 +30,55 @@ class SettingsScreen extends StatefulWidget {
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+/// The compact scheduler readout used in Settings. It reports the effective
+/// configuration, not merely the last row seen: suggested parameters remain
+/// visible while the engine continues to use package defaults.
+class FsrsOptimizerStatusLine extends StatelessWidget {
+  final FsrsEngine engine;
+  final Listenable? changes;
+
+  const FsrsOptimizerStatusLine({
+    super.key,
+    required this.engine,
+    this.changes,
+  });
+
+  String get label => switch (engine.configurationStatus) {
+    FsrsConfigurationStatus.packageDefaults =>
+      'Scheduler: package defaults (21 weights)',
+    FsrsConfigurationStatus.suggested =>
+      'Scheduler: suggested parameters not applied (using package defaults)',
+    FsrsConfigurationStatus.applied =>
+      'Scheduler: personal parameters (${_fittedLabel()})',
+  };
+
+  String _fittedLabel() {
+    final fittedAt = engine.fittedAt;
+    if (fittedAt == null) return '21 weights';
+    return '21 weights, fitted ${fittedAt.toIso8601String().substring(0, 10)}';
+  }
+
+  Widget _line() => ListTile(
+    contentPadding: EdgeInsets.zero,
+    dense: true,
+    leading: const Icon(Icons.tune, color: UiColors.textMuted),
+    title: Text(
+      label,
+      style: const TextStyle(color: UiColors.textSecondary, fontSize: 13),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final changes = this.changes;
+    if (changes == null) return _line();
+    return ListenableBuilder(
+      listenable: changes,
+      builder: (context, _) => _line(),
+    );
+  }
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
@@ -87,6 +138,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          FsrsOptimizerStatusLine(
+            engine: widget.controller.engine,
+            changes: widget.controller,
+          ),
+          const Divider(color: UiColors.border, height: UiSpacing.md),
           Row(
             children: [
               const Text(

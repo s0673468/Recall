@@ -14,11 +14,92 @@ class DeckRow {
   factory DeckRow.fromJson(Map<String, dynamic> m) => DeckRow.fromMap(m);
 }
 
+/// The lifecycle marker carried by an optional DIR-1b optimizer result.
+///
+/// Older `fsrs_params` rows have no marker and are treated as applied for
+/// backwards compatibility. A suggested result is intentionally not applied
+/// to the scheduler; it remains visible so the user can tell why defaults are
+/// still active.
+enum FsrsConfigurationStatus {
+  packageDefaults,
+  suggested,
+  applied;
+
+  static FsrsConfigurationStatus? fromWire(Object? value) => switch (value) {
+    null => applied,
+    'suggested' => suggested,
+    'approved' || 'applied' => applied,
+    _ => null,
+  };
+}
+
+/// The smallest app-side representation of the DIR-1a report JSON contract.
+/// This model owns validation for the client-side apply seam; it does not fit
+/// or transform an optimizer vector.
+class FsrsOptimizerResult {
+  static const parameterCount = 21;
+  static const minDesiredRetention = 0.70;
+  static const maxDesiredRetention = 0.97;
+
+  final List<double> parameters;
+  final double desiredRetention;
+  final DateTime? fittedAt;
+
+  const FsrsOptimizerResult({
+    required this.parameters,
+    required this.desiredRetention,
+    this.fittedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'parameters': parameters,
+    'desired_retention': desiredRetention,
+  };
+
+  /// Parse the strict report contract used by the guarded apply path.
+  static FsrsOptimizerResult? tryParse(Object? value) {
+    if (value is! Map) return null;
+    final data = Map<String, dynamic>.from(value);
+    final rawParameters = data['parameters'];
+    final rawRetention = data['desired_retention'];
+    if (rawParameters is! List ||
+        rawParameters.length != parameterCount ||
+        rawRetention is! num) {
+      return null;
+    }
+    final parameters = <double>[];
+    for (final raw in rawParameters) {
+      if (raw is! num || !raw.toDouble().isFinite) return null;
+      parameters.add(raw.toDouble());
+    }
+    final desiredRetention = rawRetention.toDouble();
+    if (!desiredRetention.isFinite ||
+        desiredRetention < minDesiredRetention ||
+        desiredRetention > maxDesiredRetention) {
+      return null;
+    }
+    return FsrsOptimizerResult(
+      parameters: parameters,
+      desiredRetention: desiredRetention,
+      fittedAt: _parseDate(data['fitted_at'] ?? data['fit_date']),
+    );
+  }
+}
+
 class FsrsSettings {
   final List<double> parameters;
   final double desiredRetention;
+  final FsrsConfigurationStatus optimizerStatus;
+  final DateTime? fittedAt;
+  final DateTime? appliedAt;
 
-  const FsrsSettings({required this.parameters, this.desiredRetention = 0.9});
+  const FsrsSettings({
+    required this.parameters,
+    this.desiredRetention = 0.9,
+    this.optimizerStatus = FsrsConfigurationStatus.applied,
+    this.fittedAt,
+    this.appliedAt,
+  });
 
   static FsrsSettings? tryParse(Object? value) {
     if (value is! Map) return null;
@@ -34,12 +115,22 @@ class FsrsSettings {
       if (v is! num) return null;
       parameters.add(v.toDouble());
     }
+    final optimizerStatus = FsrsConfigurationStatus.fromWire(
+      data['optimizer_status'] ?? data['status'],
+    );
+    if (optimizerStatus == null) return null;
     return FsrsSettings(
       parameters: parameters,
       desiredRetention: rawRetention is num ? rawRetention.toDouble() : 0.9,
+      optimizerStatus: optimizerStatus,
+      fittedAt: _parseDate(data['fitted_at'] ?? data['fit_date']),
+      appliedAt: _parseDate(data['applied_at']),
     );
   }
 }
+
+DateTime? _parseDate(Object? value) =>
+    value is String ? DateTime.tryParse(value)?.toUtc() : null;
 
 /// A card joined to its note content. `state`: 0=new 1=learning 2=review
 /// 3=relearning (Anki/FSRS convention).

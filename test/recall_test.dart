@@ -365,6 +365,14 @@ class _FakeRecallApi implements RecallApi {
   Future<FsrsSettings?> fetchFsrsSettings() async => fsrsSettings;
 
   @override
+  Future<FsrsSettings> applyFsrsOptimizerResult(
+    Object result, {
+    bool approved = false,
+    String? confirmation,
+    DateTime? appliedAt,
+  }) => throw UnimplementedError();
+
+  @override
   Future<Map<String, dynamic>?> fetchRecallPrefs() async => recallPrefsRow;
 
   @override
