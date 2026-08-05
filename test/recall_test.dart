@@ -10,10 +10,12 @@ import 'package:supabase_flutter/supabase_flutter.dart'
     show AuthChangeEvent, AuthState, SupabaseClient, User;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:health_anki_flutter/features/review/application/backlog_catch_up.dart';
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
 import 'package:health_anki_flutter/features/review/application/review_haptics.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
+import 'package:health_anki_flutter/features/review/data/catch_up_state.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 import 'package:health_anki_flutter/features/review/data/review_replay.dart';
@@ -385,6 +387,7 @@ class _FakeRecallApi implements RecallApi {
   @override
   Future<int?> applyReview(Map<String, dynamic> e) async {
     await beforeApplyReview?.call();
+    if (failApplyReview) throw StateError('review sync failed');
     final cardId = (e['card_id'] as num).toInt();
     final eventId = e['client_id']?.toString();
     final existing = eventId != null
@@ -432,6 +435,10 @@ class _FakeRecallApi implements RecallApi {
   /// When true, the card merge commits but appending the log row throws —
   /// the partial-apply window between applyReview's two writes.
   bool failLogInsert = false;
+
+  /// When true, a review stays queued so load() must filter it from the
+  /// presentation queue even though the fake server still returns the card.
+  bool failApplyReview = false;
 
   /// Awaited inside applyFlag — lets tests hold the flag flush open.
   Future<void> Function()? beforeApplyFlag;
@@ -3563,6 +3570,181 @@ void main() {
       expect((await store.flagOutbox()).single['card_id'], 703);
     });
   });
+
+  group('ReviewController catch-up', () {
+    setUp(() => SharedPreferences.setMockInitialValues({}));
+
+    test('offers opt-in and opt-out without scheduling writes', () async {
+      final api = _FakeRecallApi(_catchUpQueue(82));
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+      expect(controller.state.catchUp.shouldOffer, isTrue);
+      expect(api.applied, isEmpty);
+      final ordinaryIds = controller.state.queue
+          .map((card) => card.id)
+          .toList();
+
+      await controller.startCatchUp();
+      expect(controller.state.catchUp.isActive, isTrue);
+      expect(controller.state.queue, hasLength(BacklogCatchUp.dailyCap));
+      expect(api.applied, isEmpty);
+
+      await controller.showAll();
+      expect(controller.state.catchUp.isDismissed, isTrue);
+      expect(controller.state.queue.map((card) => card.id), ordinaryIds);
+      expect(api.applied, isEmpty);
+    });
+
+    test(
+      'filters a pending review before catch-up eligibility and ordering',
+      () async {
+        final queue = _catchUpQueue(82);
+        final api = _FakeRecallApi(queue)..failApplyReview = true;
+        final store = LocalReviewStore();
+        await _enqueuePendingReview(store: store, api: api, card: queue.first);
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+          clock: () => DateTime.utc(2026, 8, 5, 12),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+
+        expect(
+          controller.state.queue.any((card) => card.id == queue.first.id),
+          isFalse,
+        );
+        expect(controller.state.catchUp.shouldOffer, isTrue);
+        expect(controller.state.catchUp.dueCount, 81);
+      },
+    );
+
+    test('normal mode preserves due/new order below the threshold', () async {
+      final due = _card(
+        id: 901,
+        state: 2,
+        stability: 5,
+        due: DateTime.utc(2026, 8, 5, 11),
+        lastReview: DateTime.utc(2026, 8, 1),
+      );
+      final fresh = _card(id: 902, state: 0);
+      final api = _FakeRecallApi([due, fresh]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+
+      expect(controller.state.catchUp.shouldOffer, isFalse);
+      expect(controller.state.queue.map((card) => card.id), [901, 902]);
+      expect(api.applied, isEmpty);
+    });
+
+    test(
+      'clears local catch-up mode when the fetched backlog is empty',
+      () async {
+        final api = _FakeRecallApi(_catchUpQueue(82));
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+          clock: () => DateTime.utc(2026, 8, 5, 12),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+        await controller.startCatchUp();
+        expect(controller.state.catchUp.isActive, isTrue);
+
+        api.queue.clear();
+        await controller.refresh();
+
+        expect(controller.state.catchUp.isNone, isTrue);
+        expect(
+          await controller.store.loadCatchUpState(),
+          CatchUpLocalState.none,
+        );
+      },
+    );
+
+    test('undo restores the catch-up slot and local progress', () async {
+      final controller = ReviewController(
+        api: _FakeRecallApi(_catchUpQueue(82)),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+      await controller.startCatchUp();
+      final before = controller.state.catchUp;
+      controller.flip();
+      await controller.rate(Rating.good);
+      expect(controller.state.catchUp.completedToday, 1);
+
+      await controller.undo();
+
+      expect(controller.state.catchUp, before);
+      expect(
+        await controller.store.loadCatchUpState(),
+        isNot(equals(CatchUpLocalState.none)),
+      );
+      expect(controller.state.current, isNotNull);
+    });
+
+    testWidgets('shows the plan banner before the user opts in', (
+      tester,
+    ) async {
+      final controller = ReviewController(
+        api: _FakeRecallApi(_catchUpQueue(82)),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
+
+      expect(find.text('Start catch-up'), findsOneWidget);
+      expect(find.text('Show all'), findsOneWidget);
+      expect(find.textContaining('20 cards/day'), findsOneWidget);
+    });
+  });
+}
+
+List<ReviewCard> _catchUpQueue(int count) {
+  final now = DateTime.utc(2026, 8, 5, 12);
+  return [
+    for (var i = 0; i < count; i++)
+      _card(
+        id: 1000 + i,
+        state: 2,
+        stability: (i + 1).toDouble(),
+        difficulty: 5,
+        due: now.subtract(Duration(hours: i + 1)),
+        lastReview: now.subtract(Duration(days: i + 1)),
+      ),
+  ];
 }
 
 /// A [LocalReviewStore] whose [enqueueFlag] blocks on [enqueueGate] — lets the

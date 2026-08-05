@@ -147,6 +147,15 @@ class FsrsEngine {
     );
   }
 
+  /// Current FSRS retrievability for presentation-only queue ranking. This
+  /// delegates to the package scheduler's forgetting-curve implementation; it
+  /// never mutates the card or produces a scheduling write.
+  double retrievability(ReviewCard c, {DateTime? now}) =>
+      _scheduler.getCardRetrievability(
+        _build(c),
+        currentDateTime: (now ?? DateTime.now()).toUtc(),
+      );
+
   /// Predicted next-due for each of the four ratings (powers the button labels).
   Map<Rating, DateTime> preview(ReviewCard c, {DateTime? now}) {
     final when = (now ?? DateTime.now()).toUtc();

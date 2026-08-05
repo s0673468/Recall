@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'catch_up_state.dart';
 import 'models.dart';
 
 /// On-device persistence so Recall opens instantly and works offline:
@@ -27,6 +28,7 @@ class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
+  static const catchUpKey = 'recall_catch_up_v1';
   static const installIdKey = 'recall_install_id_v1';
 
   Future<void> _outboxTail = Future.value();
@@ -217,6 +219,31 @@ class LocalReviewStore {
     });
   }
 
+  /// Read the local-only catch-up choice and today's progress. Corrupt or old
+  /// presentation state is disposable, so it falls back to opt-out rather
+  /// than affecting the review outbox or queue load.
+  Future<CatchUpLocalState> loadCatchUpState() async {
+    final prefs = await _prefs;
+    final raw = prefs.getString(catchUpKey);
+    if (raw == null) return CatchUpLocalState.none;
+    try {
+      return CatchUpLocalState.fromJson(jsonDecode(raw));
+    } catch (_) {
+      return CatchUpLocalState.none;
+    }
+  }
+
+  Future<void> saveCatchUpState(CatchUpLocalState state) {
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final written = await prefs.setString(
+        catchUpKey,
+        jsonEncode(state.toJson()),
+      );
+      if (!written) throw LocalOutboxWriteException(catchUpKey);
+    });
+  }
+
   // --- Flag outbox ---
   //
   // A bad-card report queued mid-review. Mirrors the review outbox exactly
@@ -270,6 +297,7 @@ class LocalReviewStore {
       await prefs.remove(_snapshotKey);
       await prefs.remove(_outboxKey);
       await prefs.remove(_flagOutboxKey);
+      await prefs.remove(catchUpKey);
     });
   }
 
