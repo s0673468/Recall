@@ -398,12 +398,13 @@ class _MathFragment extends StatelessWidget {
     // environments. Splitting either can detach structural children (for
     // example a subscript in `\displaystyle` or a fraction inside a matrix),
     // which makes flutter_math_fork fail during layout. Keep those expressions
-    // whole and scale them down to the card width instead.
+    // whole. If one is wider than the card, let the reader pan it at the normal
+    // type size instead of scaling a long equation into illegibility.
     final hasEnvironment = expression.contains(r'\begin{');
     final requestsDisplayStyle = expression.contains(r'\displaystyle');
-    final scaleWhole = hasEnvironment || requestsDisplayStyle;
+    final keepWhole = hasEnvironment || requestsDisplayStyle;
     final Widget child;
-    if (display || scaleWhole) {
+    if (display || keepWhole) {
       child = math;
     } else {
       final broken = math.texBreak().parts;
@@ -422,8 +423,11 @@ class _MathFragment extends StatelessWidget {
 
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
-      child: scaleWhole
-          ? FittedBox(fit: BoxFit.scaleDown, child: child)
+      child: keepWhole
+          ? SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: child,
+            )
           : child,
     );
   }
