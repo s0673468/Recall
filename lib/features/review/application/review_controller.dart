@@ -13,10 +13,10 @@ import '../data/catch_up_state.dart';
 import '../data/local_review_store.dart';
 import '../data/models.dart';
 import '../data/recall_api.dart';
+import '../domain/concept_attribution.dart';
 import '../domain/stats_models.dart';
 import 'backlog_catch_up.dart';
 import 'fsrs_engine.dart';
-import 'stats_service.dart';
 import 'review_haptics.dart';
 import 'review_state.dart';
 
@@ -936,7 +936,7 @@ class ReviewController extends ChangeNotifier {
         : clock().difference(shownAt).inMilliseconds.clamp(0, maxElapsedMs);
     final entry = api.reviewEntry(card, outcome, elapsedMs: elapsedMs);
     final remediationNodeIds = entry['lapsed'] == true
-        ? StatsService.nodeTags(card.tags)
+        ? ConceptAttribution.nodeTags(card.tags)
         : const <String>[];
     // Snapshot everything undo needs BEFORE the rating takes effect. The
     // queue's ReviewCard still holds the pre-rating scheduling state (rating

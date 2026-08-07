@@ -1,4 +1,5 @@
 import '../data/recall_api.dart';
+import '../domain/concept_attribution.dart';
 import '../domain/stats_models.dart';
 
 /// Owns the Stats screen's data access (via [RecallApi]) plus the pure
@@ -19,11 +20,6 @@ class StatsService {
   /// floor. Kept in sync with recall_signal.py's REVIEW_WINDOW_DAYS.
   static const int conceptWindowDays = 14;
   static const int conceptMinReviews = 4;
-
-  /// The `node::none` sentinel is a "deliberately un-mapped" marker, never a
-  /// real graph node — excluded from attribution entirely.
-  static const String _nodeTagPrefix = 'node::';
-  static const String _nodeNoneSentinel = 'none';
 
   Future<List<ReviewLogEntry>> loadReviewLog() =>
       api.fetchReviewLog(days: heatmapWeeks * 7 + 7);
@@ -191,52 +187,12 @@ class StatsService {
 
   // ── Concepts (METIS node retention) ──
 
-  /// Concept-node ids from a space-delimited `notes.tags` string, order-preserving
-  /// + deduped, excluding the `node::none` sentinel. Mirrors recall_signal.py's
-  /// `node_tags`.
-  static List<String> nodeTags(String? tags) {
-    if (tags == null || tags.isEmpty) return const [];
-    final out = <String>[];
-    final seen = <String>{};
-    for (final token in tags.split(RegExp(r'\s+'))) {
-      if (!token.startsWith(_nodeTagPrefix)) continue;
-      final id = token.substring(_nodeTagPrefix.length);
-      if (id.isEmpty || id == _nodeNoneSentinel) continue;
-      if (seen.add(id)) out.add(id);
-    }
-    return out;
-  }
-
-  /// Primers whose tagged cards have at least one review on [today]'s local
-  /// device day. Attribution matches the Stats Concepts section.
-  static List<ConceptPage> todayConceptPages({
-    required List<ReviewLogEntry> reviewLog,
-    required Map<String, String> noteTags,
-    required List<ConceptPage> conceptPages,
-    required DateTime today,
-  }) {
-    final targetDay = dayOnly(today);
-    final reviewedNodeIds = <String>{};
-    for (final review in reviewLog) {
-      if (dayOnly(review.at) != targetDay) continue;
-      final guid = review.guid;
-      if (guid == null) continue;
-      reviewedNodeIds.addAll(nodeTags(noteTags[guid]));
-    }
-
-    final matched = [
-      for (final page in conceptPages)
-        if (reviewedNodeIds.contains(page.nodeId)) page,
-    ]..sort((a, b) => a.title.compareTo(b.title));
-    return matched;
-  }
-
   /// Per-node Again-rate over the last [window] days, weakest-first — the Stats
   /// "Concepts" section. Semantics mirror `metis recall-signal` exactly:
   ///
   ///  * pass = rating ≥ 2, fail = rating 1 (Again);
   ///  * a note's reviews attribute to EVERY `node::<id>` tag it carries
-  ///    (`node::none` excluded via [nodeTags]);
+  ///    (`node::none` excluded via [ConceptAttribution.nodeTags]);
   ///  * unresolved node IDs are ignored until their `concept_nodes` row syncs;
   ///  * only nodes with ≥ [minReviews] reviews in the window are ranked
   ///    (Again-rate descending); the rest are counted in `notEnoughData`;
@@ -264,7 +220,7 @@ class StatsService {
     // guid -> node ids, parsed once from the tag strings.
     final guidNodes = <String, List<String>>{};
     noteTags.forEach((guid, tags) {
-      final ids = nodeTags(tags);
+      final ids = ConceptAttribution.nodeTags(tags);
       if (ids.isNotEmpty) guidNodes[guid] = ids;
     });
 

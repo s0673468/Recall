@@ -282,66 +282,6 @@ void main() {
     });
   });
 
-  group('nodeTags', () {
-    test('parses node:: tokens, dedupes, drops node::none and non-node tags', () {
-      expect(
-        StatsService.nodeTags('leech node::m00-a marked node::m01-b node::m00-a'),
-        ['m00-a', 'm01-b'],
-      );
-      expect(StatsService.nodeTags('node::none node::m02-c'), ['m02-c']);
-      expect(StatsService.nodeTags('node:: node::none'), isEmpty);
-      expect(StatsService.nodeTags(null), isEmpty);
-      expect(StatsService.nodeTags(''), isEmpty);
-    });
-  });
-
-  group('todayConceptPages', () {
-    final today = DateTime(2026, 7, 29, 12);
-    final pageA = ConceptPage(
-      nodeId: 'm00-a',
-      title: 'A primer',
-      bodyHtml: 'A',
-      updatedAt: DateTime.utc(2026, 7, 29),
-    );
-    final pageB = ConceptPage(
-      nodeId: 'm01-b',
-      title: 'B primer',
-      bodyHtml: 'B',
-      updatedAt: DateTime.utc(2026, 7, 29),
-    );
-
-    test('returns primers tagged to cards reviewed on the local day', () {
-      final pages = StatsService.todayConceptPages(
-        reviewLog: [
-          _review('g1', DateTime(2026, 7, 29, 0, 1), 3),
-          _review('g2', DateTime(2026, 7, 28, 23, 59), 3),
-        ],
-        noteTags: {
-          'g1': 'node::m00-a node::none',
-          'g2': 'node::m01-b',
-        },
-        conceptPages: [pageB, pageA],
-        today: today,
-      );
-
-      expect(pages.map((page) => page.nodeId), ['m00-a']);
-    });
-
-    test('returns no primers for untagged or primer-less reviews', () {
-      final pages = StatsService.todayConceptPages(
-        reviewLog: [
-          _review('untagged', today, 3),
-          _review('no-page', today, 3),
-        ],
-        noteTags: {'no-page': 'node::m99-missing'},
-        conceptPages: [pageA, pageB],
-        today: today,
-      );
-
-      expect(pages, isEmpty);
-    });
-  });
-
   group('computeNodeRetention', () {
     final now = DateTime(2026, 7, 20, 12);
     DateTime daysAgo(int n) => now.subtract(Duration(days: n));

@@ -1,7 +1,7 @@
 import '../data/local_review_store.dart';
 import '../data/recall_api.dart';
+import '../domain/concept_attribution.dart';
 import '../domain/stats_models.dart';
-import 'stats_service.dart';
 
 /// The local data needed to turn queued node ids into readable primer rows.
 /// Nothing in this record is written back to Supabase.
@@ -49,7 +49,7 @@ class RemediationService {
       queue: results[0] as List<LocalRemediationItem>,
       conceptNodes: results[3] as List<ConceptNodeInfo>,
       conceptPages: conceptPages,
-      readTodayPages: StatsService.todayConceptPages(
+      readTodayPages: ConceptAttribution.todayConceptPages(
         reviewLog: reviewLog,
         noteTags: noteTags,
         conceptPages: conceptPages,

@@ -7,6 +7,7 @@ import '../../application/remediation_service.dart';
 import '../../application/stats_service.dart';
 import '../../data/local_review_store.dart';
 import '../../data/recall_api.dart';
+import '../../domain/concept_attribution.dart';
 import '../../domain/stats_models.dart';
 import 'primer_library_screen.dart';
 import 'primer_screen.dart';
@@ -118,7 +119,7 @@ class ReadScreenState extends State<ReadScreen> {
         }
 
         final data = snapshot.data!;
-        final todayPages = StatsService.todayConceptPages(
+        final todayPages = ConceptAttribution.todayConceptPages(
           reviewLog: data.reviewLog,
           noteTags: data.noteTags,
           conceptPages: data.conceptPages,
