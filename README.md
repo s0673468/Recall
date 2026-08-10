@@ -191,6 +191,9 @@ flutter test --no-pub --reporter=failures-only
 flutter run -d chrome --dart-define-from-file=config/supabase.local.json
 flutter build ios --simulator --debug \
   --dart-define-from-file=config/supabase.local.json
+
+# Repeatable rich-card parser benchmark (20,000 warmed operations per case).
+dart run tool/recall_performance_benchmark.dart
 ```
 
 Use `config/supabase.local.example.json` for local bootstrapping only. Keep the

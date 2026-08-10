@@ -26,6 +26,20 @@ InlineStyle _styleOf(List<InlineHtmlNode> nodes, String contains) {
 }
 
 void main() {
+  group('parseInlineHtml — plain text fast path', () {
+    test('keeps plain text and default style intact', () {
+      final nodes = parseInlineHtml(r'plain \(x^2\) text');
+      expect(nodes, hasLength(1));
+      final node = nodes.single as HtmlText;
+      expect(node.text, r'plain \(x^2\) text');
+      expect(node.style.isPlain, isTrue);
+    });
+
+    test('keeps empty input empty', () {
+      expect(parseInlineHtml(''), isEmpty);
+    });
+  });
+
   group('parseInlineHtml — tags', () {
     test('bold via <b> and <strong>', () {
       for (final tag in ['b', 'strong']) {
