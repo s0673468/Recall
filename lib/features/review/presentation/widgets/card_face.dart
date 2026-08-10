@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -518,6 +520,7 @@ class _SvgFace extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tint = style.color ?? UiColors.textPrimary;
+    final readableHeight = math.max(36.0, (style.fontSize ?? 18) * 2);
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.hasBoundedWidth
@@ -525,12 +528,16 @@ class _SvgFace extends StatelessWidget {
             : double.infinity;
         return ConstrainedBox(
           constraints: BoxConstraints(maxWidth: maxWidth),
-          child: SvgPicture.string(
-            svg,
-            fit: BoxFit.contain,
-            colorFilter: ColorFilter.mode(tint, BlendMode.srcIn),
-            placeholderBuilder: (_) =>
-                Text(_svgError, textAlign: TextAlign.center, style: style),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SvgPicture.string(
+              svg,
+              height: readableHeight,
+              fit: BoxFit.contain,
+              colorFilter: ColorFilter.mode(tint, BlendMode.srcIn),
+              placeholderBuilder: (_) =>
+                  Text(_svgError, textAlign: TextAlign.center, style: style),
+            ),
           ),
         );
       },

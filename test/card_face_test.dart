@@ -157,6 +157,40 @@ void main() {
       expect(find.byType(SvgPicture), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
+
+    testWidgets('wide SVG math keeps a readable height and scrolls', (
+      tester,
+    ) async {
+      const svg =
+          '<svg xmlns="http://www.w3.org/2000/svg" '
+          'viewBox="0 0 2000 40">'
+          '<path d="M0 20h2000" stroke="black"/>'
+          '</svg>';
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: 'J(theta) = ...',
+            hasLatex: true,
+            latexSvg: svg,
+            style: TextStyle(fontSize: 18, color: Colors.white),
+          ),
+        ),
+      );
+
+      final picture = find.byType(SvgPicture);
+      expect(picture, findsOneWidget);
+      expect(tester.getSize(picture).height, greaterThanOrEqualTo(36));
+
+      final scroller = find.byType(SingleChildScrollView);
+      expect(scroller, findsOneWidget);
+      await tester.drag(scroller, const Offset(-160, 0));
+      await tester.pumpAndSettle();
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(of: scroller, matching: find.byType(Scrollable)),
+      );
+      expect(scrollable.position.pixels, greaterThan(0));
+      expect(tester.takeException(), isNull);
+    });
   });
 
   group('CardFace display math', () {
