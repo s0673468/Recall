@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/platform/recall_platform.dart';
+import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/remediation_service.dart';
 import '../../data/local_review_store.dart';
@@ -126,7 +128,8 @@ class _RemediationSectionState extends State<RemediationSection> {
     ConceptPage page,
   ) async {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      buildRecallPageRoute<void>(
+        nativeIos: recallRunsAsNativeIos(),
         builder: (_) =>
             PrimerScreen(page: page, conceptNodes: data.conceptNodes),
       ),

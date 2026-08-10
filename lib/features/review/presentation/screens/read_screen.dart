@@ -2,6 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../../core/platform/recall_platform.dart';
+import '../../../../core/widgets/recall_motion.dart';
+import '../../../../core/widgets/recall_page_header.dart';
+import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/remediation_service.dart';
 import '../../application/stats_service.dart';
@@ -81,7 +85,8 @@ class ReadScreenState extends State<ReadScreen> {
     bool remediation = false,
   }) async {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      buildRecallPageRoute<void>(
+        nativeIos: recallRunsAsNativeIos(),
         builder: (_) => PrimerScreen(page: page, conceptNodes: conceptNodes),
       ),
     );
@@ -96,88 +101,109 @@ class ReadScreenState extends State<ReadScreen> {
     child: FutureBuilder<_ReadData>(
       future: _data,
       builder: (context, snapshot) {
+        late final Widget content;
         if (snapshot.connectionState != ConnectionState.done) {
-          return ListView(
+          content = ListView(
+            key: const ValueKey('read_loading'),
             physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.xl,
+            ),
             children: const [
               SizedBox(height: UiSpacing.xl),
               Center(child: CircularProgressIndicator()),
             ],
           );
-        }
-        if (snapshot.hasError || !snapshot.hasData) {
-          return ListView(
+        } else if (snapshot.hasError || !snapshot.hasData) {
+          content = ListView(
+            key: const ValueKey('read_error'),
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(UiSpacing.md),
             children: const [
+              RecallPageHeader(
+                title: 'Read',
+                subtitle:
+                    'Revisit today’s concepts or browse the full library.',
+              ),
+              SizedBox(height: UiSpacing.xl),
               Text(
                 'Could not load reading.',
                 style: TextStyle(color: UiColors.textMuted),
               ),
             ],
           );
-        }
-
-        final data = snapshot.data!;
-        final todayPages = ConceptAttribution.todayConceptPages(
-          reviewLog: data.reviewLog,
-          noteTags: data.noteTags,
-          conceptPages: data.conceptPages,
-          today: DateTime.now(),
-        );
-        final rereadPages = visibleRemediationPages(
-          queue: data.remediation,
-          conceptNodes: data.conceptNodes,
-          conceptPages: data.conceptPages,
-          readTodayPages: todayPages,
-        );
-        return ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(
-            UiSpacing.md,
-            UiSpacing.md,
-            UiSpacing.md,
-            UiSpacing.xl,
-          ),
-          children: [
-            Text('Read', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: UiSpacing.lg),
-            Text('Today', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: UiSpacing.xs),
-            if (rereadPages.isNotEmpty)
-              RemediationRows(
-                pages: rereadPages,
-                onTap: (page) => unawaited(
-                  _openPrimer(page, data.conceptNodes, remediation: true),
-                ),
-              ),
-            if (rereadPages.isNotEmpty && todayPages.isNotEmpty)
-              const SizedBox(height: UiSpacing.md),
-            if (todayPages.isEmpty && rereadPages.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: UiSpacing.sm,
-                  vertical: UiSpacing.md,
-                ),
-                child: Text(
-                  'Nothing studied yet today — the library is below.',
-                  style: TextStyle(color: UiColors.textMuted),
-                ),
-              ),
-            if (todayPages.isNotEmpty)
-              for (final page in todayPages)
-                PrimerRow(
-                  page: page,
-                  onTap: () => unawaited(_openPrimer(page, data.conceptNodes)),
-                ),
-            const SizedBox(height: UiSpacing.lg),
-            Text('Library', style: Theme.of(context).textTheme.titleMedium),
-            PrimerLibraryContent(
-              pages: data.conceptPages,
-              conceptNodes: data.conceptNodes,
+        } else {
+          final data = snapshot.data!;
+          final todayPages = ConceptAttribution.todayConceptPages(
+            reviewLog: data.reviewLog,
+            noteTags: data.noteTags,
+            conceptPages: data.conceptPages,
+            today: DateTime.now(),
+          );
+          final rereadPages = visibleRemediationPages(
+            queue: data.remediation,
+            conceptNodes: data.conceptNodes,
+            conceptPages: data.conceptPages,
+            readTodayPages: todayPages,
+          );
+          content = ListView(
+            key: const ValueKey('read_content'),
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.xl,
             ),
-          ],
-        );
+            children: [
+              const RecallPageHeader(
+                title: 'Read',
+                subtitle:
+                    'Revisit today’s concepts or browse the full library.',
+              ),
+              const SizedBox(height: UiSpacing.lg),
+              Text('Today', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: UiSpacing.xs),
+              if (rereadPages.isNotEmpty)
+                RemediationRows(
+                  pages: rereadPages,
+                  onTap: (page) => unawaited(
+                    _openPrimer(page, data.conceptNodes, remediation: true),
+                  ),
+                ),
+              if (rereadPages.isNotEmpty && todayPages.isNotEmpty)
+                const SizedBox(height: UiSpacing.md),
+              if (todayPages.isEmpty && rereadPages.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: UiSpacing.sm,
+                    vertical: UiSpacing.md,
+                  ),
+                  child: Text(
+                    'Nothing studied yet today — the library is below.',
+                    style: TextStyle(color: UiColors.textMuted),
+                  ),
+                ),
+              if (todayPages.isNotEmpty)
+                for (final page in todayPages)
+                  PrimerRow(
+                    page: page,
+                    onTap: () =>
+                        unawaited(_openPrimer(page, data.conceptNodes)),
+                  ),
+              const SizedBox(height: UiSpacing.lg),
+              Text('Library', style: Theme.of(context).textTheme.titleMedium),
+              PrimerLibraryContent(
+                pages: data.conceptPages,
+                conceptNodes: data.conceptNodes,
+              ),
+            ],
+          );
+        }
+        return RecallMotionSwap(child: content);
       },
     ),
   );

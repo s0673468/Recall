@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/recall_motion.dart';
+import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
 import '../../data/recall_api.dart';
@@ -32,7 +34,9 @@ class DecksScreenState extends State<DecksScreen> {
   }
 
   Future<void> reload() async {
-    setState(() => _counts = widget.api.fetchDeckCounts());
+    setState(() {
+      _counts = widget.api.fetchDeckCounts();
+    });
     await _counts;
   }
 
@@ -58,15 +62,29 @@ class DecksScreenState extends State<DecksScreen> {
                   UiSpacing.lg,
                 ),
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
+                  const Padding(
+                    padding: EdgeInsets.symmetric(
                       horizontal: UiSpacing.sm,
                       vertical: UiSpacing.sm,
                     ),
-                    child: Text(
-                      'Decks',
-                      style: Theme.of(context).textTheme.headlineSmall,
+                    child: RecallPageHeader(
+                      title: 'Decks',
+                      subtitle: 'Due and new cards by collection.',
                     ),
+                  ),
+                  RecallMotionSwap(
+                    child: snap.connectionState == ConnectionState.done
+                        ? const SizedBox(
+                            key: ValueKey('deck_counts_ready'),
+                            height: UiSpacing.xs,
+                          )
+                        : const Padding(
+                            key: ValueKey('deck_counts_loading'),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: UiSpacing.sm,
+                            ),
+                            child: LinearProgressIndicator(minHeight: 2),
+                          ),
                   ),
                   _tile(
                     label: 'All decks',

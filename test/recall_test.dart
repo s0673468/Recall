@@ -2552,6 +2552,38 @@ void main() {
       expect(decoration.color, isNull);
       expect(decoration.border, isA<Border>());
     });
+
+    testWidgets('reload keeps the state update synchronous', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card()])
+        ..deckCounts = const {1: (due: 3, neu: 2)};
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DecksScreen(
+              controller: controller,
+              api: api,
+              onStudyDeck: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.state<DecksScreenState>(find.byType(DecksScreen)).reload();
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.text('3 due'), findsNWidgets(2));
+    });
   });
 
   group('Stats screen', () {

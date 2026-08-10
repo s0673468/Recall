@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/platform/recall_platform.dart';
+import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
 import 'primer_screen.dart';
@@ -100,7 +102,8 @@ class PrimerLibraryContent extends StatelessWidget {
             PrimerRow(
               page: page,
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
+                buildRecallPageRoute<void>(
+                  nativeIos: recallRunsAsNativeIos(),
                   builder: (_) =>
                       PrimerScreen(page: page, conceptNodes: conceptNodes),
                 ),

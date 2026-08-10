@@ -4,6 +4,7 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show AppScrollBehavior, AuthGate, AuthGateModel;
 
 import '../core/widgets/recall_widget_bridge.dart';
+import '../core/widgets/recall_motion.dart';
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_dependencies.dart';
@@ -107,25 +108,34 @@ class _RecallRootState extends State<_RecallRoot> {
       builder: (context, _) {
         late final Widget content;
         if (controller.currentUser == null) {
-          content = AuthGate(
-            model: AuthGateModel(
-              source: controller,
-              submitting: () => controller.state.authSubmitting,
-              errorText: () => controller.state.error,
-              signIn: controller.signIn,
+          content = KeyedSubtree(
+            key: const ValueKey('recall_auth'),
+            child: AuthGate(
+              model: AuthGateModel(
+                source: controller,
+                submitting: () => controller.state.authSubmitting,
+                errorText: () => controller.state.error,
+                signIn: controller.signIn,
+              ),
+              appName: UiBrand.appName,
+              subtitle: UiBrand.subtitle,
             ),
-            appName: UiBrand.appName,
-            subtitle: UiBrand.subtitle,
           );
         } else {
-          content = AppShell(
-            controller: controller,
-            api: widget.dependencies.api,
-            prefs: widget.dependencies.recallPrefs,
-            reminder: widget.dependencies.studyReminder,
+          content = KeyedSubtree(
+            key: const ValueKey('recall_shell'),
+            child: AppShell(
+              controller: controller,
+              api: widget.dependencies.api,
+              prefs: widget.dependencies.recallPrefs,
+              reminder: widget.dependencies.studyReminder,
+            ),
           );
         }
-        return RecallWidgetBridge(controller: controller, child: content);
+        return RecallWidgetBridge(
+          controller: controller,
+          child: RecallMotionSwap(child: content),
+        );
       },
     );
   }
