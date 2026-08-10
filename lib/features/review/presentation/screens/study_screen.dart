@@ -5,6 +5,7 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
 
 import '../../../../theme/ui_tokens.dart';
 import '../../../../core/platform/recall_platform.dart';
+import '../../../../core/widgets/recall_motion.dart';
 import '../../application/backlog_catch_up.dart';
 import '../../application/review_controller.dart';
 import '../../data/local_review_store.dart';
@@ -43,31 +44,42 @@ class StudyScreen extends StatelessWidget {
         final undoable = controller.canUndo && !controller.undoInFlight;
 
         if (s.loading) {
-          return const Center(child: CircularProgressIndicator());
+          return const RecallMotionSwap(
+            child: Center(
+              key: ValueKey('study_loading'),
+              child: CircularProgressIndicator(),
+            ),
+          );
         }
         if (s.error != null && s.queue.isEmpty) {
-          return _Message(
-            icon: Icons.cloud_off_outlined,
-            title: 'Could not load',
-            subtitle: s.error!,
-            action: 'Retry',
-            onAction: controller.refresh,
+          return RecallMotionSwap(
+            child: _Message(
+              key: const ValueKey('study_error'),
+              icon: Icons.cloud_off_outlined,
+              title: 'Could not load',
+              subtitle: s.error!,
+              action: 'Retry',
+              onAction: controller.refresh,
+            ),
           );
         }
         if (s.isDone) {
           final n = s.reviewedThisSession;
           if (s.catchUp.isActive && s.catchUp.dueCount > 0) {
-            return _Message(
-              icon: Icons.pause_circle_outline,
-              title: 'Catch-up paused',
-              subtitle:
-                  'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session. '
-                  'The daily catch-up limit is ${s.catchUp.dailyCap}. '
-                  'Resume tomorrow.',
-              action: 'Reload',
-              onAction: controller.refresh,
-              secondaryAction: undoable ? 'Undo last rating' : null,
-              onSecondaryAction: undoable ? controller.undo : null,
+            return RecallMotionSwap(
+              child: _Message(
+                key: const ValueKey('study_catch_up_paused'),
+                icon: Icons.pause_circle_outline,
+                title: 'Catch-up paused',
+                subtitle:
+                    'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session. '
+                    'The daily catch-up limit is ${s.catchUp.dailyCap}. '
+                    'Resume tomorrow.',
+                action: 'Reload',
+                onAction: controller.refresh,
+                secondaryAction: undoable ? 'Undo last rating' : null,
+                onSecondaryAction: undoable ? controller.undo : null,
+              ),
             );
           }
           final reviewedLine = n > 0
@@ -82,36 +94,39 @@ class StudyScreen extends StatelessWidget {
               ? '$reviewedLine Bonus cards need a connection.'
               : reviewedLine;
           final canKeepGoing = !s.aheadExhausted && !s.offline;
-          return ListView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.all(UiSpacing.lg),
-            children: [
-              _Message(
-                icon: Icons.check_circle_outline,
-                title: 'All caught up',
-                subtitle: subtitle,
-                action: canKeepGoing ? 'Keep going' : 'Reload',
-                onAction: canKeepGoing
-                    ? controller.keepGoing
-                    : controller.refresh,
-                // A mis-tap on the session's last card lands here — keep it
-                // recoverable (undo survives until the queue is reloaded).
-                secondaryAction: undoable
-                    ? 'Undo last rating'
-                    : (canKeepGoing ? 'Reload' : null),
-                onSecondaryAction: undoable
-                    ? controller.undo
-                    : (canKeepGoing ? controller.refresh : null),
-              ),
-              if (api != null && store != null) ...[
-                const SizedBox(height: UiSpacing.lg),
-                RemediationSection(
-                  api: api!,
-                  store: store!,
-                  revision: controller.remediationRevision,
+          return RecallMotionSwap(
+            child: ListView(
+              key: const ValueKey('study_done'),
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(UiSpacing.lg),
+              children: [
+                _Message(
+                  icon: Icons.check_circle_outline,
+                  title: 'All caught up',
+                  subtitle: subtitle,
+                  action: canKeepGoing ? 'Keep going' : 'Reload',
+                  onAction: canKeepGoing
+                      ? controller.keepGoing
+                      : controller.refresh,
+                  // A mis-tap on the session's last card lands here — keep it
+                  // recoverable (undo survives until the queue is reloaded).
+                  secondaryAction: undoable
+                      ? 'Undo last rating'
+                      : (canKeepGoing ? 'Reload' : null),
+                  onSecondaryAction: undoable
+                      ? controller.undo
+                      : (canKeepGoing ? controller.refresh : null),
                 ),
+                if (api != null && store != null) ...[
+                  const SizedBox(height: UiSpacing.lg),
+                  RemediationSection(
+                    api: api!,
+                    store: store!,
+                    revision: controller.remediationRevision,
+                  ),
+                ],
               ],
-            ],
+            ),
           );
         }
 
@@ -122,56 +137,83 @@ class StudyScreen extends StatelessWidget {
           fontWeight: FontWeight.w400,
         );
 
-        return Column(
-          children: [
-            if (s.catchUp.shouldOffer)
-              _CatchUpBanner(
-                plan: s.catchUp,
-                onStart: controller.startCatchUp,
-                onShowAll: controller.showAll,
-              )
-            else if (s.catchUp.isActive)
-              _CatchUpProgress(plan: s.catchUp),
-            _Header(
-              due: s.dueRemaining,
-              neu: s.newRemaining,
-              session: s.reviewedThisSession,
-              offline: s.offline,
-              pendingSync: s.pendingSync,
-              onUndo: undoable ? controller.undo : null,
-              // Flagging is independent of the review flow and of undo — it
-              // only reports the current card, so it's live whenever a card
-              // is on screen (the header only renders with a current card).
-              onFlag: () => _showFlagSheet(
-                context,
-                controller,
-                nativeIos: nativeIos ?? recallRunsAsNativeIos(),
-              ),
-              onOpenSettings: onOpenSettings,
-            ),
-            const SizedBox(height: UiSpacing.sm),
-            Expanded(
-              child: _CardPanel(card: card, showBack: s.showBack, style: style),
-            ),
-            const SizedBox(height: UiSpacing.md),
-            if (s.showBack)
-              RatingBar(
-                preview: controller.previewCurrent(),
-                previewAt: controller.previewCurrentAt,
-                onRate: controller.rate,
-              )
-            else
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: controller.flip,
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
-                  ),
-                  child: const Text('Show answer'),
+        return RecallMotionSwap(
+          child: Column(
+            key: ValueKey('study_card_${card.id}'),
+            children: [
+              AnimatedSize(
+                duration: RecallMotion.duration(context),
+                curve: RecallMotion.curve,
+                alignment: Alignment.topCenter,
+                child: RecallMotionSwap(
+                  duration: RecallMotion.quick,
+                  child: s.catchUp.shouldOffer
+                      ? _CatchUpBanner(
+                          key: const ValueKey('study_catch_up_offer'),
+                          plan: s.catchUp,
+                          onStart: controller.startCatchUp,
+                          onShowAll: controller.showAll,
+                        )
+                      : s.catchUp.isActive
+                      ? _CatchUpProgress(
+                          key: const ValueKey('study_catch_up_progress'),
+                          plan: s.catchUp,
+                        )
+                      : const SizedBox(key: ValueKey('study_catch_up_hidden')),
                 ),
               ),
-          ],
+              _Header(
+                due: s.dueRemaining,
+                neu: s.newRemaining,
+                session: s.reviewedThisSession,
+                offline: s.offline,
+                pendingSync: s.pendingSync,
+                onUndo: undoable ? controller.undo : null,
+                // Flagging is independent of the review flow and of undo — it
+                // only reports the current card, so it's live whenever a card
+                // is on screen (the header only renders with a current card).
+                onFlag: () => _showFlagSheet(
+                  context,
+                  controller,
+                  nativeIos: nativeIos ?? recallRunsAsNativeIos(),
+                ),
+                onOpenSettings: onOpenSettings,
+              ),
+              const SizedBox(height: UiSpacing.sm),
+              Expanded(
+                child: _CardPanel(
+                  card: card,
+                  showBack: s.showBack,
+                  style: style,
+                ),
+              ),
+              const SizedBox(height: UiSpacing.md),
+              RecallMotionSwap(
+                duration: RecallMotion.quick,
+                travel: 0,
+                child: s.showBack
+                    ? RatingBar(
+                        key: const ValueKey('study_rating_bar'),
+                        preview: controller.previewCurrent(),
+                        previewAt: controller.previewCurrentAt,
+                        onRate: controller.rate,
+                      )
+                    : SizedBox(
+                        key: const ValueKey('study_show_answer'),
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: controller.flip,
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: UiSpacing.md,
+                            ),
+                          ),
+                          child: const Text('Show answer'),
+                        ),
+                      ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -184,6 +226,7 @@ class _CatchUpBanner extends StatelessWidget {
   final VoidCallback onShowAll;
 
   const _CatchUpBanner({
+    super.key,
     required this.plan,
     required this.onStart,
     required this.onShowAll,
@@ -243,7 +286,7 @@ class _CatchUpBanner extends StatelessWidget {
 class _CatchUpProgress extends StatelessWidget {
   final CatchUpView plan;
 
-  const _CatchUpProgress({required this.plan});
+  const _CatchUpProgress({super.key, required this.plan});
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -293,7 +336,7 @@ class _Header extends StatelessWidget {
           children: [
             Text(
               'STUDY',
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: UiColors.textMuted,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 1.4,
@@ -431,24 +474,40 @@ class _CardPanel extends StatelessWidget {
               // and is often just a summary). A no-op for non-cloze fronts.
               revealCloze: showBack,
             ),
-            if (showBack) ...[
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: UiSpacing.lg),
-                child: Divider(color: UiColors.border, height: 1),
+            AnimatedSize(
+              duration: RecallMotion.duration(context),
+              curve: RecallMotion.curve,
+              alignment: Alignment.topCenter,
+              child: RecallMotionSwap(
+                duration: RecallMotion.quick,
+                child: showBack
+                    ? Column(
+                        key: ValueKey('study_answer_${card.id}'),
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.symmetric(
+                              vertical: UiSpacing.lg,
+                            ),
+                            child: Divider(color: UiColors.border, height: 1),
+                          ),
+                          CardFace(
+                            html: card.back,
+                            hasLatex: card.hasLatex,
+                            latexSvg: card.latexSvg,
+                            cacheKey: '${card.id}:back',
+                            style: style.copyWith(
+                              color: UiColors.textSecondary,
+                              fontWeight: FontWeight.w400,
+                            ),
+                            // The answer face reveals any cloze deletions it carries.
+                            revealCloze: true,
+                          ),
+                        ],
+                      )
+                    : const SizedBox(key: ValueKey('study_answer_hidden')),
               ),
-              CardFace(
-                html: card.back,
-                hasLatex: card.hasLatex,
-                latexSvg: card.latexSvg,
-                cacheKey: '${card.id}:back',
-                style: style.copyWith(
-                  color: UiColors.textSecondary,
-                  fontWeight: FontWeight.w400,
-                ),
-                // The answer face reveals any cloze deletions it carries.
-                revealCloze: true,
-              ),
-            ],
+            ),
             const SizedBox(height: UiSpacing.sm),
           ],
         ),
@@ -602,6 +661,7 @@ class _Message extends StatelessWidget {
   final String? secondaryAction;
   final VoidCallback? onSecondaryAction;
   const _Message({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show UiScore;
 
+import '../../../../core/platform/recall_platform.dart';
+import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
 import '../screens/primer_library_screen.dart';
@@ -91,7 +93,8 @@ class ConceptRetentionPanel extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
                 onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
+                  buildRecallPageRoute<void>(
+                    nativeIos: recallRunsAsNativeIos(),
                     builder: (_) => PrimerLibraryScreen(
                       pages: conceptPages,
                       conceptNodes: conceptNodes,
@@ -121,7 +124,8 @@ class ConceptRetentionPanel extends StatelessWidget {
       child: InkWell(
         key: ValueKey('recall_concept_primer_${node.nodeId}'),
         onTap: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
+          buildRecallPageRoute<void>(
+            nativeIos: recallRunsAsNativeIos(),
             builder: (_) =>
                 PrimerScreen(page: page, conceptNodes: conceptNodes),
           ),

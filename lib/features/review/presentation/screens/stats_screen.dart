@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show AppSwitcher, HealthWebApp;
 
+import '../../../../core/widgets/recall_motion.dart';
+import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
 import '../../application/stats_service.dart';
@@ -102,7 +104,10 @@ class StatsScreenState extends State<StatsScreen> {
           UiSpacing.lg,
         ),
         children: [
-          Text('Stats', style: Theme.of(context).textTheme.headlineSmall),
+          const RecallPageHeader(
+            title: 'Stats',
+            subtitle: 'Your workload, consistency, and retention at a glance.',
+          ),
           const SizedBox(height: UiSpacing.md),
 
           // Session tiles (live from the controller).
@@ -212,14 +217,16 @@ class StatsScreenState extends State<StatsScreen> {
     return FutureBuilder<T>(
       future: future,
       builder: (context, snap) {
+        late final Widget content;
         if (snap.connectionState != ConnectionState.done) {
-          return const Padding(
+          content = const Padding(
+            key: ValueKey('stats_section_loading'),
             padding: EdgeInsets.all(UiSpacing.lg),
             child: Center(child: CircularProgressIndicator()),
           );
-        }
-        if (snap.hasError || !snap.hasData) {
-          return Container(
+        } else if (snap.hasError || !snap.hasData) {
+          content = Container(
+            key: ValueKey('stats_section_error_$label'),
             width: double.infinity,
             padding: const EdgeInsets.all(UiSpacing.md),
             decoration: const BoxDecoration(
@@ -230,8 +237,13 @@ class StatsScreenState extends State<StatsScreen> {
               style: const TextStyle(color: UiColors.textMuted),
             ),
           );
+        } else {
+          content = KeyedSubtree(
+            key: ValueKey('stats_section_content_$label'),
+            child: builder(snap.data as T),
+          );
         }
-        return builder(snap.data as T);
+        return RecallMotionSwap(child: content);
       },
     );
   }

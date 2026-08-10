@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../core/diagnostics/operational_diagnostics.dart';
 import '../core/platform/recall_platform.dart';
+import '../core/widgets/recall_motion.dart';
 import '../features/review/application/review_controller.dart';
 import '../features/reminders/application/study_reminder_controller.dart';
 import '../features/review/data/recall_api.dart';
@@ -16,6 +17,9 @@ import '../features/settings/application/recall_prefs_controller.dart';
 import '../features/settings/presentation/screens/settings_screen.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_deep_links.dart';
+import 'recall_page_route.dart';
+
+export 'recall_page_route.dart' show buildRecallPageRoute;
 
 class AppShell extends StatefulWidget {
   final ReviewController controller;
@@ -187,7 +191,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 UiSpacing.sm,
                 _nativeIos ? UiSpacing.sm : 0,
               ),
-              child: IndexedStack(index: _index, children: _pages),
+              child: Align(
+                alignment: Alignment.topCenter,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: UiLayout.maxContent,
+                  ),
+                  child: SizedBox.expand(
+                    child: RecallAnimatedIndexedStack(
+                      index: _index,
+                      children: _pages,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -221,13 +238,6 @@ Future<void> runRecallForegroundSync({
     );
   }
 }
-
-Route<T> buildRecallPageRoute<T>({
-  required bool nativeIos,
-  required WidgetBuilder builder,
-}) => nativeIos
-    ? CupertinoPageRoute<T>(builder: builder)
-    : MaterialPageRoute<T>(builder: builder);
 
 /// One navigation contract rendered in the host platform's native idiom.
 ///
@@ -301,7 +311,7 @@ class RecallBottomNavigation extends StatelessWidget {
             );
           }),
           labelTextStyle: WidgetStateProperty.resolveWith((states) {
-            return Theme.of(context).textTheme.labelSmall?.copyWith(
+            return Theme.of(context).textTheme.bodySmall?.copyWith(
               color: states.contains(WidgetState.selected)
                   ? accent
                   : UiColors.textMuted,
