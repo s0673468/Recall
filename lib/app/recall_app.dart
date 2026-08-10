@@ -1,11 +1,9 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show AppScrollBehavior, AuthGate, AuthGateModel;
 
 import '../core/widgets/recall_widget_bridge.dart';
-import '../features/auth/presentation/widgets/biometric_unlock_gate.dart';
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_dependencies.dart';
@@ -81,32 +79,11 @@ class RecallApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final controller = dependencies.reviewController;
     return MaterialApp(
       title: UiBrand.appName,
       debugShowCheckedModeBanner: false,
       theme: buildRecallTheme(),
       scrollBehavior: const AppScrollBehavior(),
-      builder: (context, navigator) {
-        final appNavigator = navigator ?? const SizedBox.shrink();
-        return ListenableBuilder(
-          listenable: controller,
-          builder: (context, _) {
-            if (controller.currentUser == null ||
-                !supportsRecallBiometricUnlock(
-                  isWeb: kIsWeb,
-                  targetPlatform: defaultTargetPlatform,
-                )) {
-              return appNavigator;
-            }
-            return BiometricUnlockGate(
-              key: ValueKey('recall-unlock-${controller.currentUser!.id}'),
-              onSignOut: controller.signOut,
-              child: appNavigator,
-            );
-          },
-        );
-      },
       home: _RecallRoot(dependencies: dependencies),
     );
   }

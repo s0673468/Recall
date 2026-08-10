@@ -13,7 +13,7 @@ logic stay in Dart so the two surfaces cannot drift.
 - device family: iPhone
 - orientation: portrait
 - authentication: interactive Supabase sign-in once; the revocable session is
-  stored in the iOS Keychain and Face ID or the device passcode unlocks Recall
+  stored in the iOS Keychain and opens Recall directly until sign-out
 
 No account password, service-role key, signing identity, or provisioning profile
 belongs in the repository. The build input may contain only `SUPABASE_URL` and
@@ -173,7 +173,7 @@ but server-enforced duplicate protection begins only after this migration.
 
 ## Required iPhone 15 Pro Max checks
 
-- cold launch, restored session, manual login, and Face ID success/cancel
+- cold launch, restored session opening directly, manual login, and sign-out
 - Study, Decks, Stats, Settings, rich HTML, cloze, and LaTeX parity with the PWA
 - four FSRS rating previews, review, single-level undo, and flag reasons
 - portrait safe areas and reachable rating buttons at default and large text

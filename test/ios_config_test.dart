@@ -16,14 +16,13 @@ void main() {
     'Icon-App-1024x1024@1x.png',
   );
 
-  test('Recall ships an iOS 16 portrait runner with Face ID disclosure', () {
+  test('Recall ships an iOS 16 portrait runner without an app lock', () {
     expect(infoPlist.existsSync(), isTrue, reason: 'iOS runner is required');
     expect(project.existsSync(), isTrue, reason: 'Xcode project is required');
 
     final plist = infoPlist.readAsStringSync();
     expect(plist, contains('<string>Recall</string>'));
-    expect(plist, contains('<key>NSFaceIDUsageDescription</key>'));
-    expect(plist, contains('Unlock Recall with Face ID'));
+    expect(plist, isNot(contains('<key>NSFaceIDUsageDescription</key>')));
     expect(
       plist,
       contains(
