@@ -112,7 +112,7 @@ void main() {
         ),
       );
       expect(find.byType(SvgPicture), findsNothing);
-      expect(find.byType(Math), findsOneWidget);
+      expect(find.byType(Math), findsWidgets);
       expect(tester.takeException(), isNull);
     });
 
@@ -131,8 +131,12 @@ void main() {
         ),
       );
       expect(find.byType(SvgPicture), findsNothing);
-      final math = tester.widget<Math>(find.byType(Math));
-      expect(math.mathStyle, MathStyle.display);
+      final maths = tester.widgetList<Math>(find.byType(Math));
+      expect(maths, isNotEmpty);
+      expect(
+        maths.every((math) => math.mathStyle == MathStyle.display),
+        isTrue,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -209,52 +213,81 @@ void main() {
         ),
       );
 
-      expect(find.byType(Math), findsOneWidget);
+      expect(find.byType(Math), findsWidgets);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets(
-      r'long \displaystyle math scrolls horizontally instead of shrinking',
-      (tester) async {
-        await tester.pumpWidget(
-          _host(
-            const CardFace(
-              html:
-                  r'\(\displaystyle J(\theta)='
-                  r'\mathbb{E}_{q\sim P(Q),\{o_i\}_{i=1}^{G}\sim '
-                  r'\pi_{\theta_{old}}(O\mid q)}\left['
-                  r'\frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_i|}'
-                  r'\sum_{t=1}^{|o_i|}\min(r_{i,t}(\theta)\hat{A}_{i,t},'
-                  r'\operatorname{clip}(r_{i,t}(\theta),1-\epsilon,'
-                  r'1+\epsilon)\hat{A}_{i,t})\right]\)',
-              hasLatex: true,
-              style: TextStyle(fontSize: 18),
-            ),
+    testWidgets(r'long \displaystyle math wraps without horizontal scrolling', (
+      tester,
+    ) async {
+      const raw =
+          r'\(\displaystyle J(\theta) = \mathbb{E}_{x,\{y_i\}}'
+          r'\left[\frac{1}{G}\sum_{i=1}^{G} '
+          r'\min\left(\frac{\pi_\theta(y_i\mid x)}'
+          r'{\pi_{\theta_{\text{old}}}(y_i\mid x)} A_i,\; '
+          r'\operatorname{clip}\left(\frac{\pi_\theta(y_i\mid x)}'
+          r'{\pi_{\theta_{\text{old}}}(y_i\mid x)},\, '
+          r'1-\epsilon,\, 1+\epsilon\right) A_i\right)\right]\)';
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: raw,
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
           ),
-        );
+        ),
+      );
 
-        expect(find.byType(FittedBox), findsNothing);
-        final scroller = tester.widget<SingleChildScrollView>(
-          find.byType(SingleChildScrollView),
-        );
-        expect(scroller.scrollDirection, Axis.horizontal);
-        expect(find.byType(Math), findsOneWidget);
+      expect(find.byType(SingleChildScrollView), findsNothing);
+      expect(find.byType(Wrap), findsOneWidget);
+      final maths = tester.widgetList<Math>(find.byType(Math)).toList();
+      expect(maths.length, greaterThan(1));
+      expect(maths.every((math) => math.parseError == null), isTrue);
+      expect(find.text(raw), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
 
-        await tester.drag(
-          find.byType(SingleChildScrollView),
-          const Offset(-160, 0),
-        );
-        await tester.pumpAndSettle();
-        final scrollable = tester.state<ScrollableState>(
-          find.descendant(
-            of: find.byType(SingleChildScrollView),
-            matching: find.byType(Scrollable),
+    testWidgets(r'SwiGLU display-style equation wraps at operators', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html:
+                r'\(\displaystyle \operatorname{SwiGLU}'
+                r'(x,W_{\text{gate}},W_{\text{up}})='
+                r'\operatorname{SiLU}(xW_{\text{gate}})'
+                r'\odot(xW_{\text{up}})\)',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
           ),
-        );
-        expect(scrollable.position.pixels, greaterThan(0));
-        expect(tester.takeException(), isNull);
-      },
-    );
+        ),
+      );
+
+      expect(find.byType(SingleChildScrollView), findsNothing);
+      expect(find.byType(Wrap), findsOneWidget);
+      expect(find.byType(Math), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets(r'arrow commands are not mistaken for sized delimiters', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: r'\(a\leftarrow b\rightarrow c\)',
+            hasLatex: true,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+
+      final maths = tester.widgetList<Math>(find.byType(Math));
+      expect(maths, isNotEmpty);
+      expect(maths.every((math) => math.parseError == null), isTrue);
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('converted display math with matrices stays renderable', (
       tester,
@@ -290,8 +323,12 @@ void main() {
           ),
         ),
       );
-      final math = tester.widget<Math>(find.byType(Math));
-      expect(math.mathStyle, MathStyle.display);
+      final maths = tester.widgetList<Math>(find.byType(Math));
+      expect(maths, isNotEmpty);
+      expect(
+        maths.every((math) => math.mathStyle == MathStyle.display),
+        isTrue,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -307,8 +344,12 @@ void main() {
           ),
         ),
       );
-      final math = tester.widget<Math>(find.byType(Math));
-      expect(math.mathStyle, MathStyle.display);
+      final maths = tester.widgetList<Math>(find.byType(Math));
+      expect(maths, isNotEmpty);
+      expect(
+        maths.every((math) => math.mathStyle == MathStyle.display),
+        isTrue,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -408,8 +449,12 @@ void main() {
           ),
         ),
       );
-      final math = tester.widget<Math>(find.byType(Math));
-      expect(math.mathStyle, MathStyle.display);
+      final maths = tester.widgetList<Math>(find.byType(Math));
+      expect(maths, isNotEmpty);
+      expect(
+        maths.every((math) => math.mathStyle == MathStyle.display),
+        isTrue,
+      );
       expect(tester.takeException(), isNull);
     });
   });

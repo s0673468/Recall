@@ -388,51 +388,194 @@ class _MathFragment extends StatelessWidget {
     this.display = false,
   });
 
+  static final _operatorNameRe = RegExp(r'\\operatorname\{([^{}]+)\}');
+  static final _leadingDisplayStyleRe = RegExp(r'^\s*\\displaystyle\s*');
+  static final _sizedDelimiterRe = RegExp(
+    r'\\(?:left|right)(?=[.\(\)\[\]\{\}\|\\])',
+  );
+  static const _layoutBreakMacros = <String>[
+    r'\mathop',
+    r'\frac',
+    r'\sum',
+    r'\prod',
+    r'\int',
+    r'\min',
+    r'\max',
+  ];
+  static const _binaryBreakMacros = <String>[
+    r'\odot',
+    r'\cdot',
+    r'\times',
+    r'\pm',
+    r'\mp',
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final math = Math.tex(
-      expression,
-      textStyle: style,
-      mathStyle: display ? MathStyle.display : MathStyle.text,
-      onErrorFallback: (_) => Text(fallback, style: style),
-    );
-    // Inline line-breaking (`texBreak`) is wrong for block-style math and TeX
-    // environments. Splitting either can detach structural children (for
-    // example a subscript in `\displaystyle` or a fraction inside a matrix),
-    // which makes flutter_math_fork fail during layout. Keep those expressions
-    // whole. If one is wider than the card, let the reader pan it at the normal
-    // type size instead of scaling a long equation into illegibility.
-    final hasEnvironment = expression.contains(r'\begin{');
-    final requestsDisplayStyle = expression.contains(r'\displaystyle');
-    final keepWhole = hasEnvironment || requestsDisplayStyle;
-    final Widget child;
-    if (display || keepWhole) {
-      child = math;
-    } else {
-      final broken = math.texBreak().parts;
-      child = broken.length > 1
-          ? Wrap(
-              alignment: WrapAlignment.center,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: broken,
-            )
-          : math;
+    // flutter_math_fork treats \operatorname as a function that consumes the
+    // following group. Valid LaTeX such as `\operatorname{clip}\left(…\right)`
+    // therefore fails because `\left` is mistaken for that argument. Render
+    // the name as an upright math operator instead; the visual semantics are
+    // the same and the source card remains untouched.
+    final requestedDisplayStyle = _leadingDisplayStyleRe.hasMatch(expression);
+    var normalizedExpression = expression
+        .replaceFirst(_leadingDisplayStyleRe, '')
+        .replaceAllMapped(
+          _operatorNameRe,
+          (match) => '\\mathop{\\mathrm{${match.group(1)}}}',
+        );
+    final hasEnvironment = normalizedExpression.contains(r'\begin{');
+    if (!hasEnvironment) {
+      // Sized delimiter groups are indivisible in flutter_math_fork's break
+      // tree. Ordinary delimiters keep the same meaning while allowing the
+      // expression inside them to wrap on a narrow card.
+      normalizedExpression = normalizedExpression.replaceAll(
+        _sizedDelimiterRe,
+        '',
+      );
     }
+    final mathStyle = (display || requestedDisplayStyle)
+        ? MathStyle.display
+        : MathStyle.text;
+    Math buildMath(String source) => Math.tex(
+      source,
+      textStyle: style,
+      mathStyle: mathStyle,
+      onErrorFallback: (_) => Text(
+        fallback,
+        style: style,
+        textAlign: TextAlign.center,
+        softWrap: true,
+      ),
+    );
+    final math = buildMath(normalizedExpression);
 
     if (!maxWidth.isFinite) {
-      return child;
+      return math;
     }
 
+    if (math.parseError != null) {
+      return ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxWidth),
+        child: Text(
+          fallback,
+          style: style,
+          textAlign: TextAlign.center,
+          softWrap: true,
+        ),
+      );
+    }
+
+    // TeX environments (notably matrices) are structurally indivisible.
+    // Everything else first gets source-level breakpoints around top-level
+    // relations and large operators, then flutter_math_fork's AST breakpoints.
+    // The source pass matters because sized/nested groups are otherwise one
+    // enormous AST node and get scaled into an unreadable single line.
+    final sourceParts = hasEnvironment
+        ? [normalizedExpression]
+        : _splitForNarrowLayout(normalizedExpression);
+    final parts = hasEnvironment
+        ? [math]
+        : [
+            for (final source in sourceParts)
+              ...buildMath(source).texBreak().parts,
+          ];
+    if (parts.length == 1) {
+      return _BoundedMathPart(part: parts.single, maxWidth: maxWidth);
+    }
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
-      child: keepWhole
-          ? SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: child,
-            )
-          : child,
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        runSpacing: 4,
+        children: [
+          for (final part in parts)
+            _BoundedMathPart(part: part, maxWidth: maxWidth),
+        ],
+      ),
     );
   }
+
+  static List<String> _splitForNarrowLayout(String source) {
+    final parts = <String>[];
+    final current = StringBuffer();
+    var braceDepth = 0;
+    var index = 0;
+
+    void flush() {
+      final value = current.toString().trim();
+      if (value.isNotEmpty) parts.add(value);
+      current.clear();
+    }
+
+    String? macroAt(List<String> macros) {
+      for (final macro in macros) {
+        if (source.startsWith(macro, index)) return macro;
+      }
+      return null;
+    }
+
+    while (index < source.length) {
+      final char = source[index];
+      if (char == '{') {
+        braceDepth++;
+      } else if (char == '}' && braceDepth > 0) {
+        braceDepth--;
+      }
+
+      if (braceDepth == 0) {
+        final binary = macroAt(_binaryBreakMacros);
+        if (binary != null) {
+          flush();
+          parts.add(binary);
+          index += binary.length;
+          continue;
+        }
+
+        final layout = macroAt(_layoutBreakMacros);
+        if (layout != null && current.isNotEmpty) flush();
+
+        if (char == '=' || char == '<' || char == '>') {
+          flush();
+          parts.add(char);
+          index++;
+          continue;
+        }
+        if (char == ',') {
+          current.write(char);
+          index++;
+          if (source.startsWith(r'\;', index)) {
+            current.write(r'\;');
+            index += 2;
+          }
+          flush();
+          continue;
+        }
+      }
+
+      current.write(char);
+      index++;
+    }
+    flush();
+    return parts.isEmpty ? [source] : parts;
+  }
+}
+
+class _BoundedMathPart extends StatelessWidget {
+  final Math part;
+  final double maxWidth;
+
+  const _BoundedMathPart({required this.part, required this.maxWidth});
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: BoxConstraints(maxWidth: maxWidth),
+    child: FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(mainAxisSize: MainAxisSize.min, children: [part]),
+    ),
+  );
 }
 
 /// The accent-tinted pill wrapping a cloze deletion — a placeholder (`[…]` /
