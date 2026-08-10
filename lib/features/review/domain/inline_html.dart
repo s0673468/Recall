@@ -225,7 +225,7 @@ int? parseCssColor(String raw) {
     return null;
   }
 
-  final rgb = RegExp(r'^rgba?\(([^)]+)\)$').firstMatch(s);
+  final rgb = _rgbColorRe.firstMatch(s);
   if (rgb != null) {
     final parts = rgb.group(1)!.split(',');
     if (parts.length >= 3) {
@@ -263,8 +263,8 @@ int clampColorForDark(int argb) {
   final g = ((argb >> 8) & 0xFF) / 255.0;
   final b = (argb & 0xFF) / 255.0;
 
-  final maxC = [r, g, b].reduce((x, y) => x > y ? x : y);
-  final minC = [r, g, b].reduce((x, y) => x < y ? x : y);
+  final maxC = r > g ? (r > b ? r : b) : (g > b ? g : b);
+  final minC = r < g ? (r < b ? r : b) : (g < b ? g : b);
   final l = (maxC + minC) / 2;
   if (l >= _minDarkLightness) return argb;
 
@@ -314,7 +314,9 @@ int clampColorForDark(int argb) {
 
 // ── Parser ─────────────────────────────────────────────────────────────────
 
-final RegExp _tagRe = RegExp(r'<(/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^>"]|"[^"]*")*)>');
+final RegExp _tagRe = RegExp(
+  r'<(/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^>"]|"[^"]*")*)>',
+);
 final RegExp _srcRe = RegExp(
   '''src\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))''',
   caseSensitive: false,
@@ -323,10 +325,15 @@ final RegExp _colorAttrRe = RegExp(
   '''color\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))''',
   caseSensitive: false,
 );
+final RegExp _styleAttrRe = RegExp(
+  '''style\\s*=\\s*"([^"]*)"''',
+  caseSensitive: false,
+);
 final RegExp _styleColorRe = RegExp(
   r'(?:^|;)\s*color\s*:\s*([^;]+)',
   caseSensitive: false,
 );
+final RegExp _rgbColorRe = RegExp(r'^rgba?\(([^)]+)\)$');
 
 /// One entry on the open-tag stack. [restore] is applied to the current node
 /// list on the matching close tag (e.g. to emit a block break).
@@ -348,6 +355,13 @@ class _Frame {
 /// boundary (e.g. `…{{c1::a}}<br>2. {{c2::b}}`) still emits its line break; the
 /// caller trims the *assembled* face's edges instead.
 List<InlineHtmlNode> parseInlineHtml(String html, {bool trimEdges = true}) {
+  // Most cards are already plain text (math delimiters are handled later by
+  // CardFace). Avoid the tag scanner, stack, and substring allocation for that
+  // common path. The entity check keeps decoding semantics unchanged.
+  if (html.isEmpty) return const [];
+  if (!html.contains('<') && !html.contains('&')) {
+    return [HtmlText(html, const InlineStyle())];
+  }
   final out = <InlineHtmlNode>[];
   final stack = <_Frame>[_Frame('', const InlineStyle())];
   InlineStyle style() => stack.last.style;
@@ -497,10 +511,7 @@ _Frame? _nearestList(List<_Frame> stack) {
 }
 
 int? _extractColor(String attrs) {
-  final style = RegExp(
-    '''style\\s*=\\s*"([^"]*)"''',
-    caseSensitive: false,
-  ).firstMatch(attrs);
+  final style = _styleAttrRe.firstMatch(attrs);
   if (style != null) {
     final c = _styleColorRe.firstMatch(style.group(1)!);
     if (c != null) {
