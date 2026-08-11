@@ -222,7 +222,8 @@ void main() {
     );
 
     final backgroundRegistrationBlock = section(
-      'backgroundSyncChannel = MethodChannel(',
+      'backgroundSyncChannel = MethodChannel('
+          'messenger, RecallContracts.backgroundSyncChannel)',
       'private fun registerMaintainedPlugins(',
     );
     expect(backgroundRegistrationBlock, contains('call.method == "ready"'));
