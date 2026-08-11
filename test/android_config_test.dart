@@ -170,35 +170,73 @@ void main() {
       );
     }
 
-    for (final registration in [
-      'MethodChannel(messenger, RecallContracts.studyReminderChannel)',
-      'MethodChannel(messenger, RecallContracts.widgetChannel)',
-      'MethodChannel(messenger, RecallContracts.operationalDiagnosticsChannel)',
-      'MethodChannel(messenger, RecallContracts.backgroundSyncChannel)',
-    ]) {
-      expect(
-        mainActivitySource,
-        contains(registration),
-        reason: 'Android must register $registration at runtime',
+    String section(String start, String end) {
+      final startIndex = mainActivitySource.indexOf(start);
+      final endIndex = mainActivitySource.indexOf(
+        end,
+        startIndex + start.length,
       );
+      expect(
+        startIndex,
+        isNonNegative,
+        reason: 'Missing Android block: $start',
+      );
+      expect(
+        endIndex,
+        greaterThan(startIndex),
+        reason: 'Missing block end: $end',
+      );
+      return mainActivitySource.substring(startIndex, endIndex);
     }
 
+    final studyReminderBlock = section(
+      'MethodChannel(messenger, RecallContracts.studyReminderChannel)',
+      'MethodChannel(messenger, RecallContracts.widgetChannel)',
+    );
     for (final handler in [
       '"requestPermission" -> requestNotificationPermission(result)',
       '"apply" ->',
       '"cancel" ->',
-      '"update" ->',
-      '"clear" ->',
-      'call.method != "mirror"',
-      'call.method == "ready"',
-      'registerReconnectSync()',
     ]) {
-      expect(
-        mainActivitySource,
-        contains(handler),
-        reason: 'Android must retain native channel behavior: $handler',
-      );
+      expect(studyReminderBlock, contains(handler));
     }
+
+    final widgetBlock = section(
+      'MethodChannel(messenger, RecallContracts.widgetChannel)',
+      'MethodChannel(messenger, RecallContracts.operationalDiagnosticsChannel)',
+    );
+    for (final handler in ['"update" ->', '"clear" ->']) {
+      expect(widgetBlock, contains(handler));
+    }
+
+    final diagnosticsBlock = section(
+      'MethodChannel(messenger, RecallContracts.operationalDiagnosticsChannel)',
+      'backgroundSyncChannel = MethodChannel(',
+    );
+    expect(diagnosticsBlock, contains('call.method != "mirror"'));
+    expect(
+      diagnosticsBlock,
+      contains(
+        'RecallOperationalDiagnostics.write(applicationContext, payload)',
+      ),
+    );
+
+    final backgroundRegistrationBlock = section(
+      'backgroundSyncChannel = MethodChannel(',
+      'private fun registerMaintainedPlugins(',
+    );
+    expect(backgroundRegistrationBlock, contains('call.method == "ready"'));
+    expect(backgroundRegistrationBlock, contains('registerReconnectSync()'));
+
+    final reconnectCallbackBlock = section(
+      'private fun requestBackgroundSync()',
+      'private fun finishBackgroundSync()',
+    );
+    expect(reconnectCallbackBlock, contains('backgroundSyncChannel ?:'));
+    expect(
+      reconnectCallbackBlock,
+      contains('channel.invokeMethod("performSync"'),
+    );
   });
 
   test('Android reminder and widget remain aggregate-only', () {
