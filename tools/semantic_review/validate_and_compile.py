@@ -505,6 +505,19 @@ def compile_reviews(
     }
     for name, payload in artifacts.items():
         (output_dir / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    if primer_changes:
+        primer_dir = output_dir / "primer_files"
+        primer_dir.mkdir()
+        for change in primer_changes:
+            filename = Path(str(change["path"])).name
+            if not filename.endswith(".html") or filename in {".html", "..html"}:
+                raise ReviewError(
+                    f"{change['node_id']}: primer path must end in a named HTML file"
+                )
+            destination = primer_dir / filename
+            if destination.exists():
+                raise ReviewError(f"duplicate primer output filename: {filename}")
+            destination.write_text(str(change["after"]), encoding="utf-8")
 
     summary: dict[str, object] = {
         "clusters": len(node_rows),

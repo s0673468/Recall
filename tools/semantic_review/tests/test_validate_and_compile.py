@@ -234,6 +234,37 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         self.assertEqual(additions[0]["action"], "add")
         self.assertIsNone(additions[0]["nid"])
 
+    def test_emits_exact_edited_primer_as_a_copyable_file(self) -> None:
+        primer_path = "/source/curriculum/primers/concept-a.html"
+        original = "Original primer body."
+        replacement = "Reviewed primer body."
+        bundle = json.loads(
+            (self.concepts / "concept-a.json").read_text(encoding="utf-8")
+        )
+        bundle["primer_path"] = primer_path
+        bundle["primer_html"] = original
+        (self.concepts / "concept-a.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+        self.write_review(
+            primer={
+                "action": "edit",
+                "path": primer_path,
+                "rationale": "The replacement is more precise.",
+                "html": replacement,
+            }
+        )
+
+        summary = self.compile()
+
+        self.assertEqual(summary["primer_edits"], 1)
+        self.assertEqual(
+            (self.compiled / "primer_files" / "concept-a.html").read_text(
+                encoding="utf-8"
+            ),
+            replacement,
+        )
+
     def test_placeholder_cluster_requires_a_move_for_every_card(self) -> None:
         bundle_path = self.concepts / "none.json"
         placeholder = {**self.bundle, "node_id": "none"}

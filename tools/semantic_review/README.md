@@ -49,6 +49,8 @@ The output contains:
   directory is a self-contained guarded apply input;
 - `tag_mutations.json` for separately reviewed tag removals or node moves;
 - `primer_changes.json` and `proposed_nodes.json` for METIS integration;
+- `primer_files/*.html`, containing exact reviewed primer replacements ready
+  for a mechanical copy into the METIS source tree;
 - `source_ledger.json` for private provenance; and
 - `summary.json` for coverage and action counts.
 
