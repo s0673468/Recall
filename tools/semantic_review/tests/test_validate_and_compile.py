@@ -376,6 +376,43 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             "Reviewed adjacent primer.",
         )
 
+    def test_complete_compile_requires_and_emits_reviewed_figure_edit(self) -> None:
+        figure_path = self.root / "concept-a.svg"
+        figure_path.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>Old</text></svg>',
+            encoding="utf-8",
+        )
+        bundle = json.loads(
+            (self.concepts / "concept-a.json").read_text(encoding="utf-8")
+        )
+        bundle["figure_path"] = str(figure_path)
+        (self.concepts / "concept-a.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+        self.write_review()
+        with self.assertRaisesRegex(ReviewError, "figure was not independently reviewed"):
+            self.compile()
+
+        replacement = '<svg xmlns="http://www.w3.org/2000/svg"><text>Precise</text></svg>'
+        self.write_review(
+            figure={
+                "action": "edit",
+                "path": str(figure_path),
+                "rationale": "The original label was misleading.",
+                "svg": replacement,
+            }
+        )
+
+        summary = self.compile()
+
+        self.assertEqual(summary["figure_edits"], 1)
+        self.assertEqual(
+            (self.compiled / "figure_files" / "concept-a.svg").read_text(
+                encoding="utf-8"
+            ),
+            replacement,
+        )
+
     def test_placeholder_cluster_requires_a_move_for_every_card(self) -> None:
         bundle_path = self.concepts / "none.json"
         placeholder = {**self.bundle, "node_id": "none"}

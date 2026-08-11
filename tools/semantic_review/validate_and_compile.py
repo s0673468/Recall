@@ -12,6 +12,7 @@ import argparse
 import importlib.util
 import json
 import tempfile
+import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -109,6 +110,57 @@ def _primer_filename(value: str, label: str) -> str:
     if filename in {".html", "..html"}:
         raise ReviewError(f"{label} must name an HTML file")
     return filename
+
+
+def _validate_figure(
+    review: dict[str, object],
+    bundle: dict[str, object],
+    *,
+    node_id: str,
+) -> dict[str, object]:
+    original_path = bundle.get("figure_path")
+    candidate = review.get("figure")
+    if original_path is None:
+        if candidate is not None and (
+            not isinstance(candidate, dict) or candidate.get("action") != "missing"
+        ):
+            raise ReviewError(f"{node_id}: cluster without a figure must use action missing")
+        return {
+            "action": "missing",
+            "path": None,
+            "rationale": "No figure is attached to this cluster.",
+            "svg": None,
+        }
+    if candidate is None:
+        return {
+            "action": "unreviewed",
+            "path": original_path,
+            "rationale": "Figure review was not supplied.",
+            "svg": None,
+        }
+    if not isinstance(candidate, dict):
+        raise ReviewError(f"{node_id}.figure must be an object")
+    if candidate.get("path") != original_path:
+        raise ReviewError(f"{node_id}.figure path must match the input bundle")
+    action = candidate.get("action")
+    if action not in {"keep", "edit"}:
+        raise ReviewError(f"{node_id}.figure action must be keep or edit")
+    _require_string(candidate.get("rationale"), f"{node_id}.figure.rationale")
+    svg = candidate.get("svg")
+    if action == "keep":
+        if svg is not None:
+            raise ReviewError(f"{node_id}: kept figure SVG must be null")
+    else:
+        svg = _require_string(svg, f"{node_id}.figure.svg")
+        try:
+            root = ET.fromstring(svg)
+        except ET.ParseError as error:
+            raise ReviewError(f"{node_id}: edited figure is invalid XML: {error}") from error
+        if root.tag.rsplit("}", 1)[-1] != "svg":
+            raise ReviewError(f"{node_id}: edited figure root must be svg")
+        if any(element.tag.rsplit("}", 1)[-1] == "script" for element in root.iter()):
+            raise ReviewError(f"{node_id}: edited figure cannot contain script")
+    return {**candidate, "svg": svg}
 
 
 def validate_review(
@@ -330,10 +382,13 @@ def validate_review(
     if not isinstance(unresolved, list):
         raise ReviewError(f"{node_id}.unresolved must be a list")
 
+    figure = _validate_figure(review, bundle, node_id=node_id)
+
     return {
         **review,
         "card_changes": normalized_changes,
         "new_cards": normalized_adds,
+        "figure": figure,
     }
 
 
@@ -402,6 +457,8 @@ def compile_reviews(
         )
         if require_complete and review["unresolved"]:
             raise ReviewError(f"{node_id}: unresolved findings remain")
+        if require_complete and review["figure"]["action"] == "unreviewed":
+            raise ReviewError(f"{node_id}: figure was not independently reviewed")
         for proposed in review["proposed_nodes"]:
             proposed_id = proposed["node_id"]
             if proposed_id in proposed_owner:
@@ -429,6 +486,7 @@ def compile_reviews(
     additions: list[dict[str, object]] = []
     tag_mutations_by_nid: dict[int, dict[str, object]] = {}
     primer_changes: list[dict[str, object]] = []
+    figure_changes: list[dict[str, object]] = []
     proposed_nodes: list[dict[str, object]] = []
     source_ledger: list[dict[str, object]] = []
     action_counts: Counter[str] = Counter()
@@ -500,6 +558,19 @@ def compile_reviews(
                     "rationale": review["primer"]["rationale"],
                 }
             )
+        if review["figure"]["action"] == "edit":
+            figure_path = Path(str(review["figure"]["path"]))
+            if not figure_path.is_file():
+                raise ReviewError(f"{node_id}: original figure is missing: {figure_path}")
+            figure_changes.append(
+                {
+                    "node_id": node_id,
+                    "path": str(figure_path),
+                    "before": figure_path.read_text(encoding="utf-8"),
+                    "after": review["figure"]["svg"],
+                    "rationale": review["figure"]["rationale"],
+                }
+            )
 
     prep_manifest = _load_json(prep_job_dir / "manifest.json")
     expected_nids = prep_manifest.get("nids") if isinstance(prep_manifest, dict) else None
@@ -543,6 +614,7 @@ def compile_reviews(
     artifacts = {
         "tag_mutations.json": tag_mutations,
         "primer_changes.json": primer_changes,
+        "figure_changes.json": figure_changes,
         "proposed_nodes.json": proposed_nodes,
         "source_ledger.json": source_ledger,
     }
@@ -568,6 +640,18 @@ def compile_reviews(
             if destination.exists():
                 raise ReviewError(f"duplicate primer output filename: {filename}")
             destination.write_text(str(proposed["primer_html"]), encoding="utf-8")
+    if figure_changes:
+        figure_dir = output_dir / "figure_files"
+        figure_dir.mkdir()
+        for change in figure_changes:
+            path = Path(str(change["path"]))
+            filename = path.name
+            if path.suffix != ".svg" or not filename:
+                raise ReviewError(f"{change['node_id']}: figure path must name an SVG file")
+            destination = figure_dir / filename
+            if destination.exists():
+                raise ReviewError(f"duplicate figure output filename: {filename}")
+            destination.write_text(str(change["after"]), encoding="utf-8")
 
     summary: dict[str, object] = {
         "clusters": len(node_rows),
@@ -576,6 +660,7 @@ def compile_reviews(
         "existing_cards": len(decisions),
         "new_card_records": len(additions),
         "primer_edits": len(primer_changes),
+        "figure_edits": len(figure_changes),
         "tag_mutations": len(tag_mutations),
         "proposed_nodes": len(proposed_nodes),
         "kept": action_counts["keep"],

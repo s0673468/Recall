@@ -51,6 +51,8 @@ The output contains:
 - `primer_changes.json` and `proposed_nodes.json` for METIS integration;
 - `primer_files/*.html`, containing exact reviewed replacements and new-node
   primers ready for a mechanical copy into the METIS source tree;
+- `figure_changes.json` and `figure_files/*.svg` for independently reviewed
+  corrections to misleading diagrams or labels;
 - `source_ledger.json` for private provenance; and
 - `summary.json` for coverage and action counts.
 
