@@ -38,8 +38,8 @@ flutter build apk --debug --no-pub \
   --dart-define-from-file=config/supabase.local.json
 ```
 
-Run the native JVM and instrumentation build checks with the checked-in Gradle
-configuration. Flutter generates the ignored wrapper launcher and local SDK
+Run the native JVM and instrumentation build checks with the checked-in,
+checksum-validated Gradle wrapper. Flutter writes only the ignored local SDK
 path when needed.
 
 ```bash
@@ -58,28 +58,33 @@ adb install -r build/app/outputs/flutter-apk/app-profile.apk
 
 ## Release signing
 
-Release builds fail closed unless `android/key.properties` selects an ignored
-private keystore. Copy `android/key.properties.example`, fill it locally, keep
-the keystore outside version control, and follow Flutter's Android signing
-guide. Protect and back up the original keystore: a different certificate
-cannot update an existing installation.
+Release builds fail closed unless `android/key.properties` selects one of two
+explicit signing modes. `private` uses a normal ignored private keystore. Copy
+`android/key.properties.example`, fill it locally, keep the keystore outside
+version control, and follow Flutter's Android signing guide.
+
+The already-distributed Android app has a historical debug certificate. On a
+machine where the installed certificate has first been proven to match the
+retained key, preserve that exact identity in Recall's owner-only signing
+directory and select the password-free continuity profile:
+
+```bash
+install -d -m 0700 "$HOME/Library/Application Support/Recall/signing"
+install -m 0600 "$HOME/.android/debug.keystore" \
+  "$HOME/Library/Application Support/Recall/signing/recall-historical.keystore"
+install -m 0600 android/key.properties.historical.example android/key.properties
+```
+
+This moves continuity away from Android's auto-managed debug location without
+changing the certificate. It is appropriate for in-place private sideloads,
+not Google Play distribution or a passkey origin. Back up the owner-only file;
+a different certificate cannot update an existing installation.
 
 ```bash
 flutter build apk --release --no-pub \
   --dart-define-from-file=config/supabase.local.json
 ```
 
-For continuity testing against the historical debug-signed installation only,
-a throwaway release-optimized APK can explicitly opt into the local Android
-debug certificate:
-
-```bash
-ORG_GRADLE_PROJECT_allowDebugReleaseSigning=true \
-  flutter build apk --release --no-pub \
-  --dart-define-from-file=config/supabase.local.json
-```
-
-That opt-in is not production signing and must not be used for distribution.
 Never uninstall an existing Recall app to work around a signing mismatch: first
 prove its durable review and flag outboxes are empty or safely replayed.
 
@@ -98,12 +103,14 @@ adb shell dumpsys package com.german.health_anki_flutter
 - `recall://study` is the only custom deep link. Flutter's automatic manifest
   deep-link handler is disabled so `app_links` receives it exactly once.
 - API 33 notification permission is requested only after a signed-in user
-  enables reminders. Recall uses an inexact alarm, requests no exact-alarm
-  access, and rearms after delivery, reboot, clock, or time-zone changes.
+  enables reminders. Recall also detects app- or channel-level notification
+  blocking and offers a direct system Settings action. It uses an inexact
+  alarm, requests no exact-alarm access, and rearms after delivery, reboot,
+  clock, or time-zone changes.
 - Reminder and widget surfaces contain aggregate text only. Both open Study
   through an explicit immutable `PendingIntent`.
-- Supabase remains the source of truth. Foreground, resume, and validated
-  network-reconnect paths drain the same durable idempotent review and flag
+- Supabase remains the source of truth. Foreground, resume, and every transition
+  back to a validated network drain the same durable idempotent review and flag
   outboxes. Android schedules no hidden headless account work.
 - Backup and cleartext traffic are disabled. The diagnostics mirror is bounded,
   value-free, private, atomic, and excluded from backup.

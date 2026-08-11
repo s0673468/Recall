@@ -9,12 +9,16 @@ class _FakeStudyReminderPlatform implements StudyReminderPlatform {
   final applied = <StudyReminderSettings>[];
   final appliedContexts = <({int? dueCount, bool studiedToday})>[];
   var cancellations = 0;
+  var settingsOpens = 0;
 
   @override
   Future<bool> requestPermission() async {
     permissionRequests++;
     return permissionGranted;
   }
+
+  @override
+  Future<void> openNotificationSettings() async => settingsOpens++;
 
   @override
   Future<void> apply(
@@ -67,6 +71,16 @@ void main() {
     expect(enabled, isFalse);
     expect(controller.value.enabled, isFalse);
     expect(platform.applied.last.enabled, isFalse);
+  });
+
+  test('notification recovery opens platform settings', () async {
+    final platform = _FakeStudyReminderPlatform();
+    final controller = StudyReminderController(platform: platform);
+    addTearDown(controller.dispose);
+
+    await controller.openNotificationSettings();
+
+    expect(platform.settingsOpens, 1);
   });
 
   test('time changes reschedule the enabled reminder', () async {

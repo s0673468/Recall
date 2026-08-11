@@ -8,20 +8,42 @@ plugins {
 
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
-val hasReleaseKeystore = keystorePropertiesFile.exists()
-val allowDebugReleaseSigning = providers.gradleProperty("allowDebugReleaseSigning")
-    .map(String::toBoolean)
-    .getOrElse(false)
+val hasSigningProperties = keystorePropertiesFile.exists()
 
-if (hasReleaseKeystore) {
+if (hasSigningProperties) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
+val signingMode = keystoreProperties.getProperty("signingMode", "private")
+val historicalSigningFile = File(
+    System.getProperty("user.home"),
+    "Library/Application Support/Recall/signing/recall-historical.keystore",
+)
+val usesHistoricalContinuityKey =
+    hasSigningProperties &&
+        signingMode == "historicalContinuity" &&
+        historicalSigningFile.isFile
+val requiredPrivateSigningProperties = listOf(
+    "keyAlias",
+    "keyPassword",
+    "storeFile",
+    "storePassword",
+)
+val usesPrivateReleaseKey =
+    hasSigningProperties &&
+        signingMode == "private" &&
+        requiredPrivateSigningProperties.all {
+            !keystoreProperties.getProperty(it).isNullOrBlank()
+        } &&
+        rootProject.file(keystoreProperties.getProperty("storeFile", "missing")).isFile
+val hasReleaseSigning = usesHistoricalContinuityKey || usesPrivateReleaseKey
+
 gradle.taskGraph.whenReady {
-    if (!hasReleaseKeystore && !allowDebugReleaseSigning && allTasks.any { it.name.contains("Release") }) {
+    if (!hasReleaseSigning && allTasks.any { it.name.contains("Release") }) {
         throw GradleException(
             "Release signing requires android/key.properties. " +
-                "For local throwaway APKs, pass -PallowDebugReleaseSigning=true.",
+                "Select a complete private keystore or the provisioned " +
+                "historicalContinuity mode.",
         )
     }
 }
@@ -46,8 +68,17 @@ android {
     }
 
     signingConfigs {
+        getByName("debug") {
+            if (usesHistoricalContinuityKey) {
+                // This is the exact key behind Recall's first Android build.
+                // Keeping AGP's built-in debug credentials avoids copying a
+                // credential into source or command output; the owner-only
+                // keystore file is the continuity identity.
+                storeFile = historicalSigningFile
+            }
+        }
         create("release") {
-            if (hasReleaseKeystore) {
+            if (usesPrivateReleaseKey) {
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
                 storeFile = rootProject.file(
@@ -60,7 +91,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (hasReleaseKeystore) {
+            signingConfig = if (usesPrivateReleaseKey) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")

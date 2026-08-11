@@ -2,11 +2,9 @@ package com.german.health_anki_flutter
 
 import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.os.Build
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -16,7 +14,7 @@ class MainActivity : FlutterActivity() {
     private var backgroundSyncChannel: MethodChannel? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var validatedNetwork: Network? = null
+    private val validatedNetwork = ValidatedNetworkTransition<Network>()
     private var syncInFlight = false
     private var syncQueued = false
 
@@ -28,6 +26,10 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "requestPermission" -> requestNotificationPermission(result)
+                    "openSettings" -> {
+                        startActivity(RecallReminderNotifications.settingsIntent(this))
+                        result.success(null)
+                    }
                     "apply" -> {
                         val settings = RecallContracts.reminderSettings(call.arguments)
                         if (settings == null) {
@@ -131,15 +133,16 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun requestNotificationPermission(result: MethodChannel.Result) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            result.success(true)
-            return
-        }
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            result.success(true)
-            return
+        when (RecallReminderNotifications.readiness(this)) {
+            RecallNotificationReadiness.READY -> {
+                result.success(true)
+                return
+            }
+            RecallNotificationReadiness.BLOCKED -> {
+                result.success(false)
+                return
+            }
+            RecallNotificationReadiness.NEEDS_RUNTIME_PERMISSION -> Unit
         }
         if (notificationPermissionResult != null) {
             result.error(
@@ -165,7 +168,10 @@ class MainActivity : FlutterActivity() {
         if (requestCode != notificationPermissionRequestCode) return
         val result = notificationPermissionResult ?: return
         notificationPermissionResult = null
-        result.success(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
+        result.success(
+            RecallReminderNotifications.readiness(this) ==
+                RecallNotificationReadiness.READY,
+        )
     }
 
     private fun registerReconnectSync() {
@@ -176,19 +182,20 @@ class MainActivity : FlutterActivity() {
                 network: Network,
                 capabilities: NetworkCapabilities,
             ) {
-                if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                    return
-                }
                 runOnUiThread {
-                    if (validatedNetwork == network) return@runOnUiThread
-                    validatedNetwork = network
-                    requestBackgroundSync()
+                    val shouldSync = validatedNetwork.onCapabilitiesChanged(
+                        network,
+                        capabilities.hasCapability(
+                            NetworkCapabilities.NET_CAPABILITY_VALIDATED,
+                        ),
+                    )
+                    if (shouldSync) requestBackgroundSync()
                 }
             }
 
             override fun onLost(network: Network) {
                 runOnUiThread {
-                    if (validatedNetwork == network) validatedNetwork = null
+                    validatedNetwork.onLost(network)
                 }
             }
         }
@@ -197,8 +204,11 @@ class MainActivity : FlutterActivity() {
         manager.registerDefaultNetworkCallback(callback)
         val active = manager.activeNetwork
         val capabilities = active?.let(manager::getNetworkCapabilities)
-        if (capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true) {
-            validatedNetwork = active
+        if (active != null && validatedNetwork.onCapabilitiesChanged(
+                active,
+                capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
+            )
+        ) {
             requestBackgroundSync()
         }
     }
@@ -240,7 +250,7 @@ class MainActivity : FlutterActivity() {
         }
         networkCallback = null
         connectivityManager = null
-        validatedNetwork = null
+        validatedNetwork.clear()
         backgroundSyncChannel = null
         super.onDestroy()
     }

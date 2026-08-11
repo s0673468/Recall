@@ -7,7 +7,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating, defaultParameters;
 import 'package:supabase_flutter/supabase_flutter.dart'
-    show AuthChangeEvent, AuthState, SupabaseClient, User;
+    show AuthChangeEvent, AuthException, AuthState, SupabaseClient, User;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:health_anki_flutter/features/review/application/backlog_catch_up.dart';
@@ -245,6 +245,7 @@ class _FakeRecallApi implements RecallApi {
   User? user;
   Map<int, ({int due, int neu})> deckCounts = const {};
   bool failDeckCounts = false;
+  Object? signInError;
   int queueFetches = 0;
 
   /// Awaited inside fetchQueue — lets tests hold the network fetch open
@@ -545,10 +546,10 @@ class _FakeRecallApi implements RecallApi {
   Future<List<ConceptPage>> fetchConceptPages() async => conceptPages;
 
   @override
-  Future<void> signIn({
-    required String email,
-    required String password,
-  }) async {}
+  Future<void> signIn({required String email, required String password}) async {
+    final error = signInError;
+    if (error != null) throw error;
+  }
 
   @override
   Future<void> signOut() async => signedOut = true;
@@ -868,6 +869,45 @@ void main() {
   });
 
   group('ReviewController', () {
+    test('auth failures never expose arbitrary exception text', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([])
+        ..signInError = StateError(
+          'sensitive-marker-one sensitive-marker-two',
+        );
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.signIn(email: 'person@example.com', password: 'secret');
+
+      expect(controller.state.error, 'Could not sign in. Try again.');
+      expect(controller.state.error, isNot(contains('sensitive-marker')));
+      expect(controller.state.authSubmitting, isFalse);
+    });
+
+    test('invalid credentials use the bounded helpful auth message', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([])
+        ..signInError = const AuthException(
+          'server wording can change',
+          code: 'invalid_credentials',
+        );
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.signIn(email: 'person@example.com', password: 'secret');
+
+      expect(controller.state.error, 'Wrong email or password.');
+    });
+
     test(
       'a corrupt durable outbox becomes a recoverable startup error',
       () async {

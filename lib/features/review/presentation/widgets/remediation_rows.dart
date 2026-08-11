@@ -136,8 +136,8 @@ class _RemediationSectionState extends State<RemediationSection> {
     );
     try {
       await widget.store.completeRemediation(page.nodeId);
-    } catch (error) {
-      debugPrint('Recall: remediation completion skipped (non-fatal): $error');
+    } catch (_) {
+      debugPrint('Recall: remediation completion skipped (non-fatal)');
     }
     if (mounted) setState(_reload);
   }

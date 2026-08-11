@@ -30,6 +30,7 @@ class StudyReminderSettings {
 
 abstract class StudyReminderPlatform {
   Future<bool> requestPermission();
+  Future<void> openNotificationSettings();
   Future<void> apply(
     StudyReminderSettings settings, {
     required int? dueCount,
@@ -49,6 +50,12 @@ class MethodChannelStudyReminderPlatform implements StudyReminderPlatform {
   Future<bool> requestPermission() async {
     if (!_isNativeMobile) return true;
     return await _channel.invokeMethod<bool>('requestPermission') ?? false;
+  }
+
+  @override
+  Future<void> openNotificationSettings() async {
+    if (!_isNativeMobile) return;
+    await _channel.invokeMethod<void>('openSettings');
   }
 
   @override
@@ -107,6 +114,9 @@ class StudyReminderController extends ChangeNotifier {
        clock = clock ?? DateTime.now;
 
   StudyReminderSettings get value => _value;
+
+  Future<void> openNotificationSettings() =>
+      platform.openNotificationSettings();
 
   Future<void> initialize({String? ownerId, bool apply = true}) =>
       _enqueue(() => _initialize(ownerId: ownerId, apply: apply));
