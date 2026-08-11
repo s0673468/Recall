@@ -71,6 +71,7 @@ void main() {
     expect(xml, contains('android:usesCleartextTraffic="false"'));
     expect(xml, contains('android:enableOnBackInvokedCallback="true"'));
     expect(xml, contains('android.permission.INTERNET'));
+    expect(xml, contains('android.permission.ACCESS_NETWORK_STATE'));
     expect(xml, contains('android.permission.POST_NOTIFICATIONS'));
     expect(xml, contains('android.permission.RECEIVE_BOOT_COMPLETED'));
     expect(xml, contains('android:scheme="recall"'));

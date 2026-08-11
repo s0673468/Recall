@@ -39,7 +39,12 @@ class MethodChannelBackgroundSyncPlatform implements BackgroundSyncPlatform {
       if (call.method != 'performSync') return 'failed';
       return onSyncRequested();
     });
-    await _channel.invokeMethod<void>('ready');
+    try {
+      await _channel.invokeMethod<void>('ready');
+    } catch (_) {
+      // Reconnect delivery is an optimization. Foreground/resume sync still
+      // drains the durable outboxes when the native callback is unavailable.
+    }
   }
 }
 
