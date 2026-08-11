@@ -4,9 +4,11 @@ This tool validates a complete, concept-by-concept semantic review of Recall's
 private learning corpus and compiles it into files accepted by the existing
 guarded Anki authoring pipeline.
 
-It deliberately has no Anki, Supabase, authentication, or network client. It
-cannot apply a change. The live collection remains writable only through the
-separate `anki_apply.py` guard, after its own backup and dry run.
+The compiler deliberately has no Anki, Supabase, authentication, or network
+client. It cannot apply a change. Content is written by the separate guarded
+`anki_apply.py` pipeline after its own backup and dry run. The narrowly scoped
+`apply_tag_mutations.py` companion can then remove obsolete tags; it cannot
+change fields, cards, scheduling, or decks.
 
 ## Inputs
 
@@ -49,6 +51,30 @@ The output contains:
 - `primer_changes.json` and `proposed_nodes.json` for METIS integration;
 - `source_ledger.json` for private provenance; and
 - `summary.json` for coverage and action counts.
+
+## Apply reviewed tag removals
+
+Run the content importer first so every replacement tag exists. Then dry-run
+the mutation manifest against the same collection:
+
+```bash
+python3 tools/semantic_review/apply_tag_mutations.py \
+  --db "/path/to/collection.anki2" \
+  --mutations /private/tmp/recall-semantic/compiled/tag_mutations.json
+```
+
+The apply mode requires an existing non-empty backup plus a literal
+confirmation. It locks the collection, compares every note with its reviewed
+original state, changes tags with exact compare-and-swap updates, runs SQLite's
+integrity check, and reads every tag set back before committing:
+
+```bash
+python3 tools/semantic_review/apply_tag_mutations.py \
+  --db "/path/to/collection.anki2" \
+  --mutations /private/tmp/recall-semantic/compiled/tag_mutations.json \
+  --backup "/path/to/pre-apply-backup.anki2" \
+  --apply --confirmation APPLY_TAG_MUTATIONS
+```
 
 ## Tests
 
