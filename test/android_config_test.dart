@@ -33,6 +33,22 @@ void main() {
   );
   final icon = File('android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png');
   final dartMain = File('lib/main.dart');
+  final pubspec = File('pubspec.yaml');
+
+  test('Android version advances the previously distributed build', () {
+    final match = RegExp(
+      r'^version:\s*[^+\s]+\+(\d+)\s*$',
+      multiLine: true,
+    ).firstMatch(pubspec.readAsStringSync());
+
+    expect(match, isNotNull, reason: 'pubspec must declare a build number');
+    expect(
+      int.parse(match!.group(1)!),
+      greaterThan(2001),
+      reason:
+          'Android build 2001 was previously distributed and must update in place',
+    );
+  });
 
   test('Android host preserves the historical Recall application identity', () {
     expect(
@@ -144,7 +160,10 @@ void main() {
     ]) {
       expect(nativeSources, isNot(contains(forbidden)));
     }
-    expect(nativeSources, isNot(matches(RegExp(r'''["'](?:front|back)["']'''))));
+    expect(
+      nativeSources,
+      isNot(matches(RegExp(r'''["'](?:front|back)["']'''))),
+    );
   });
 
   test('Android launcher icon is opaque and full xxxhdpi resolution', () {
