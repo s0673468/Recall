@@ -133,6 +133,29 @@ def _require_backup(path: Path | None) -> None:
         raise MutationError(f"backup is missing, empty, or not a regular file: {path}")
 
 
+def _verify_backup(path: Path, mutations: list[dict[str, object]]) -> None:
+    """Prove the supplied backup contains the exact reviewed pre-pass tag state."""
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection.create_collation("unicase", _unicase)
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+        if integrity != "ok":
+            raise MutationError(f"backup SQLite integrity check failed: {integrity}")
+        for mutation in mutations:
+            nid = int(mutation["nid"])
+            row = connection.execute(
+                "SELECT tags FROM notes WHERE id=?", (nid,)
+            ).fetchone()
+            if row is None:
+                raise MutationError(f"nid {nid}: note is missing from backup")
+            actual = str(row[0] or "").split()
+            expected = list(mutation["expected_original_tags"])
+            if actual != expected:
+                raise MutationError(f"nid {nid}: backup tags do not match reviewed original")
+    finally:
+        connection.close()
+
+
 def apply_mutations(
     *,
     db_path: Path,
@@ -144,6 +167,8 @@ def apply_mutations(
         raise MutationError(f"Anki database is missing or not a regular file: {db_path}")
     if commit:
         _require_backup(backup_path)
+        assert backup_path is not None
+        _verify_backup(backup_path, mutations)
 
     connection = sqlite3.connect(db_path)
     connection.create_collation("unicase", _unicase)

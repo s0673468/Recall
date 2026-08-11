@@ -87,7 +87,6 @@ class TagMutationTest(unittest.TestCase):
             root = Path(temp_dir)
             db = root / "collection.anki2"
             backup = root / "before.anki2"
-            backup.write_bytes(b"backup")
             connection = sqlite3.connect(db)
             connection.create_collation(
                 "unicase", lambda a, b: (a.lower() > b.lower()) - (a.lower() < b.lower())
@@ -97,9 +96,16 @@ class TagMutationTest(unittest.TestCase):
                 CREATE TABLE notes (id INTEGER PRIMARY KEY, tags TEXT, mod INTEGER, usn INTEGER);
                 CREATE TABLE tags (tag TEXT PRIMARY KEY COLLATE unicase, usn INTEGER, collapsed INTEGER, config TEXT);
                 CREATE TABLE col (mod INTEGER);
-                INSERT INTO notes VALUES (7, ' deck::ml node::old node::new ', 1, 0);
+                INSERT INTO notes VALUES (7, ' deck::ml node::old ', 1, 0);
                 INSERT INTO col VALUES (1);
                 """
+            )
+            connection.commit()
+            backup_connection = sqlite3.connect(backup)
+            connection.backup(backup_connection)
+            backup_connection.close()
+            connection.execute(
+                "UPDATE notes SET tags=' deck::ml node::old node::new ' WHERE id=7"
             )
             connection.commit()
             connection.close()
@@ -148,6 +154,42 @@ class TagMutationTest(unittest.TestCase):
                 )
             self.assertEqual(summary["integrity"], "ok")
             self.assertEqual(summary["verified"], 1)
+
+    def test_apply_rejects_backup_that_does_not_match_reviewed_original(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db = root / "collection.anki2"
+            backup = root / "wrong-backup.anki2"
+            for path, tags in (
+                (db, " node::old node::new "),
+                (backup, " node::different "),
+            ):
+                connection = sqlite3.connect(path)
+                connection.executescript(
+                    """
+                    CREATE TABLE notes (id INTEGER PRIMARY KEY, tags TEXT, mod INTEGER, usn INTEGER);
+                    CREATE TABLE tags (tag TEXT PRIMARY KEY, usn INTEGER, collapsed INTEGER, config TEXT);
+                    CREATE TABLE col (mod INTEGER);
+                    """
+                )
+                connection.execute("INSERT INTO notes VALUES (7, ?, 1, 0)", (tags,))
+                connection.execute("INSERT INTO col VALUES (1)")
+                connection.commit()
+                connection.close()
+            mutation = {
+                "nid": 7,
+                "add": ["node::new"],
+                "remove": ["node::old"],
+                "expected_original_tags": ["node::old"],
+            }
+
+            with self.assertRaisesRegex(MutationError, "backup tags do not match"):
+                apply_mutations(
+                    db_path=db,
+                    mutations=[mutation],
+                    backup_path=backup,
+                    commit=True,
+                )
 
 
 if __name__ == "__main__":

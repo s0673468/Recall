@@ -21,8 +21,8 @@ change fields, cards, scheduling, or decks.
 Every existing note id must appear exactly once and in its original concept
 order. Kept cards must be byte-identical. Remaining cards must score 4 or 5.
 The compiler rejects unresolved claims, missing clusters, malformed actions,
-unknown decks or concept tags, incomplete placeholder-node moves, and any
-output directory that already contains files.
+unknown decks or concept tags, clusters without an accuracy source, incomplete
+placeholder-node moves, and output directories that already contain files.
 
 ## Compile
 
@@ -49,8 +49,8 @@ The output contains:
   directory is a self-contained guarded apply input;
 - `tag_mutations.json` for separately reviewed tag removals or node moves;
 - `primer_changes.json` and `proposed_nodes.json` for METIS integration;
-- `primer_files/*.html`, containing exact reviewed primer replacements ready
-  for a mechanical copy into the METIS source tree;
+- `primer_files/*.html`, containing exact reviewed replacements and new-node
+  primers ready for a mechanical copy into the METIS source tree;
 - `source_ledger.json` for private provenance; and
 - `summary.json` for coverage and action counts.
 
@@ -67,8 +67,9 @@ python3 tools/semantic_review/apply_tag_mutations.py \
 
 The apply mode requires an existing non-empty backup plus a literal
 confirmation. It locks the collection, compares every note with its reviewed
-original state, changes tags with exact compare-and-swap updates, runs SQLite's
-integrity check, and reads every tag set back before committing:
+original state, proves the backup contains the exact pre-pass tags, changes tags
+with compare-and-swap updates, runs SQLite's integrity check, and reads every
+tag set back before committing:
 
 ```bash
 python3 tools/semantic_review/apply_tag_mutations.py \

@@ -101,6 +101,16 @@ def _validate_primer_candidate(
         raise ReviewError(f"{node_id}: primer validation failed: {'; '.join(errors)}")
 
 
+def _primer_filename(value: str, label: str) -> str:
+    candidate = Path(value)
+    if candidate.name != value or value in {"", ".", ".."}:
+        raise ReviewError(f"{label} must be a plain filename component")
+    filename = value if value.endswith(".html") else f"{value}.html"
+    if filename in {".html", "..html"}:
+        raise ReviewError(f"{label} must name an HTML file")
+    return filename
+
+
 def validate_review(
     review: object,
     bundle: dict[str, object],
@@ -121,8 +131,8 @@ def validate_review(
     _require_string(review.get("summary"), f"{node_id}.summary")
 
     sources = review.get("sources")
-    if not isinstance(sources, list):
-        raise ReviewError(f"{node_id}.sources must be a list")
+    if not isinstance(sources, list) or not sources:
+        raise ReviewError(f"{node_id}.sources needs at least one accuracy source")
     for index, source in enumerate(sources):
         if not isinstance(source, dict):
             raise ReviewError(f"{node_id}.sources[{index}] must be an object")
@@ -203,6 +213,7 @@ def validate_review(
         if not isinstance(proposed, dict):
             raise ReviewError(f"{label} must be an object")
         proposed_id = _require_string(proposed.get("node_id"), f"{label}.node_id")
+        _primer_filename(proposed_id, f"{label}.node_id")
         if proposed_id in known_nodes or proposed_id in proposed_ids:
             raise ReviewError(f"{label}: proposed node id already exists or is duplicated")
         proposed_ids.add(proposed_id)
@@ -238,6 +249,31 @@ def validate_review(
     if node_id == "none" and moved_nids != set(original_by_nid):
         raise ReviewError("none: every placeholder card must have exactly one node move")
 
+    for change in normalized_changes:
+        nid = change["nid"]
+        original_nodes = {
+            tag
+            for tag in original_by_nid[nid].get("tags", [])
+            if isinstance(tag, str) and tag.startswith("node::")
+        }
+        added_nodes = {
+            tag
+            for card in change["cards"]
+            for tag in card["tags_add"]
+            if tag.startswith("node::")
+        }
+        removed_nodes = {
+            tag
+            for card in change["cards"]
+            for tag in card["tags_remove"]
+            if tag.startswith("node::")
+        }
+        changes_concept = bool((added_nodes - original_nodes) or removed_nodes)
+        if changes_concept and nid not in moved_nids:
+            raise ReviewError(
+                f"{node_id}: nid {nid} changes a concept tag and requires a node_moves record"
+            )
+
     new_cards = review.get("new_cards")
     if not isinstance(new_cards, list):
         raise ReviewError(f"{node_id}.new_cards must be a list")
@@ -258,6 +294,8 @@ def validate_review(
             for card_index, card in enumerate(raw_cards)
         ]
         for card_index, card in enumerate(cards):
+            if card["tags_remove"]:
+                raise ReviewError(f"{label}.cards[{card_index}]: new cards cannot remove tags")
             node_tags = [tag for tag in card["tags_add"] if tag.startswith("node::")]
             if len(node_tags) != 1 or node_tags[0][6:] not in known_nodes | proposed_ids:
                 raise ReviewError(f"{label}.cards[{card_index}] needs one real node tag")
@@ -408,6 +446,11 @@ def compile_reviews(
             for card_index, card in enumerate(change["cards"]):
                 tags_add = list(card["tags_add"])
                 tags_remove = list(card["tags_remove"])
+                if card_index > 0:
+                    tags_add = [
+                        *original_by_nid[nid].get("tags", []),
+                        *tags_add,
+                    ]
                 if nid in moves_by_nid:
                     move = moves_by_nid[nid]
                     tags_remove.append(f"node::{move['from_node']}")
@@ -505,19 +548,26 @@ def compile_reviews(
     }
     for name, payload in artifacts.items():
         (output_dir / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    if primer_changes:
+    if primer_changes or proposed_nodes:
         primer_dir = output_dir / "primer_files"
         primer_dir.mkdir()
         for change in primer_changes:
-            filename = Path(str(change["path"])).name
-            if not filename.endswith(".html") or filename in {".html", "..html"}:
-                raise ReviewError(
-                    f"{change['node_id']}: primer path must end in a named HTML file"
-                )
+            path = Path(str(change["path"]))
+            filename = _primer_filename(path.name, f"{change['node_id']}.primer path")
+            if path.suffix != ".html":
+                raise ReviewError(f"{change['node_id']}: primer path must end in .html")
             destination = primer_dir / filename
             if destination.exists():
                 raise ReviewError(f"duplicate primer output filename: {filename}")
             destination.write_text(str(change["after"]), encoding="utf-8")
+        for proposed in proposed_nodes:
+            filename = _primer_filename(
+                str(proposed["node_id"]), f"{proposed['node_id']}.node_id"
+            )
+            destination = primer_dir / filename
+            if destination.exists():
+                raise ReviewError(f"duplicate primer output filename: {filename}")
+            destination.write_text(str(proposed["primer_html"]), encoding="utf-8")
 
     summary: dict[str, object] = {
         "clusters": len(node_rows),

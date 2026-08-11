@@ -93,7 +93,15 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         review = {
             "node_id": "concept-a",
             "summary": "Already meets the standard.",
-            "sources": [],
+            "sources": [
+                {
+                    "title": "Authoritative concept A reference",
+                    "url": "https://example.invalid/concept-a",
+                    "published_or_updated": "2026-01-01",
+                    "accessed": "2026-08-11",
+                    "supports": ["The reviewed definition of concept A"],
+                }
+            ],
             "card_changes": [
                 {
                     "nid": 101,
@@ -173,6 +181,12 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError, "score_after must be 4 or 5"):
             self.compile()
 
+    def test_rejects_cluster_without_accuracy_provenance(self) -> None:
+        self.write_review(sources=[])
+
+        with self.assertRaisesRegex(ReviewError, "at least one accuracy source"):
+            self.compile()
+
     def test_incomplete_mode_reports_missing_cluster_without_writing_batches(self) -> None:
         summary = compile_reviews(
             concept_manifest_path=self.concept_manifest,
@@ -234,6 +248,79 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         self.assertEqual(additions[0]["action"], "add")
         self.assertIsNone(additions[0]["nid"])
 
+    def test_split_children_inherit_original_tags(self) -> None:
+        self.write_review(
+            card_changes=[
+                {
+                    "nid": 101,
+                    "action": "split",
+                    "rationale": "Two independent retrievals were bundled.",
+                    "score_before": 3,
+                    "score_after": 4,
+                    "cards": [
+                        {
+                            "front": "First atomic front?",
+                            "back": "First atomic back.",
+                            "tags_add": [],
+                            "tags_remove": [],
+                        },
+                        {
+                            "front": "Second atomic front?",
+                            "back": "Second atomic back.",
+                            "tags_add": [],
+                            "tags_remove": [],
+                        },
+                    ],
+                }
+            ]
+        )
+
+        self.compile()
+
+        compiled = json.loads(
+            (self.compiled / "verified" / "batch_001.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(compiled[0]["cards"][0]["tags_add"], [])
+        self.assertEqual(
+            compiled[0]["cards"][1]["tags_add"],
+            ["ml", "node::concept-a"],
+        )
+
+    def test_rejects_unrecorded_concept_tag_change(self) -> None:
+        self.write_review()
+        path = self.reviews / "concept-a.json"
+        review = json.loads(path.read_text(encoding="utf-8"))
+        review["card_changes"][0]["action"] = "edit"
+        review["card_changes"][0]["cards"][0]["tags_add"] = ["node::other"]
+        path.write_text(json.dumps(review), encoding="utf-8")
+
+        with self.assertRaisesRegex(ReviewError, "requires a node_moves record"):
+            self.compile()
+
+    def test_rejects_tag_removal_from_a_brand_new_card(self) -> None:
+        self.write_review(
+            new_cards=[
+                {
+                    "action": "add",
+                    "deck": "ML",
+                    "rationale": "Adds an application.",
+                    "cards": [
+                        {
+                            "front": "Apply concept A?",
+                            "back": "Application answer.",
+                            "tags_add": ["node::concept-a"],
+                            "tags_remove": ["legacy"],
+                        }
+                    ],
+                }
+            ]
+        )
+
+        with self.assertRaisesRegex(ReviewError, "new cards cannot remove tags"):
+            self.compile()
+
     def test_emits_exact_edited_primer_as_a_copyable_file(self) -> None:
         primer_path = "/source/curriculum/primers/concept-a.html"
         original = "Original primer body."
@@ -263,6 +350,30 @@ class SemanticReviewCompilerTest(unittest.TestCase):
                 encoding="utf-8"
             ),
             replacement,
+        )
+
+    def test_emits_proposed_node_primer_as_a_copyable_file(self) -> None:
+        self.write_review(
+            proposed_nodes=[
+                {
+                    "node_id": "concept-adjacent",
+                    "title": "Adjacent concept",
+                    "module": "ML-extra",
+                    "difficulty": 2,
+                    "primer_html": "Reviewed adjacent primer.",
+                    "rationale": "The adjacent concept deserves a distinct cluster.",
+                }
+            ]
+        )
+
+        summary = self.compile()
+
+        self.assertEqual(summary["proposed_nodes"], 1)
+        self.assertEqual(
+            (self.compiled / "primer_files" / "concept-adjacent.html").read_text(
+                encoding="utf-8"
+            ),
+            "Reviewed adjacent primer.",
         )
 
     def test_placeholder_cluster_requires_a_move_for_every_card(self) -> None:
@@ -299,7 +410,15 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         none_review = {
             "node_id": "none",
             "summary": "Placeholder reviewed.",
-            "sources": [],
+            "sources": [
+                {
+                    "title": "Authoritative placeholder reference",
+                    "url": "https://example.invalid/placeholder",
+                    "published_or_updated": "2026-01-01",
+                    "accessed": "2026-08-11",
+                    "supports": ["The reviewed placeholder content"],
+                }
+            ],
             "card_changes": [
                 {
                     "nid": 202,
