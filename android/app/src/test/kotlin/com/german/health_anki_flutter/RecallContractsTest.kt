@@ -11,6 +11,58 @@ import org.junit.Test
 
 class RecallContractsTest {
     @Test
+    fun validatedNetworkTransitionRetriggersAfterValidationIsLost() {
+        val state = ValidatedNetworkTransition<String>()
+
+        assertTrue(state.onCapabilitiesChanged("wifi", isValidated = true))
+        assertFalse(state.onCapabilitiesChanged("wifi", isValidated = true))
+        assertFalse(state.onCapabilitiesChanged("wifi", isValidated = false))
+        assertTrue(state.onCapabilitiesChanged("wifi", isValidated = true))
+        assertFalse(state.onLost("cellular"))
+        assertTrue(state.onLost("wifi"))
+    }
+
+    @Test
+    fun notificationReadinessCoversRuntimeGlobalAndChannelBlocks() {
+        assertEquals(
+            RecallNotificationReadiness.NEEDS_RUNTIME_PERMISSION,
+            RecallNotificationReadiness.evaluate(
+                sdkInt = 33,
+                runtimePermissionGranted = false,
+                appNotificationsEnabled = false,
+                channelImportance = 0,
+            ),
+        )
+        assertEquals(
+            RecallNotificationReadiness.BLOCKED,
+            RecallNotificationReadiness.evaluate(
+                sdkInt = 32,
+                runtimePermissionGranted = true,
+                appNotificationsEnabled = false,
+                channelImportance = null,
+            ),
+        )
+        assertEquals(
+            RecallNotificationReadiness.BLOCKED,
+            RecallNotificationReadiness.evaluate(
+                sdkInt = 33,
+                runtimePermissionGranted = true,
+                appNotificationsEnabled = true,
+                channelImportance = 0,
+            ),
+        )
+        assertEquals(
+            RecallNotificationReadiness.READY,
+            RecallNotificationReadiness.evaluate(
+                sdkInt = 33,
+                runtimePermissionGranted = true,
+                appNotificationsEnabled = true,
+                channelImportance = 3,
+            ),
+        )
+    }
+
+    @Test
     fun reminderContractAcceptsOnlyCompleteBoundedValues() {
         val valid = mapOf(
             "enabled" to true,

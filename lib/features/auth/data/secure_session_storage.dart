@@ -151,10 +151,10 @@ class SecureRecallSupabaseLocalStorage
   Future<void> persistSession(String persistSessionString) async {
     try {
       await persistSessionStrict(persistSessionString);
-    } catch (error) {
+    } catch (_) {
       // Supabase Flutter invokes LocalStorage callbacks without awaiting them.
       // RecallApi separately awaits the strict method for user-driven auth.
-      debugPrint('Recall: background session persistence failed: $error');
+      debugPrint('Recall: background session persistence failed');
     }
   }
 
@@ -181,10 +181,10 @@ class SecureRecallSupabaseLocalStorage
   Future<void> removePersistedSession() async {
     try {
       await removePersistedSessionStrict();
-    } catch (error) {
+    } catch (_) {
       // See persistSession: framework callbacks are best-effort, while the
       // explicit RecallApi sign-out path awaits and surfaces strict deletion.
-      debugPrint('Recall: background session deletion failed: $error');
+      debugPrint('Recall: background session deletion failed');
     }
   }
 }
