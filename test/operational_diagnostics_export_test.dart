@@ -51,10 +51,38 @@ void main() {
     },
   );
 
-  test('non-iOS platforms are a no-op', () async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+  test(
+    'Android sends only the canonical encoded array to the native mirror',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final encoded = jsonEncode([_event()]);
+
+      await exporter.export(encoded);
+
+      expect(calls, [
+        const TypeMatcher<MethodCall>()
+            .having((call) => call.method, 'method', 'mirror')
+            .having((call) => call.arguments, 'arguments', {
+              'payload': encoded,
+            }),
+      ]);
+    },
+  );
+
+  test('non-mobile native platforms are a no-op', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
 
     await exporter.export(jsonEncode([_event()]));
+
+    expect(calls, isEmpty);
+  });
+
+  test('malformed payloads never reach Android', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final withCardKey = _event()..['card_id'] = 42;
+
+    await exporter.export('{bad json');
+    await exporter.export(jsonEncode([withCardKey]));
 
     expect(calls, isEmpty);
   });

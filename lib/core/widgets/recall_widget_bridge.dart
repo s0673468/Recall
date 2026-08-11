@@ -1,13 +1,13 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../features/review/application/review_controller.dart';
 import '../../features/review/application/review_state.dart';
+import '../platform/recall_platform.dart';
 
-/// The complete, deliberately narrow contract shared with WidgetKit.
+/// The complete, deliberately narrow contract shared with native widgets.
 ///
 /// No account identifier, deck name, card content, or review row crosses the
 /// App Group boundary. The extension receives only a count and the instant at
@@ -40,7 +40,7 @@ class MethodChannelRecallWidgetStore implements RecallWidgetStore {
 
   const MethodChannelRecallWidgetStore();
 
-  bool get _supported => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  bool get _supported => recallRunsAsNativeMobile();
 
   @override
   Future<void> update(RecallWidgetSnapshot snapshot) async {
@@ -120,7 +120,7 @@ class RecallWidgetPublisher {
   }
 }
 
-/// Keeps WidgetKit current for both network and offline/cached queue changes.
+/// Keeps native widgets current for network and offline/cached queue changes.
 class RecallWidgetBridge extends StatefulWidget {
   final ReviewController controller;
   final Widget child;

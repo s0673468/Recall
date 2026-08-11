@@ -48,7 +48,7 @@ class HealthWebApp {
 /// `/Health/` prefix is hardcoded — Flutter's injected `<base href>` already
 /// encodes the deployed path.
 ///
-/// On native iOS, the platform adapter supplies the configured deployed suite
+/// On native mobile, the platform adapter supplies the deployed suite
 /// root instead of a document URI.
 @visibleForTesting
 String? suiteRootFromBaseUri(String? baseUri) {
@@ -82,8 +82,8 @@ void _openApp(HealthWebApp app) {
 }
 
 /// A compact pill row linking the active Health apps, highlighting [current].
-/// Browser builds stay in the suite; native iOS opens sibling apps in Safari.
-/// Other native platforms render nothing, so callers can drop it in unguarded.
+/// Browser builds stay in the suite; native mobile opens sibling apps in the
+/// system browser. Other native platforms render nothing.
 class AppSwitcher extends StatelessWidget {
   final HealthWebApp current;
   final WrapAlignment alignment;
@@ -96,8 +96,7 @@ class AppSwitcher extends StatelessWidget {
 
   /// Whether the switcher renders at all on this platform. Use this to hide
   /// surrounding chrome (section cards, headers) on non-web builds.
-  static bool get isSupported =>
-      kIsWeb || defaultTargetPlatform == TargetPlatform.iOS;
+  static bool get isSupported => supportsAppSwitcher();
 
   @override
   Widget build(BuildContext context) {
@@ -164,7 +163,7 @@ class _AppPill extends StatelessWidget {
 
 /// App-bar variant of [AppSwitcher]: a single icon button opening a menu of
 /// the active apps, for apps whose chrome has no settings surface to host the
-/// pill row. Supported on web and native iOS.
+/// pill row. Supported on web and native mobile.
 class AppSwitcherMenuButton extends StatelessWidget {
   final HealthWebApp current;
 
@@ -203,4 +202,13 @@ class AppSwitcherMenuButton extends StatelessWidget {
       ],
     );
   }
+}
+
+@visibleForTesting
+bool supportsAppSwitcher({bool? isWeb, TargetPlatform? targetPlatform}) {
+  if (isWeb ?? kIsWeb) return true;
+  return switch (targetPlatform ?? defaultTargetPlatform) {
+    TargetPlatform.iOS || TargetPlatform.android => true,
+    _ => false,
+  };
 }

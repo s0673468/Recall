@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_anki_flutter/vendored/src/navigation/app_switcher.dart';
 
@@ -14,6 +15,13 @@ void main() {
     expect(
       suiteRootFromBaseUri('https://example.test/Health/recall/'),
       'https://example.test/Health/',
+    );
+  });
+
+  test('native Android keeps the installed-app switcher surface', () {
+    expect(
+      supportsAppSwitcher(isWeb: false, targetPlatform: TargetPlatform.android),
+      isTrue,
     );
   });
 }
