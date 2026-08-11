@@ -131,6 +131,19 @@ def _validate_figure(
             "rationale": "No figure is attached to this cluster.",
             "svg": None,
         }
+    source_path = Path(str(original_path))
+    if not source_path.is_file():
+        raise ReviewError(f"{node_id}: original figure is missing: {source_path}")
+    try:
+        original_root = ET.fromstring(source_path.read_text(encoding="utf-8"))
+    except (OSError, ET.ParseError) as error:
+        raise ReviewError(f"{node_id}: original figure is invalid XML: {error}") from error
+    if original_root.tag.rsplit("}", 1)[-1] != "svg":
+        raise ReviewError(f"{node_id}: original figure root must be svg")
+    if any(
+        element.tag.rsplit("}", 1)[-1] == "script" for element in original_root.iter()
+    ):
+        raise ReviewError(f"{node_id}: original figure cannot contain script")
     if candidate is None:
         return {
             "action": "unreviewed",
