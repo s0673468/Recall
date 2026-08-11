@@ -32,6 +32,16 @@ void main() {
     'android/app/src/main/res/xml/recall_widget_info.xml',
   );
   final icon = File('android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png');
+  final adaptiveForeground = File(
+    'android/app/src/main/res/drawable/ic_launcher_foreground.xml',
+  );
+  final adaptiveBackground = File(
+    'android/app/src/main/res/drawable/ic_launcher_background.xml',
+  );
+  final adaptiveForegroundBitmap = File(
+    'android/app/src/main/res/drawable-xxxhdpi/'
+    'ic_launcher_foreground_bitmap.png',
+  );
   final dartMain = File('lib/main.dart');
   final pubspec = File('pubspec.yaml');
 
@@ -136,6 +146,36 @@ void main() {
     expect(kotlin, contains('operational-event/v2'));
   });
 
+  test('Android mirrors every maintained native iOS integration channel', () {
+    final androidSources = [
+      mainActivity,
+      contracts,
+      diagnostics,
+      reminderReceiver,
+      widgetProvider,
+    ].map((file) => file.readAsStringSync()).join('\n');
+    final iosSources = [
+      File('ios/Runner/RecallBackgroundSyncPlugin.swift'),
+      File('ios/Runner/RecallOperationalDiagnosticsPlugin.swift'),
+      File('ios/Runner/RecallStudyReminderPlugin.swift'),
+      File('ios/Runner/RecallWidgetPlugin.swift'),
+    ].map((file) => file.readAsStringSync()).join('\n');
+
+    for (final channel in [
+      'com.german.ankiReview/backgroundSync',
+      'com.german.ankiReview/operationalDiagnostics',
+      'com.german.ankiReview/studyReminder',
+      'com.german.ankiReview/widget',
+    ]) {
+      expect(iosSources, contains(channel), reason: 'iOS must expose $channel');
+      expect(
+        androidSources,
+        contains(channel),
+        reason: 'Android must expose the iOS integration $channel',
+      );
+    }
+  });
+
   test('Android reminder and widget remain aggregate-only', () {
     expect(reminderReceiver.existsSync(), isTrue);
     expect(widgetProvider.existsSync(), isTrue);
@@ -179,5 +219,30 @@ void main() {
     expect(data.getUint32(20, Endian.big), 192);
     expect(bytes[24], 8, reason: 'The launcher should use 8-bit channels.');
     expect(bytes[25], anyOf(2, 6), reason: 'The launcher must be RGB or RGBA.');
+  });
+
+  test('Android adaptive icon reuses the canonical iOS mark', () {
+    final foregroundXml = adaptiveForeground.readAsStringSync();
+    final backgroundXml = adaptiveBackground.readAsStringSync();
+
+    expect(foregroundXml, contains('@drawable/ic_launcher_foreground_bitmap'));
+    expect(
+      foregroundXml,
+      isNot(contains('android:pathData')),
+      reason: 'Android must not redraw the Recall mark with a divergent path.',
+    );
+    expect(adaptiveForegroundBitmap.existsSync(), isTrue);
+
+    final bytes = adaptiveForegroundBitmap.readAsBytesSync();
+    final data = ByteData.sublistView(bytes);
+    expect(data.getUint32(16, Endian.big), 432);
+    expect(data.getUint32(20, Endian.big), 432);
+    expect(bytes[25], 6, reason: 'The adaptive foreground must retain alpha.');
+    expect(backgroundXml, contains('<solid android:color="#1F1E3B"'));
+    expect(
+      backgroundXml,
+      isNot(contains('<gradient')),
+      reason: 'The Android background must match the canonical iOS navy.',
+    );
   });
 }
