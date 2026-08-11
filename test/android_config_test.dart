@@ -147,13 +147,8 @@ void main() {
   });
 
   test('Android mirrors every maintained native iOS integration channel', () {
-    final androidSources = [
-      mainActivity,
-      contracts,
-      diagnostics,
-      reminderReceiver,
-      widgetProvider,
-    ].map((file) => file.readAsStringSync()).join('\n');
+    final mainActivitySource = mainActivity.readAsStringSync();
+    final contractsSource = contracts.readAsStringSync();
     final iosSources = [
       File('ios/Runner/RecallBackgroundSyncPlugin.swift'),
       File('ios/Runner/RecallOperationalDiagnosticsPlugin.swift'),
@@ -169,9 +164,39 @@ void main() {
     ]) {
       expect(iosSources, contains(channel), reason: 'iOS must expose $channel');
       expect(
-        androidSources,
+        contractsSource,
         contains(channel),
-        reason: 'Android must expose the iOS integration $channel',
+        reason: 'Android must declare the iOS integration $channel',
+      );
+    }
+
+    for (final registration in [
+      'MethodChannel(messenger, RecallContracts.studyReminderChannel)',
+      'MethodChannel(messenger, RecallContracts.widgetChannel)',
+      'MethodChannel(messenger, RecallContracts.operationalDiagnosticsChannel)',
+      'MethodChannel(messenger, RecallContracts.backgroundSyncChannel)',
+    ]) {
+      expect(
+        mainActivitySource,
+        contains(registration),
+        reason: 'Android must register $registration at runtime',
+      );
+    }
+
+    for (final handler in [
+      '"requestPermission" -> requestNotificationPermission(result)',
+      '"apply" ->',
+      '"cancel" ->',
+      '"update" ->',
+      '"clear" ->',
+      'call.method != "mirror"',
+      'call.method == "ready"',
+      'registerReconnectSync()',
+    ]) {
+      expect(
+        mainActivitySource,
+        contains(handler),
+        reason: 'Android must retain native channel behavior: $handler',
       );
     }
   });
