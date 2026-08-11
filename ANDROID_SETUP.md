@@ -44,8 +44,8 @@ path when needed.
 
 ```bash
 cd android
-JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew testDebugUnitTest
-JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew assembleDebug assembleDebugAndroidTest
+JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew :app:testDebugUnitTest
+JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
 Use the profile build for on-device frame and startup measurements:

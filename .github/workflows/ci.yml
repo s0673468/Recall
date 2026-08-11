@@ -76,4 +76,4 @@ jobs:
 
       - name: Android unit and instrumentation build checks
         working-directory: android
-        run: ./gradlew testDebugUnitTest assembleDebugAndroidTest --no-daemon
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest --no-daemon
