@@ -352,7 +352,6 @@ class _Header extends StatelessWidget {
             const Spacer(),
             if (onUndo != null)
               IconButton(
-                visualDensity: VisualDensity.compact,
                 tooltip: 'Undo last rating',
                 icon: const Icon(
                   Icons.undo,
@@ -363,7 +362,6 @@ class _Header extends StatelessWidget {
               ),
             if (onFlag != null)
               IconButton(
-                visualDensity: VisualDensity.compact,
                 tooltip: 'Flag card',
                 icon: const Icon(
                   Icons.flag_outlined,
@@ -374,7 +372,6 @@ class _Header extends StatelessWidget {
               ),
             if (onOpenSettings != null)
               IconButton(
-                visualDensity: VisualDensity.compact,
                 tooltip: 'Settings',
                 icon: const Icon(
                   Icons.settings_outlined,

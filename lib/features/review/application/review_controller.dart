@@ -1049,8 +1049,8 @@ class ReviewController extends ChangeNotifier {
     final now = clock();
     final raw = await store.loadCatchUpState();
     final local = BacklogCatchUp.normalizeLocalState(raw, now);
-    final completedToday = raw.mode == CatchUpMode.none ||
-            raw.dayKey == BacklogCatchUp.dayKey(now)
+    final completedToday =
+        raw.mode == CatchUpMode.none || raw.dayKey == BacklogCatchUp.dayKey(now)
         ? view.completedToday
         : local.completedToday;
     await _saveCatchUpStateQuietly(
@@ -1341,7 +1341,7 @@ class PendingSyncException implements Exception {
   @override
   String toString() =>
       'Recall is keeping $total pending study ${total == 1 ? 'action' : 'actions'} '
-      'on this iPhone. Connect to the internet and try signing out again.';
+      'on this device. Connect to the internet and try signing out again.';
 }
 
 /// Everything needed to revert the most recent rating: the pre-rating card

@@ -67,16 +67,18 @@ void main() {
     final dependencies = File('pubspec.yaml').readAsStringSync();
     final resolvedDependencies = File('pubspec.lock').readAsStringSync();
     final plist = File('ios/Runner/Info.plist').readAsStringSync();
-    final androidPlugins = File(
-      'android/app/src/main/java/io/flutter/plugins/'
-      'GeneratedPluginRegistrant.java',
+    final androidHost = File(
+      'android/app/src/main/kotlin/com/german/health_anki_flutter/'
+      'MainActivity.kt',
     ).readAsStringSync();
 
     expect(app, isNot(contains('BiometricUnlockGate')));
     expect(app, isNot(contains('supportsRecallBiometricUnlock')));
     expect(dependencies, isNot(contains('local_auth:')));
     expect(resolvedDependencies, isNot(contains('local_auth')));
-    expect(androidPlugins, isNot(contains('LocalAuthPlugin')));
+    expect(androidHost, contains('SharedPreferencesPlugin'));
+    expect(androidHost, isNot(contains('LocalAuthPlugin')));
+    expect(androidHost, isNot(contains('FlutterPasskeysPlugin')));
     expect(plist, isNot(contains('NSFaceIDUsageDescription')));
     expect(
       File(

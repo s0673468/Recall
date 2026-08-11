@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="study"
+        android:enabled="true"
+        android:icon="@drawable/ic_study"
+        android:shortcutShortLabel="@string/shortcut_study_short"
+        android:shortcutLongLabel="@string/shortcut_study_long"
+        android:shortcutDisabledMessage="@string/shortcut_study_disabled">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.german.health_anki_flutter"
+            android:targetClass="com.german.health_anki_flutter.MainActivity"
+            android:data="recall://study" />
+    </shortcut>
+</shortcuts>

@@ -228,7 +228,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return SectionCard(
           flat: true,
           title: 'Study reminder',
-          subtitle: 'One gentle daily nudge, delivered by your iPhone.',
+          subtitle: 'One gentle daily nudge, delivered by this device.',
           child: Column(
             children: [
               SwitchListTile.adaptive(
@@ -242,7 +242,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                            'Notifications are off. Enable them in iPhone Settings to use reminders.',
+                            'Notifications are off. Enable them in system settings to use reminders.',
                           ),
                         ),
                       );

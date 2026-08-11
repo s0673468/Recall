@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/platform/recall_platform.dart';
+
 class StudyReminderSettings {
   final bool enabled;
   final int hour;
@@ -41,12 +43,11 @@ class MethodChannelStudyReminderPlatform implements StudyReminderPlatform {
 
   const MethodChannelStudyReminderPlatform();
 
-  bool get _isNativeIos =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  bool get _isNativeMobile => recallRunsAsNativeMobile();
 
   @override
   Future<bool> requestPermission() async {
-    if (!_isNativeIos) return true;
+    if (!_isNativeMobile) return true;
     return await _channel.invokeMethod<bool>('requestPermission') ?? false;
   }
 
@@ -56,7 +57,7 @@ class MethodChannelStudyReminderPlatform implements StudyReminderPlatform {
     required int? dueCount,
     required bool studiedToday,
   }) async {
-    if (!_isNativeIos) return;
+    if (!_isNativeMobile) return;
     await _channel.invokeMethod<void>('apply', {
       'enabled': settings.enabled,
       'hour': settings.hour,
@@ -68,7 +69,7 @@ class MethodChannelStudyReminderPlatform implements StudyReminderPlatform {
 
   @override
   Future<void> cancel() async {
-    if (!_isNativeIos) return;
+    if (!_isNativeMobile) return;
     await _channel.invokeMethod<void>('cancel');
   }
 }

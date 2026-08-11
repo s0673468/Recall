@@ -71,4 +71,41 @@ void main() {
       'HapticFeedbackType.heavyImpact',
     ]);
   });
+
+  testWidgets('native Android uses the same restrained review feedback', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        calls.add(call);
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final haptics = ReviewHaptics.forPlatform(
+      isWeb: false,
+      targetPlatform: TargetPlatform.android,
+    );
+
+    haptics
+      ..reveal()
+      ..rating()
+      ..undo()
+      ..completion();
+    await tester.pump();
+
+    expect(calls.map((call) => call.arguments), [
+      'HapticFeedbackType.lightImpact',
+      'HapticFeedbackType.selectionClick',
+      'HapticFeedbackType.mediumImpact',
+      'HapticFeedbackType.heavyImpact',
+    ]);
+  });
 }

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:health_anki_flutter/core/background/background_sync_coordinator.dart';
@@ -66,6 +68,27 @@ class _DelayedDiagnostics implements OperationalEventRecorder {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('native reconnect registration cannot block app startup', () async {
+    const channel = MethodChannel('com.german.ankiReview/backgroundSync');
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async {
+          throw PlatformException(code: 'native_callback_unavailable');
+        });
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    await expectLater(
+      const MethodChannelBackgroundSyncPlatform().start(() async => 'noData'),
+      completes,
+    );
+  });
+
   test('background sync reports new data when durable writes drain', () async {
     final platform = _FakeBackgroundSyncPlatform();
     final coordinator = BackgroundSyncCoordinator(

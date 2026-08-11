@@ -16,6 +16,30 @@ void main() {
     );
   });
 
+  test('native Android detection excludes the web build', () {
+    expect(
+      recallRunsAsNativeAndroid(
+        isWeb: false,
+        targetPlatform: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+    expect(
+      recallRunsAsNativeAndroid(
+        isWeb: true,
+        targetPlatform: TargetPlatform.android,
+      ),
+      isFalse,
+    );
+    expect(
+      recallRunsAsNativeMobile(
+        isWeb: false,
+        targetPlatform: TargetPlatform.android,
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('native iOS uses translucent Cupertino tab chrome', (
     tester,
   ) async {
@@ -54,6 +78,31 @@ void main() {
     expect(bar.destinations, hasLength(4));
     expect(find.text('Read'), findsOneWidget);
     expect(find.byType(CupertinoTabBar), findsNothing);
+  });
+
+  testWidgets('wide Android surfaces use an adaptive navigation rail', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Row(
+            children: [
+              RecallNavigationRail(
+                selectedIndex: 0,
+                onDestinationSelected: (_) {},
+              ),
+              const Expanded(child: SizedBox()),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
+    expect(rail.destinations, hasLength(4));
+    expect(find.text('Study'), findsOneWidget);
+    expect(find.byType(NavigationBar), findsNothing);
   });
 
   test('settings navigation uses the platform-appropriate transition', () {

@@ -111,6 +111,37 @@ void main() {
       'updatedAtEpochMs': now.millisecondsSinceEpoch,
     });
   });
+
+  test('Android channel receives the same aggregate-only snapshot', () async {
+    final now = DateTime.utc(2026, 7, 13, 12, 30);
+    final calls = <MethodCall>[];
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(MethodChannelRecallWidgetStore.channel, (
+          call,
+        ) async {
+          calls.add(call);
+          return null;
+        });
+    addTearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            MethodChannelRecallWidgetStore.channel,
+            null,
+          );
+    });
+
+    await const MethodChannelRecallWidgetStore().update(
+      RecallWidgetSnapshot(dueCount: 7, updatedAt: now),
+    );
+
+    expect(calls, hasLength(1));
+    expect(calls.single.arguments, {
+      'dueCount': 7,
+      'updatedAtEpochMs': now.millisecondsSinceEpoch,
+    });
+  });
 }
 
 ReviewCard _card(int id, {int state = 0}) => ReviewCard(

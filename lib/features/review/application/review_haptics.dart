@@ -11,7 +11,7 @@ void _noHaptic() {}
 /// Presentation feedback for the four tactile moments in a review.
 ///
 /// The controller owns *when* feedback is valid; this injectable adapter owns
-/// *how* it feels. Browser and non-iOS builds receive a no-op adapter so the
+/// *how* it feels. Browser and non-mobile builds receive a no-op adapter so the
 /// shared review flow never gains platform conditionals.
 class ReviewHaptics {
   final HapticCallback _onReveal;
@@ -33,7 +33,10 @@ class ReviewHaptics {
     bool? isWeb,
     TargetPlatform? targetPlatform,
   }) {
-    if (!recallRunsAsNativeIos(isWeb: isWeb, targetPlatform: targetPlatform)) {
+    if (!recallRunsAsNativeMobile(
+      isWeb: isWeb,
+      targetPlatform: targetPlatform,
+    )) {
       return const ReviewHaptics();
     }
     return ReviewHaptics(

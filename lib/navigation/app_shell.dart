@@ -28,6 +28,7 @@ class AppShell extends StatefulWidget {
   final StudyReminderController? reminder;
   final RecallLinkSource? linkSource;
   final bool? nativeIos;
+  final bool? nativeAndroid;
   final OperationalEventRecorder diagnostics;
 
   AppShell({
@@ -38,6 +39,7 @@ class AppShell extends StatefulWidget {
     this.reminder,
     this.linkSource,
     this.nativeIos,
+    this.nativeAndroid,
     OperationalEventRecorder? diagnostics,
   }) : diagnostics = diagnostics ?? RecallDiagnostics.instance;
 
@@ -51,6 +53,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   final _readKey = GlobalKey<ReadScreenState>();
   int _index = 0;
   late final bool _nativeIos = widget.nativeIos ?? recallRunsAsNativeIos();
+  late final bool _nativeAndroid =
+      widget.nativeAndroid ?? recallRunsAsNativeAndroid();
   late final RecallDeepLinkController _deepLinks;
 
   @override
@@ -178,42 +182,65 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _selectIndex(0);
         }
       },
-      child: Scaffold(
-        backgroundColor: UiColors.canvas,
-        body: ColoredBox(
-          key: const Key('recall_flat_canvas'),
-          color: UiColors.canvas,
-          child: SafeArea(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                UiSpacing.sm,
-                UiSpacing.sm,
-                UiSpacing.sm,
-                _nativeIos ? UiSpacing.sm : 0,
-              ),
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: UiLayout.maxContent,
-                  ),
-                  child: SizedBox.expand(
-                    child: RecallAnimatedIndexedStack(
-                      index: _index,
-                      children: _pages,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final useRail = _nativeAndroid && constraints.maxWidth >= 840;
+          return Scaffold(
+            backgroundColor: UiColors.canvas,
+            body: ColoredBox(
+              key: const Key('recall_flat_canvas'),
+              color: UiColors.canvas,
+              child: SafeArea(
+                child: Row(
+                  children: [
+                    if (useRail)
+                      RecallNavigationRail(
+                        selectedIndex: _index,
+                        onDestinationSelected: _selectIndex,
+                      ),
+                    if (useRail)
+                      const VerticalDivider(
+                        width: 1,
+                        color: UiColors.borderSubtle,
+                      ),
+                    Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          UiSpacing.sm,
+                          UiSpacing.sm,
+                          UiSpacing.sm,
+                          _nativeIos || useRail ? UiSpacing.sm : 0,
+                        ),
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxWidth: UiLayout.maxContent,
+                            ),
+                            child: SizedBox.expand(
+                              child: RecallAnimatedIndexedStack(
+                                index: _index,
+                                children: _pages,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ),
             ),
-          ),
-        ),
-        extendBody: _nativeIos,
-        bottomNavigationBar: RecallBottomNavigation(
-          selectedIndex: _index,
-          onDestinationSelected: _selectIndex,
-          nativeIos: _nativeIos,
-        ),
+            extendBody: _nativeIos,
+            bottomNavigationBar: useRail
+                ? null
+                : RecallBottomNavigation(
+                    selectedIndex: _index,
+                    onDestinationSelected: _selectIndex,
+                    nativeIos: _nativeIos,
+                  ),
+          );
+        },
       ),
     );
   }
@@ -348,6 +375,59 @@ class RecallBottomNavigation extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Material adaptive navigation for Android tablets and wide rotations.
+class RecallNavigationRail extends StatelessWidget {
+  final int selectedIndex;
+  final ValueChanged<int> onDestinationSelected;
+
+  const RecallNavigationRail({
+    super.key,
+    required this.selectedIndex,
+    required this.onDestinationSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = Theme.of(context).colorScheme.primary;
+    return NavigationRail(
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onDestinationSelected,
+      labelType: NavigationRailLabelType.all,
+      backgroundColor: UiColors.sidebar,
+      indicatorColor: Colors.transparent,
+      selectedIconTheme: IconThemeData(color: accent),
+      unselectedIconTheme: const IconThemeData(color: UiColors.textMuted),
+      selectedLabelTextStyle: TextStyle(
+        color: accent,
+        fontWeight: FontWeight.w700,
+      ),
+      unselectedLabelTextStyle: const TextStyle(color: UiColors.textMuted),
+      destinations: const [
+        NavigationRailDestination(
+          icon: Icon(Icons.style_outlined),
+          selectedIcon: Icon(Icons.style),
+          label: Text('Study'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.folder_outlined),
+          selectedIcon: Icon(Icons.folder),
+          label: Text('Decks'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.bar_chart_outlined),
+          selectedIcon: Icon(Icons.bar_chart),
+          label: Text('Stats'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.menu_book_outlined),
+          selectedIcon: Icon(Icons.menu_book),
+          label: Text('Read'),
+        ),
+      ],
     );
   }
 }

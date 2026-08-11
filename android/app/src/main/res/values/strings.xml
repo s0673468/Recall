@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Recall</string>
+    <string name="reminder_channel_name">Study reminders</string>
+    <string name="reminder_channel_description">One daily nudge when Recall still has work due.</string>
+    <string name="reminder_title">Time to Recall</string>
+    <string name="reminder_body">A short review now keeps tomorrow’s queue lighter.</string>
+    <string name="widget_description">See the aggregate due count and start studying.</string>
+    <string name="widget_open">Open</string>
+    <string name="widget_load_count">to load your due count</string>
+    <string name="widget_card_due">card due</string>
+    <string name="widget_cards_due">cards due</string>
+    <string name="widget_stale">Count may be stale</string>
+    <string name="widget_updated">Updated recently</string>
+    <string name="widget_start_study">Start Study</string>
+    <string name="shortcut_study_short">Study</string>
+    <string name="shortcut_study_long">Start Recall study</string>
+    <string name="shortcut_study_disabled">Recall is unavailable</string>
+</resources>

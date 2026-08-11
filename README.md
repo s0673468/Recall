@@ -31,8 +31,8 @@ not removing that data source.
 - stores a local snapshot and durable review outbox so offline reviews are not
   lost
 - reuses the vendored Health design system + auth shell
-- runs as the Recall browser/PWA surface and as an installable iPhone app from
-  the same tested Flutter codebase
+- runs as the Recall browser/PWA surface and as installable Android and iPhone
+  apps from the same tested Flutter codebase
 
 ## Data ownership
 
@@ -161,26 +161,26 @@ content, user or device identifiers, paths, endpoints, or credentials.
 Malformed or unavailable diagnostic storage is discarded without changing app
 behavior.
 
-On native iOS only, each successfully committed ring is also mirrored byte for
-byte inside the app data container at:
+On native iOS and Android, each successfully committed ring is also mirrored
+byte for byte inside the app's private, backup-excluded data container. On iOS
+the relative destination is:
 
 ```text
 Library/Application Support/RecallDiagnostics/operational-events-v2.json
 ```
 
-The native bridge accepts only the same closed `operational-event/v2` JSON
-array and rejects payloads above 64 KiB. It creates `RecallDiagnostics` as
-owner-only `0700` and the file as `0600`, applies
-`CompleteUntilFirstUserAuthentication`, excludes both from backups, and
-replaces the file atomically from a temporary file in the same directory. An
-invalid payload or failed write leaves the previous mirror in place. The
-bridge never reads preferences, cards, decks, snapshots, or review outboxes,
-and every bridge failure is diagnostics-only.
+Each native bridge independently validates the same closed
+`operational-event/v2` JSON array, rejects payloads above 64 KiB, and atomically
+replaces an owner-only `0600` file in an owner-only `0700` directory. iOS
+applies `CompleteUntilFirstUserAuthentication`; Android writes under
+`noBackupFilesDir`. An invalid payload or failed write leaves the previous
+mirror in place. The bridge never reads preferences, cards, decks, snapshots,
+or review outboxes, and every bridge failure is diagnostics-only.
 
 A trusted host can copy this file from the app data container with
 `xcrun devicectl device copy from` using bundle identifier
-`com.german.ankiReview`. Android and web builds perform no export. There is no
-network telemetry path.
+`com.german.ankiReview`. Android keeps its mirror inside the application
+sandbox; web builds perform no export. There is no network telemetry path.
 
 ## Local commands
 
@@ -189,6 +189,8 @@ flutter pub get
 flutter analyze --no-pub
 flutter test --no-pub --reporter=failures-only
 flutter run -d chrome --dart-define-from-file=config/supabase.local.json
+flutter build apk --debug --no-pub \
+  --dart-define-from-file=config/supabase.local.json
 flutter build ios --simulator --debug \
   --dart-define-from-file=config/supabase.local.json
 
@@ -200,5 +202,6 @@ Use `config/supabase.local.example.json` for local bootstrapping only. Keep the
 build input to `SUPABASE_URL` plus `SUPABASE_ANON_KEY`; user access still goes
 through interactive auth and row-level security.
 
-See [IOS_SETUP.md](IOS_SETUP.md) for signing, device installation, PWA cutover,
-and the required iPhone 15 Pro Max checks.
+See [ANDROID_SETUP.md](ANDROID_SETUP.md) for Android signing, safe device
+installation, platform behavior, and validation. See [IOS_SETUP.md](IOS_SETUP.md)
+for iOS signing, device installation, PWA cutover, and iPhone checks.

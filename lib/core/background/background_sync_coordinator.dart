@@ -1,7 +1,7 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../diagnostics/operational_diagnostics.dart';
+import '../platform/recall_platform.dart';
 
 typedef BackgroundSyncAction = Future<BackgroundSyncReport> Function();
 
@@ -34,12 +34,17 @@ class MethodChannelBackgroundSyncPlatform implements BackgroundSyncPlatform {
 
   @override
   Future<void> start(Future<String> Function() onSyncRequested) async {
-    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return;
+    if (!recallRunsAsNativeMobile()) return;
     _channel.setMethodCallHandler((call) async {
       if (call.method != 'performSync') return 'failed';
       return onSyncRequested();
     });
-    await _channel.invokeMethod<void>('ready');
+    try {
+      await _channel.invokeMethod<void>('ready');
+    } catch (_) {
+      // Reconnect delivery is an optimization. Foreground/resume sync still
+      // drains the durable outboxes when the native callback is unavailable.
+    }
   }
 }
 
