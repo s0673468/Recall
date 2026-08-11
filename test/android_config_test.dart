@@ -75,7 +75,25 @@ void main() {
     expect(xml, contains('android.permission.RECEIVE_BOOT_COMPLETED'));
     expect(xml, contains('android:scheme="recall"'));
     expect(xml, contains('android:host="study"'));
-    expect(xml, isNot(contains('android.permission.USE_BIOMETRIC')));
+    expect(
+      RegExp(
+        r'android\.permission\.USE_BIOMETRIC"\s+tools:node="remove"',
+      ).hasMatch(xml),
+      isTrue,
+    );
+    expect(
+      RegExp(
+        r'android\.permission\.USE_CREDENTIALS"\s+tools:node="remove"',
+      ).hasMatch(xml),
+      isTrue,
+    );
+    expect(
+      RegExp(
+        r'android\.permission\.CREDENTIAL_MANAGER_SET_ORIGIN"\s+'
+        r'tools:node="remove"',
+      ).hasMatch(xml),
+      isTrue,
+    );
     expect(xml, isNot(contains('android.permission.SCHEDULE_EXACT_ALARM')));
 
     final bootstrap = dartMain.readAsStringSync();
