@@ -32,7 +32,33 @@ void main() {
     'android/app/src/main/res/xml/recall_widget_info.xml',
   );
   final icon = File('android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png');
+  final adaptiveForeground = File(
+    'android/app/src/main/res/drawable/ic_launcher_foreground.xml',
+  );
+  final adaptiveBackground = File(
+    'android/app/src/main/res/drawable/ic_launcher_background.xml',
+  );
+  final adaptiveForegroundBitmap = File(
+    'android/app/src/main/res/drawable-xxxhdpi/'
+    'ic_launcher_foreground_bitmap.png',
+  );
   final dartMain = File('lib/main.dart');
+  final pubspec = File('pubspec.yaml');
+
+  test('Android version advances the previously distributed build', () {
+    final match = RegExp(
+      r'^version:\s*[^+\s]+\+(\d+)\s*$',
+      multiLine: true,
+    ).firstMatch(pubspec.readAsStringSync());
+
+    expect(match, isNotNull, reason: 'pubspec must declare a build number');
+    expect(
+      int.parse(match!.group(1)!),
+      greaterThan(2001),
+      reason:
+          'Android build 2001 was previously distributed and must update in place',
+    );
+  });
 
   test('Android host preserves the historical Recall application identity', () {
     expect(
@@ -120,6 +146,100 @@ void main() {
     expect(kotlin, contains('operational-event/v2'));
   });
 
+  test('Android mirrors every maintained native iOS integration channel', () {
+    final mainActivitySource = mainActivity.readAsStringSync();
+    final contractsSource = contracts.readAsStringSync();
+    final iosSources = [
+      File('ios/Runner/RecallBackgroundSyncPlugin.swift'),
+      File('ios/Runner/RecallOperationalDiagnosticsPlugin.swift'),
+      File('ios/Runner/RecallStudyReminderPlugin.swift'),
+      File('ios/Runner/RecallWidgetPlugin.swift'),
+    ].map((file) => file.readAsStringSync()).join('\n');
+
+    for (final channel in [
+      'com.german.ankiReview/backgroundSync',
+      'com.german.ankiReview/operationalDiagnostics',
+      'com.german.ankiReview/studyReminder',
+      'com.german.ankiReview/widget',
+    ]) {
+      expect(iosSources, contains(channel), reason: 'iOS must expose $channel');
+      expect(
+        contractsSource,
+        contains(channel),
+        reason: 'Android must declare the iOS integration $channel',
+      );
+    }
+
+    String section(String start, String end) {
+      final startIndex = mainActivitySource.indexOf(start);
+      final endIndex = mainActivitySource.indexOf(
+        end,
+        startIndex + start.length,
+      );
+      expect(
+        startIndex,
+        isNonNegative,
+        reason: 'Missing Android block: $start',
+      );
+      expect(
+        endIndex,
+        greaterThan(startIndex),
+        reason: 'Missing block end: $end',
+      );
+      return mainActivitySource.substring(startIndex, endIndex);
+    }
+
+    final studyReminderBlock = section(
+      'MethodChannel(messenger, RecallContracts.studyReminderChannel)',
+      'MethodChannel(messenger, RecallContracts.widgetChannel)',
+    );
+    for (final handler in [
+      '"requestPermission" -> requestNotificationPermission(result)',
+      '"apply" ->',
+      '"cancel" ->',
+    ]) {
+      expect(studyReminderBlock, contains(handler));
+    }
+
+    final widgetBlock = section(
+      'MethodChannel(messenger, RecallContracts.widgetChannel)',
+      'MethodChannel(messenger, RecallContracts.operationalDiagnosticsChannel)',
+    );
+    for (final handler in ['"update" ->', '"clear" ->']) {
+      expect(widgetBlock, contains(handler));
+    }
+
+    final diagnosticsBlock = section(
+      'MethodChannel(messenger, RecallContracts.operationalDiagnosticsChannel)',
+      'backgroundSyncChannel = MethodChannel(',
+    );
+    expect(diagnosticsBlock, contains('call.method != "mirror"'));
+    expect(
+      diagnosticsBlock,
+      contains(
+        'RecallOperationalDiagnostics.write(applicationContext, payload)',
+      ),
+    );
+
+    final backgroundRegistrationBlock = section(
+      'backgroundSyncChannel = MethodChannel('
+          'messenger, RecallContracts.backgroundSyncChannel)',
+      'private fun registerMaintainedPlugins(',
+    );
+    expect(backgroundRegistrationBlock, contains('call.method == "ready"'));
+    expect(backgroundRegistrationBlock, contains('registerReconnectSync()'));
+
+    final reconnectCallbackBlock = section(
+      'private fun requestBackgroundSync()',
+      'private fun finishBackgroundSync()',
+    );
+    expect(reconnectCallbackBlock, contains('backgroundSyncChannel ?:'));
+    expect(
+      reconnectCallbackBlock,
+      contains('channel.invokeMethod("performSync"'),
+    );
+  });
+
   test('Android reminder and widget remain aggregate-only', () {
     expect(reminderReceiver.existsSync(), isTrue);
     expect(widgetProvider.existsSync(), isTrue);
@@ -144,7 +264,10 @@ void main() {
     ]) {
       expect(nativeSources, isNot(contains(forbidden)));
     }
-    expect(nativeSources, isNot(matches(RegExp(r'''["'](?:front|back)["']'''))));
+    expect(
+      nativeSources,
+      isNot(matches(RegExp(r'''["'](?:front|back)["']'''))),
+    );
   });
 
   test('Android launcher icon is opaque and full xxxhdpi resolution', () {
@@ -160,5 +283,30 @@ void main() {
     expect(data.getUint32(20, Endian.big), 192);
     expect(bytes[24], 8, reason: 'The launcher should use 8-bit channels.');
     expect(bytes[25], anyOf(2, 6), reason: 'The launcher must be RGB or RGBA.');
+  });
+
+  test('Android adaptive icon reuses the canonical iOS mark', () {
+    final foregroundXml = adaptiveForeground.readAsStringSync();
+    final backgroundXml = adaptiveBackground.readAsStringSync();
+
+    expect(foregroundXml, contains('@drawable/ic_launcher_foreground_bitmap'));
+    expect(
+      foregroundXml,
+      isNot(contains('android:pathData')),
+      reason: 'Android must not redraw the Recall mark with a divergent path.',
+    );
+    expect(adaptiveForegroundBitmap.existsSync(), isTrue);
+
+    final bytes = adaptiveForegroundBitmap.readAsBytesSync();
+    final data = ByteData.sublistView(bytes);
+    expect(data.getUint32(16, Endian.big), 432);
+    expect(data.getUint32(20, Endian.big), 432);
+    expect(bytes[25], 6, reason: 'The adaptive foreground must retain alpha.');
+    expect(backgroundXml, contains('<solid android:color="#1F1E3B"'));
+    expect(
+      backgroundXml,
+      isNot(contains('<gradient')),
+      reason: 'The Android background must match the canonical iOS navy.',
+    );
   });
 }

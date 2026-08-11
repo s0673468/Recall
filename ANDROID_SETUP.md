@@ -107,14 +107,48 @@ adb shell dumpsys package com.german.health_anki_flutter
   outboxes. Android schedules no hidden headless account work.
 - Backup and cleartext traffic are disabled. The diagnostics mirror is bounded,
   value-free, private, atomic, and excluded from backup.
-- Android 16 edge-to-edge and predictive back are enabled. Narrow screens use a
+- Android 16+ edge-to-edge and predictive back are enabled. Narrow screens use a
   Material navigation bar; wide windows use a navigation rail and remain
   resizable across rotation and large-screen layouts.
-- Study haptics use platform feedback only for reveal, rating, undo, and flag
-  confirmation. Android's system haptic setting is respected; no vibration
+- Study haptics use platform feedback only for reveal, rating, undo, and queue
+  completion. Android's system haptic setting is respected; no vibration
   permission is requested.
 - The launcher shortcut and home-screen widget open Study. The widget shows
   only the all-decks due count and whether its aggregate snapshot is stale.
+
+## iOS parity and Android conventions
+
+The native apps share one Flutter product surface. Study, Decks, Stats, Read,
+FSRS scheduling and previews, rich HTML/LaTeX/media cards, flags, catch-up,
+preferences, auth/session handling, the offline snapshot, and both durable
+outboxes have no Android fork.
+
+Every maintained iOS integration has an Android equivalent behind the same
+method-channel contract:
+
+- the iOS widget becomes a resizable `RemoteViews` home-screen widget, plus an
+  Android launcher shortcut;
+- the iOS calendar notification becomes a permission-aware inexact Android
+  alarm that survives reboot, app replacement, clock, and time-zone changes;
+- iOS background fetch and Android validated-network reconnect both invoke the
+  same bounded Dart outbox drain. Android additionally drains on foreground and
+  resume and deliberately does not start hidden headless account work;
+- both platforms mirror only the closed operational-event schema into private,
+  backup-excluded storage;
+- both use the canonical Recall icon artwork. Android supplies it as adaptive
+  foreground, background, and monochrome layers so launcher masks and themed
+  icons remain native.
+
+The visible differences are intentional platform conventions. iOS uses
+Cupertino tabs, sheets, time selection, and page transitions. Android uses
+Material navigation, bottom sheets, the system time picker, navigation rail on
+wide windows, edge-to-edge system bars, and predictive back. These differences
+do not change Recall's data, scheduling, or offline guarantees.
+
+On Android 17, target-SDK 36 apps receive `ACCESS_LOCAL_NETWORK` implicitly
+through `INTERNET`. Recall does not declare or request that runtime permission
+and has no LAN feature. When Flutter's supported template moves to target SDK
+37, Recall should keep LAN access blocked rather than add the broad permission.
 
 Passkeys are not enabled. The current product has no passkey flow, and Android
 passkeys require coordinated Supabase Auth enablement, a relying-party domain,
@@ -147,6 +181,7 @@ Current platform references:
 - [Flutter predictive back migration](https://docs.flutter.dev/release/breaking-changes/android-predictive-back)
 - [Android adaptive orientation and resizability](https://developer.android.com/develop/adaptive-apps/guides/app-orientation-aspect-ratio-resizability)
 - [Android notification permission](https://developer.android.com/develop/ui/compose/notifications/notification-permission)
+- [Android 17 local-network permission](https://developer.android.com/privacy-and-security/local-network-permission)
 - [Android alarms](https://developer.android.com/develop/background-work/services/alarms)
 - [Android haptic feedback](https://developer.android.com/develop/ui/views/haptics/haptic-feedback)
 - [Supabase passkey prerequisites](https://supabase.com/docs/guides/auth/passkeys)
