@@ -15,6 +15,8 @@ protocol RecallStudyNotificationCenter: AnyObject {
 
 extension UNUserNotificationCenter: RecallStudyNotificationCenter {}
 
+typealias RecallStudySettingsOpener = (@escaping (Bool) -> Void) -> Void
+
 /// Native-only delivery for one daily Recall study reminder. Preferences and
 /// study logic remain in Dart; this class owns only iOS permission/scheduling.
 final class RecallStudyReminderPlugin: NSObject, FlutterPlugin {
@@ -23,15 +25,26 @@ final class RecallStudyReminderPlugin: NSObject, FlutterPlugin {
   private let notificationCenter: RecallStudyNotificationCenter
   private let now: () -> Date
   private let calendar: Calendar
+  private let settingsOpener: RecallStudySettingsOpener
+
+  static let defaultSettingsOpener: RecallStudySettingsOpener = { completion in
+    guard let url = URL(string: UIApplication.openSettingsURLString) else {
+      completion(false)
+      return
+    }
+    UIApplication.shared.open(url, options: [:], completionHandler: completion)
+  }
 
   init(
     notificationCenter: RecallStudyNotificationCenter = UNUserNotificationCenter.current(),
     now: @escaping () -> Date = Date.init,
-    calendar: Calendar = .autoupdatingCurrent
+    calendar: Calendar = .autoupdatingCurrent,
+    settingsOpener: @escaping RecallStudySettingsOpener = defaultSettingsOpener
   ) {
     self.notificationCenter = notificationCenter
     self.now = now
     self.calendar = calendar
+    self.settingsOpener = settingsOpener
     super.init()
   }
 
@@ -60,6 +73,23 @@ final class RecallStudyReminderPlugin: NSObject, FlutterPlugin {
             )
           } else {
             result(granted)
+          }
+        }
+      }
+
+    case "openSettings":
+      settingsOpener { opened in
+        DispatchQueue.main.async {
+          if opened {
+            result(nil)
+          } else {
+            result(
+              FlutterError(
+                code: "notification_settings_unavailable",
+                message: "Notification settings could not be opened.",
+                details: nil
+              )
+            )
           }
         }
       }

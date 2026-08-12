@@ -44,23 +44,23 @@ buffer — never an authority.
   (`stability`/`difficulty`/`due`/`state`/`reps`/`lapses`/`last_review`), the
   append-only `review_log`, and study preferences (`user_settings`) all live in
   Supabase, scoped per user by row-level security.
-- **Device state = disposable cache.** The local snapshot (last-loaded decks +
-  study queue, `recall_snapshot_v1`) and the mirrored study prefs
-  (`recall_prefs_v1`) are pure cache: they paint instantly on a cold open and
-  are **rebuildable and discardable**. Every successful server fetch replaces
-  them wholesale; a fresh cloud read on load/foreground always wins over what
-  was cached. Wiping local storage loses nothing but paint latency.
+- **Read-only device state = disposable cache.** The local snapshot
+  (last-loaded decks + study queue, `recall_snapshot_v1`) is rebuildable and
+  discardable. A successful server fetch replaces it wholesale.
 - **The outbox is a pending *write*, not a competing source of truth.** Reviews
   and card flags taken offline are appended to a durable, append-only outbox
   (`recall_outbox_v1` / `flag_outbox_v1`) and replayed to Supabase at the next
-  launch/foreground. This is the one piece of device state that is **not**
-  freely discardable — it holds user actions that have not yet reached the
-  server, so sign-out is fail-closed on a non-empty outbox. It never makes the
-  device authoritative: it only carries local actions *toward* the server, which
-  remains truth once they land.
-- **Conflicts resolve server-wins for anything the device only reads** (queue,
-  counts, prefs on load). Replayed reviews are deduplicated server-side by a
-  durable `client_event_id` so a retry can never double-apply or log twice.
+  launch, foreground, or reconnect. Study preferences use one account-scoped,
+  latest-value pending record by the same rule. Pending preferences replay
+  before any cloud read, and clear only after the exact value reaches
+  Supabase. These outbound writes are **not** freely discardable. They never
+  make the device authoritative; they carry local actions toward the server,
+  which remains truth once they land.
+- **Conflicts resolve server-wins for anything the device only reads** (queue
+  and counts). Replayed reviews are deduplicated server-side by a durable
+  `client_event_id` so a retry can never double-apply or log twice. Preference
+  writes are serialized per app process and latest-local-value wins until the
+  pending record is accepted; subsequent cloud reads become authoritative.
 - **Desktop Anki authors content; Recall (web/app) owns scheduling.** The
   desktop importer is the sole author of cards/notes and sets `suspended` /
   `deleted` one-way; Recall never creates or edits card content. Recall owns the
@@ -134,19 +134,15 @@ counter, and a random suffix: the outbox outlives a restart while in-memory
 counters reset, so a purely clock-derived id could repeat after a clock
 rollback and the server would discard a genuine review as a replay.
 
-### Known divergences from strict server-wins
+### Known divergence from strict server-wins
 
-- **Study prefs write-through is last-write-wins** (`RecallPrefsController`,
-  `lib/features/settings/application/recall_prefs_controller.dart`). The cloud
-  row replaces the local mirror on load, but an offline prefs edit can overwrite
-  a newer cloud value when it later writes through.
 - **Undo restores its local pre-rating snapshot unconditionally**
   (`RecallApi.undoReview`). Undo is a single-level, session-scoped affordance
   for the rating you just made, so it deliberately writes the exact state it
   captured; a second device's review landing in that window would be overwritten.
 
-Both are tolerable for a single user across a handful of devices, and are
-recorded here so the doctrine matches real behavior.
+This is tolerable for a single user across a handful of devices and is recorded
+here so the doctrine matches real behavior.
 
 ## Operational diagnostics
 

@@ -373,7 +373,11 @@ void main() {
         StateError(privateText),
         StackTrace.fromString('private stack $privateText'),
       );
-      expect(handled, isFalse);
+      expect(
+        handled,
+        isTrue,
+        reason: 'The embedder fallback must not print the private exception.',
+      );
       expect(
         console.last,
         contains('handle_uncaught_error failed flutter.uncaught_error'),

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -54,8 +56,15 @@ class RecallDependencies {
     );
     final engine = FsrsEngine(desiredRetention: RecallPrefs.defaultRetention);
     final prefs = RecallPrefsController(api: api);
+    final restoredOwner = api.currentUser;
+    if (restoredOwner == null) {
+      await prefs.releaseOwner();
+    } else {
+      // Only the owner-scoped local mirror is on the startup critical path.
+      await prefs.activateOwner(restoredOwner.id);
+    }
     final studyReminder = StudyReminderController();
-    await studyReminder.initialize(ownerId: api.currentUser?.id);
+    await studyReminder.initialize(ownerId: restoredOwner?.id);
     // The controller subscribes to auth changes in its constructor and loads the
     // queue once there's a session — so it must exist before we (maybe) sign in.
     final controller = ReviewController(
@@ -63,7 +72,19 @@ class RecallDependencies {
       engine: engine,
       store: LocalReviewStore(),
       prefs: prefs,
-      afterSignOut: studyReminder.releaseOwner,
+      beforeSessionLoad: () async {
+        final owner = api.currentUser;
+        if (owner == null) return;
+        await prefs.activateOwner(owner.id);
+        unawaited(prefs.syncOwner());
+      },
+      afterSignOut: () async {
+        try {
+          await studyReminder.releaseOwner();
+        } finally {
+          await prefs.releaseOwner();
+        }
+      },
       afterSignIn: () async {
         final owner = api.currentUser;
         if (owner != null) await studyReminder.activateOwner(owner.id);
@@ -73,9 +94,7 @@ class RecallDependencies {
       platform: const MethodChannelBackgroundSyncPlatform(),
       sync: controller.syncPendingInBackground,
     );
-    // Hydrate prefs (local mirror + cloud) before the shell mounts so the first
-    // queue load already reflects the user's new-limit / order / retention.
-    await prefs.load();
+    if (restoredOwner != null) unawaited(prefs.syncOwner());
     await backgroundSync.start();
 
     return RecallDependencies(

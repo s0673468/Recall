@@ -27,8 +27,15 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "requestPermission" -> requestNotificationPermission(result)
                     "openSettings" -> {
-                        startActivity(RecallReminderNotifications.settingsIntent(this))
-                        result.success(null)
+                        if (RecallReminderNotifications.openSettings(this)) {
+                            result.success(null)
+                        } else {
+                            result.error(
+                                "notification_settings_unavailable",
+                                "Notification settings are unavailable on this device.",
+                                null,
+                            )
+                        }
                     }
                     "apply" -> {
                         val settings = RecallContracts.reminderSettings(call.arguments)
@@ -124,11 +131,8 @@ class MainActivity : FlutterActivity() {
      */
     private fun registerMaintainedPlugins(flutterEngine: FlutterEngine) {
         flutterEngine.plugins.add(com.llfbandit.app_links.AppLinksPlugin())
-        flutterEngine.plugins.add(dev.fluttercommunity.plus.device_info.DeviceInfoPlusPlugin())
         flutterEngine.plugins.add(com.it_nomads.fluttersecurestorage.FlutterSecureStoragePlugin())
-        flutterEngine.plugins.add(dev.fluttercommunity.plus.packageinfo.PackageInfoPlugin())
         flutterEngine.plugins.add(io.flutter.plugins.sharedpreferences.SharedPreferencesPlugin())
-        flutterEngine.plugins.add(jp.wasabeef.ua.client_hints.UAClientHintsPlugin())
         flutterEngine.plugins.add(io.flutter.plugins.urllauncher.UrlLauncherPlugin())
     }
 

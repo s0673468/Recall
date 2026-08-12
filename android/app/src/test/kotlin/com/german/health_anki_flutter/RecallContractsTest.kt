@@ -63,6 +63,26 @@ class RecallContractsTest {
     }
 
     @Test
+    fun notificationSettingsUsesChannelPageOnlyWhereSupported() {
+        assertEquals(
+            RecallNotificationSettingsTarget.APPLICATION_DETAILS,
+            RecallReminderNotifications.settingsTarget(sdkInt = 24),
+        )
+        assertEquals(
+            RecallNotificationSettingsTarget.APPLICATION_DETAILS,
+            RecallReminderNotifications.settingsTarget(sdkInt = 25),
+        )
+        assertEquals(
+            RecallNotificationSettingsTarget.APP_NOTIFICATIONS,
+            RecallReminderNotifications.settingsTarget(sdkInt = 26),
+        )
+        assertEquals(
+            RecallNotificationSettingsTarget.APP_NOTIFICATIONS,
+            RecallReminderNotifications.settingsTarget(sdkInt = 37),
+        )
+    }
+
+    @Test
     fun reminderContractAcceptsOnlyCompleteBoundedValues() {
         val valid = mapOf(
             "enabled" to true,
@@ -76,6 +96,28 @@ class RecallContractsTest {
         assertNull(RecallContracts.reminderSettings(valid + ("card_id" to 9)))
         assertNull(RecallContracts.reminderSettings(valid + ("hour" to 24)))
         assertNull(RecallContracts.reminderSettings(valid + ("dueCount" to -1)))
+    }
+
+    @Test
+    fun reminderDeliveryFailsClosedUnlessEligibilityClearIsDurable() {
+        assertTrue(
+            RecallReminderDeliveryEligibility.canDeliver(
+                wasActive = true,
+                clearCommitted = true,
+            ),
+        )
+        assertFalse(
+            RecallReminderDeliveryEligibility.canDeliver(
+                wasActive = true,
+                clearCommitted = false,
+            ),
+        )
+        assertFalse(
+            RecallReminderDeliveryEligibility.canDeliver(
+                wasActive = false,
+                clearCommitted = true,
+            ),
+        )
     }
 
     @Test
@@ -103,6 +145,37 @@ class RecallContractsTest {
         assertEquals(
             at(19, 0) + 24 * 60 * 60 * 1000,
             RecallReminderTime.nextTriggerAtMillis(19, 0, at(20, 0), zone),
+        )
+    }
+
+    @Test
+    fun widgetBecomesStaleAtItsSingleRefreshDeadline() {
+        val updatedAt = 1_786_000_000_000L
+
+        assertEquals(
+            updatedAt + RecallWidgetFreshness.staleAfterMs,
+            RecallWidgetFreshness.staleDeadline(updatedAt),
+        )
+        assertFalse(
+            RecallWidgetFreshness.isStale(
+                hasSnapshot = true,
+                updatedAtEpochMs = updatedAt,
+                nowEpochMs = updatedAt + RecallWidgetFreshness.staleAfterMs - 1,
+            ),
+        )
+        assertTrue(
+            RecallWidgetFreshness.isStale(
+                hasSnapshot = true,
+                updatedAtEpochMs = updatedAt,
+                nowEpochMs = updatedAt + RecallWidgetFreshness.staleAfterMs,
+            ),
+        )
+        assertTrue(
+            RecallWidgetFreshness.isStale(
+                hasSnapshot = false,
+                updatedAtEpochMs = updatedAt,
+                nowEpochMs = updatedAt,
+            ),
         )
     }
 

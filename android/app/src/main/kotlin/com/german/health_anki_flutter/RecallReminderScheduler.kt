@@ -5,6 +5,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 
+internal object RecallReminderDeliveryEligibility {
+    fun canDeliver(wasActive: Boolean, clearCommitted: Boolean): Boolean =
+        wasActive && clearCommitted
+}
+
 object RecallReminderScheduler {
     private const val preferencesName = "recall_reminder"
     private const val activeKey = "active"
@@ -41,6 +46,19 @@ object RecallReminderScheduler {
             context,
             prefs.getInt(hourKey, 19).coerceIn(0, 23),
             prefs.getInt(minuteKey, 0).coerceIn(0, 59),
+        )
+    }
+
+    fun consume(context: Context): Boolean {
+        val prefs = preferences(context)
+        val wasActive = prefs.getBoolean(activeKey, false)
+        if (!wasActive) return false
+        val clearCommitted = prefs.edit().clear().commit()
+        // Fail closed if the durable clear fails. Posting while the eligibility
+        // remains active could restore and deliver the same reminder again.
+        return RecallReminderDeliveryEligibility.canDeliver(
+            wasActive = wasActive,
+            clearCommitted = clearCommitted,
         )
     }
 

@@ -11,6 +11,7 @@ import android.os.Build
 
 class RecallReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (!RecallReminderScheduler.consume(context)) return
         val manager = RecallReminderNotifications.ensureChannel(context)
         val openStudy = Intent(Intent.ACTION_VIEW, Uri.parse(RecallContracts.studyUri), context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -35,7 +36,6 @@ class RecallReminderReceiver : BroadcastReceiver() {
             .setCategory(Notification.CATEGORY_REMINDER)
             .build()
         manager.notify(notificationId, notification)
-        RecallReminderScheduler.restore(context)
     }
 
     private companion object {

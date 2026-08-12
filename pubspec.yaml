@@ -1,7 +1,7 @@
 name: health_anki_flutter
 description: "Recall — cross-device spaced-repetition review for German's Anki collection."
 publish_to: 'none'
-version: 1.0.1+2002
+version: 1.0.2+2003
 
 environment:
   sdk: ^3.11.0
@@ -10,7 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   app_links: ^7.2.1
-  supabase_flutter: ^2.15.0
+  crypto: ^3.0.7
+  supabase_flutter: ^2.17.1
   google_fonts: ^8.1.0
   intl: ^0.20.2
   shared_preferences: ^2.5.4
