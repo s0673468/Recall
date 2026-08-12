@@ -40,8 +40,8 @@ class RecallPrefsController extends ChangeNotifier {
         _value = RecallPrefs.fromJson(jsonDecode(localRaw));
         _hasStored = true;
         notifyListeners();
-      } catch (e) {
-        debugPrint('Recall: local prefs decode failed (non-fatal): $e');
+      } catch (_) {
+        debugPrint('Recall: local prefs decode failed (non-fatal)');
       }
     }
 
@@ -53,8 +53,8 @@ class RecallPrefsController extends ChangeNotifier {
         await _mirror(prefs);
         notifyListeners();
       }
-    } catch (e) {
-      debugPrint('Recall: cloud prefs unavailable (non-fatal): $e');
+    } catch (_) {
+      debugPrint('Recall: cloud prefs unavailable (non-fatal)');
     }
   }
 
@@ -70,8 +70,8 @@ class RecallPrefsController extends ChangeNotifier {
     await _mirror(prefs);
     try {
       await api.saveRecallPrefs(next.toJson());
-    } catch (e) {
-      debugPrint('Recall: prefs cloud write deferred (offline?): $e');
+    } catch (_) {
+      debugPrint('Recall: prefs cloud write deferred (offline?)');
     }
   }
 

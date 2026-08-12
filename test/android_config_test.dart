@@ -26,6 +26,14 @@ void main() {
     'android/app/src/main/kotlin/com/german/health_anki_flutter/'
     'RecallOperationalDiagnostics.kt',
   );
+  final notificationReadiness = File(
+    'android/app/src/main/kotlin/com/german/health_anki_flutter/'
+    'RecallReminderNotifications.kt',
+  );
+  final networkTransition = File(
+    'android/app/src/main/kotlin/com/german/health_anki_flutter/'
+    'ValidatedNetworkTransition.kt',
+  );
   final strings = File('android/app/src/main/res/values/strings.xml');
   final shortcuts = File('android/app/src/main/res/xml/shortcuts.xml');
   final widgetInfo = File(
@@ -44,6 +52,9 @@ void main() {
   );
   final dartMain = File('lib/main.dart');
   final pubspec = File('pubspec.yaml');
+  final historicalSigningExample = File(
+    'android/key.properties.historical.example',
+  );
 
   test('Android version advances the previously distributed build', () {
     final match = RegExp(
@@ -83,6 +94,24 @@ void main() {
     expect(build, contains('compileSdk = flutter.compileSdkVersion'));
     expect(build, contains('targetSdk = flutter.targetSdkVersion'));
     expect(build, contains('minSdk = 24'));
+  });
+
+  test('Android release signing is explicit and continuity-safe', () {
+    final build = appBuild.readAsStringSync();
+
+    expect(
+      build,
+      contains('signingMode == "historicalContinuity"'),
+      reason: 'The installed Pixel signer needs one explicit continuity path.',
+    );
+    expect(build, contains('Recall/signing/recall-historical.keystore'));
+    expect(build, isNot(contains('allowDebugReleaseSigning')));
+    expect(build, contains('Release signing requires android/key.properties'));
+    expect(historicalSigningExample.existsSync(), isTrue);
+    expect(
+      historicalSigningExample.readAsStringSync().trim(),
+      'signingMode=historicalContinuity',
+    );
   });
 
   test('Android manifest is private, edge-to-edge, and deep-link aware', () {
@@ -134,12 +163,17 @@ void main() {
       mainActivity.readAsStringSync(),
       contracts.readAsStringSync(),
       diagnostics.readAsStringSync(),
+      notificationReadiness.readAsStringSync(),
+      networkTransition.readAsStringSync(),
     ].join('\n');
 
     expect(kotlin, contains('com.german.ankiReview/studyReminder'));
     expect(kotlin, contains('com.german.ankiReview/widget'));
     expect(kotlin, contains('com.german.ankiReview/operationalDiagnostics'));
     expect(kotlin, contains('requestPermission'));
+    expect(kotlin, contains('openSettings'));
+    expect(kotlin, contains('areNotificationsEnabled'));
+    expect(kotlin, contains('NEEDS_RUNTIME_PERMISSION'));
     expect(kotlin, contains('onCapabilitiesChanged'));
     expect(kotlin, contains('NET_CAPABILITY_VALIDATED'));
     expect(kotlin, contains('updatedAtEpochMs'));
@@ -237,6 +271,10 @@ void main() {
     expect(
       reconnectCallbackBlock,
       contains('channel.invokeMethod("performSync"'),
+    );
+    expect(
+      mainActivitySource,
+      contains('validatedNetwork.onCapabilitiesChanged'),
     );
   });
 

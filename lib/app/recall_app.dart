@@ -61,12 +61,7 @@ class _RecallBootstrapAppState extends State<RecallBootstrapApp> {
           debugShowCheckedModeBanner: false,
           theme: buildRecallTheme(),
           scrollBehavior: const AppScrollBehavior(),
-          home: snapshot.hasError
-              ? _StartupError(
-                  error: snapshot.error!,
-                  stack: snapshot.stackTrace,
-                )
-              : const _Loading(),
+          home: snapshot.hasError ? const _StartupError() : const _Loading(),
         );
       },
     );
@@ -154,9 +149,7 @@ class _Loading extends StatelessWidget {
 }
 
 class _StartupError extends StatelessWidget {
-  final Object error;
-  final StackTrace? stack;
-  const _StartupError({required this.error, this.stack});
+  const _StartupError();
 
   @override
   Widget build(BuildContext context) {
@@ -182,10 +175,11 @@ class _StartupError extends StatelessWidget {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: UiSpacing.sm),
-                    SelectableText(
-                      '$error',
+                    const Text(
+                      'Check your connection and restart Recall. Your offline '
+                      'study data has not been cleared.',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: UiColors.textMuted),
+                      style: TextStyle(color: UiColors.textMuted),
                     ),
                   ],
                 ),

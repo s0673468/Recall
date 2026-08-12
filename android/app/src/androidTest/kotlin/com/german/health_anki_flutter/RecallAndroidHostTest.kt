@@ -1,11 +1,19 @@
 package com.german.health_anki_flutter
 
+import android.Manifest
+import android.app.Notification
+import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -35,5 +43,46 @@ class RecallAndroidHostTest {
             .setPackage(context.packageName)
 
         assertTrue(context.packageManager.queryIntentActivities(intent, 0).isNotEmpty())
+    }
+
+    @Test
+    fun notificationSettingsRecoveryResolvesOnTheDevice() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        assertNotNull(
+            RecallReminderNotifications.settingsIntent(context)
+                .resolveActivity(context.packageManager),
+        )
+    }
+
+    @Test
+    fun reminderReceiverPostsAnAggregateNotificationWhenAllowed() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val runtimePermissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        assumeTrue(runtimePermissionGranted)
+        assumeTrue(manager.areNotificationsEnabled())
+
+        try {
+            RecallReminderReceiver().onReceive(context, Intent("recall.test.reminder"))
+
+            val reminder = manager.activeNotifications.firstOrNull {
+                it.notification.category == Notification.CATEGORY_REMINDER
+            }
+            assertNotNull(reminder)
+            assertNotNull(reminder!!.notification.contentIntent)
+            assertTrue(
+                reminder.notification.extras.getCharSequence(Notification.EXTRA_TITLE) ==
+                    context.getString(R.string.reminder_title),
+            )
+            assertTrue(
+                reminder.notification.extras.getCharSequence(Notification.EXTRA_TEXT) ==
+                    context.getString(R.string.reminder_body),
+            )
+        } finally {
+            manager.cancelAll()
+        }
     }
 }

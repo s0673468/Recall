@@ -1,5 +1,6 @@
 # Copy to android/key.properties and keep the real file untracked.
 # Store the keystore outside the repository or use an ignored local path.
+signingMode=private
 storePassword=
 keyPassword=
 keyAlias=

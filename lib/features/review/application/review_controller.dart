@@ -3,7 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
-import 'package:supabase_flutter/supabase_flutter.dart' show User, AuthState;
+import 'package:supabase_flutter/supabase_flutter.dart'
+    show AuthException, AuthState, User;
 
 import '../../../core/background/background_sync_coordinator.dart';
 import '../../../core/diagnostics/operational_diagnostics.dart';
@@ -177,8 +178,8 @@ class ReviewController extends ChangeNotifier {
   Future<void> _afterSignIn() async {
     try {
       await afterSignIn?.call();
-    } catch (e) {
-      debugPrint('Recall: reminder re-arm failed (non-fatal): $e');
+    } catch (_) {
+      debugPrint('Recall: reminder re-arm failed (non-fatal)');
     }
   }
 
@@ -226,9 +227,10 @@ class ReviewController extends ChangeNotifier {
   }
 
   String _authMessage(Object e) {
-    final s = e.toString();
-    if (s.contains('Invalid login')) return 'Wrong email or password.';
-    return s;
+    if (e is AuthException && e.code == 'invalid_credentials') {
+      return 'Wrong email or password.';
+    }
+    return 'Could not sign in. Try again.';
   }
 
   // --- Study ---
@@ -249,14 +251,16 @@ class ReviewController extends ChangeNotifier {
   Future<void> _loadSafely({int? deckId}) async {
     try {
       await load(deckId: deckId);
-    } on LocalOutboxCorruptException catch (error) {
+    } on LocalOutboxCorruptException {
       // Durable writes must fail closed, but malformed local storage must not
       // become another startup crash. Stop the session and surface a stable
       // recovery message without overwriting the damaged outbox.
       _set(
         _state.copyWith(
           loading: false,
-          error: '$error Reinstall only after exporting or recovering it.',
+          error:
+              'Recall could not read the pending study actions. Reinstall '
+              'only after exporting or recovering them.',
         ),
       );
     }
@@ -451,7 +455,7 @@ class ReviewController extends ChangeNotifier {
           globalDueUpdatedAt: globalDueUpdatedAt,
         ),
       );
-    } catch (e) {
+    } catch (_) {
       if (loadToken != _loadSequence) return; // superseded by a newer load
       if (_state.queue.isNotEmpty) {
         // Already showing the snapshot (or an active session) — stay on it.
@@ -501,7 +505,12 @@ class ReviewController extends ChangeNotifier {
           ),
         );
       } else {
-        _set(_state.copyWith(loading: false, error: e.toString()));
+        _set(
+          _state.copyWith(
+            loading: false,
+            error: 'Recall is offline and no saved study queue is available.',
+          ),
+        );
       }
     }
   }
@@ -525,10 +534,10 @@ class ReviewController extends ChangeNotifier {
   Future<List<ReviewLogEntry>> _fetchRecentReviewLog() async {
     try {
       return await api.fetchReviewLog(days: BacklogCatchUp.recentDays);
-    } catch (error) {
+    } catch (_) {
       // Recent activity only tunes the offer threshold. A stats/history
       // outage must never turn a healthy study queue into an offline screen.
-      debugPrint('Recall: catch-up activity unavailable (non-fatal): $error');
+      debugPrint('Recall: catch-up activity unavailable (non-fatal)');
       return const [];
     }
   }
@@ -612,8 +621,8 @@ class ReviewController extends ChangeNotifier {
   Future<void> _saveCatchUpStateQuietly(CatchUpLocalState state) async {
     try {
       await store.saveCatchUpState(state);
-    } catch (error) {
-      debugPrint('Recall: catch-up progress save failed (non-fatal): $error');
+    } catch (_) {
+      debugPrint('Recall: catch-up progress save failed (non-fatal)');
     }
   }
 
@@ -660,8 +669,8 @@ class ReviewController extends ChangeNotifier {
         globalDueUpdatedAt: globalDueUpdatedAt,
         canWrite: () => loadToken == _loadSequence,
       );
-    } catch (e) {
-      debugPrint('Recall: snapshot save failed (non-fatal): $e');
+    } catch (_) {
+      debugPrint('Recall: snapshot save failed (non-fatal)');
     }
   }
 
@@ -677,8 +686,8 @@ class ReviewController extends ChangeNotifier {
         ),
         updatedAt: clock().toUtc(),
       );
-    } catch (error) {
-      debugPrint('Recall: widget due count unavailable (non-fatal): $error');
+    } catch (_) {
+      debugPrint('Recall: widget due count unavailable (non-fatal)');
       return null;
     }
   }
@@ -712,10 +721,10 @@ class ReviewController extends ChangeNotifier {
       } else {
         engine.resetToDefaults();
       }
-    } catch (e) {
+    } catch (_) {
       if (loadToken != _loadSequence) return;
       engine.resetToDefaults();
-      debugPrint('Recall: FSRS settings unavailable, using defaults: $e');
+      debugPrint('Recall: FSRS settings unavailable, using defaults');
     }
     // Stored study prefs are the source of truth for desired retention; the
     // fsrs_params retention above only fills in when the user hasn't set one.
@@ -853,8 +862,8 @@ class ReviewController extends ChangeNotifier {
       );
       _previewForCardId = null;
       _previewAt = null;
-    } catch (e) {
-      debugPrint('Recall: keep-going fetch failed (offline?): $e');
+    } catch (_) {
+      debugPrint('Recall: keep-going fetch failed (offline?)');
       if (loadToken != _loadSequence) return;
       _set(_state.copyWith(loading: false, offline: true));
     }
@@ -967,10 +976,10 @@ class ReviewController extends ChangeNotifier {
       try {
         await store.enqueueRemediation(remediationNodeIds, now: clock());
         _remediationRevision++;
-      } catch (error) {
+      } catch (_) {
         // The review is durable and must still advance if the disposable
         // cache is unavailable; remediation can be retried by a later lapse.
-        debugPrint('Recall: remediation enqueue skipped (non-fatal): $error');
+        debugPrint('Recall: remediation enqueue skipped (non-fatal)');
       }
     }
     _undo = undo; // replaces any previous record — undo is single-level
@@ -1160,11 +1169,11 @@ class ReviewController extends ChangeNotifier {
             ...api.restoreEntry(u.card),
             'review_log_id': u.reviewLogId,
           });
-        } catch (e) {
+        } catch (_) {
           // Cloud restore failed (offline?). The rating stands; hand the
           // snapshot back so the user can simply tap undo again — unless a
           // newer rating claimed the slot while this call was in flight.
-          debugPrint('Recall: undo failed (offline?): $e');
+          debugPrint('Recall: undo failed (offline?)');
           _undo ??= u;
           return;
         }
@@ -1248,8 +1257,8 @@ class ReviewController extends ChangeNotifier {
             ..flushed = true
             ..reviewLogId = logId;
         }
-      } catch (e) {
-        debugPrint('Recall: review sync deferred (offline?): $e');
+      } catch (_) {
+        debugPrint('Recall: review sync deferred (offline?)');
         break;
       }
     }
@@ -1298,8 +1307,8 @@ class ReviewController extends ChangeNotifier {
       try {
         await api.applyFlag(entry);
         sent++;
-      } catch (e) {
-        debugPrint('Recall: flag sync deferred (table missing?): $e');
+      } catch (_) {
+        debugPrint('Recall: flag sync deferred (table missing?)');
         break;
       }
     }
@@ -1338,10 +1347,12 @@ class PendingSyncException implements Exception {
 
   int get total => pendingReviews + pendingFlags;
 
-  @override
-  String toString() =>
+  String get userMessage =>
       'Recall is keeping $total pending study ${total == 1 ? 'action' : 'actions'} '
       'on this device. Connect to the internet and try signing out again.';
+
+  @override
+  String toString() => userMessage;
 }
 
 /// Everything needed to revert the most recent rating: the pre-rating card

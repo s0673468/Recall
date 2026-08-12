@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
@@ -240,15 +242,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     final applied = await reminder.setEnabled(enabled);
                     if (!applied && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
+                        SnackBar(
+                          content: const Text(
                             'Notifications are off. Enable them in system settings to use reminders.',
+                          ),
+                          action: SnackBarAction(
+                            label: 'Settings',
+                            onPressed: () =>
+                                unawaited(reminder.openNotificationSettings()),
                           ),
                         ),
                       );
                     }
-                  } catch (error) {
-                    if (context.mounted) _showError(context, '$error');
+                  } catch (_) {
+                    if (context.mounted) {
+                      _showError(
+                        context,
+                        'Could not update the reminder. Try again.',
+                      );
+                    }
                   }
                 },
               ),
@@ -318,8 +330,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (selected == null) return;
     try {
       await reminder.setTime(hour: selected.hour, minute: selected.minute);
-    } catch (error) {
-      if (context.mounted) _showError(context, '$error');
+    } catch (_) {
+      if (context.mounted) {
+        _showError(context, 'Could not update the reminder time. Try again.');
+      }
     }
   }
 
@@ -409,10 +423,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               await widget.controller.signOut();
               if (context.mounted) Navigator.of(context).maybePop();
             } on PendingSyncException catch (error) {
-              if (context.mounted) _showError(context, '$error');
-            } catch (error) {
+              if (context.mounted) _showError(context, error.userMessage);
+            } catch (_) {
               if (context.mounted) {
-                _showError(context, 'Could not sign out: $error');
+                _showError(context, 'Could not sign out. Try again.');
               }
             }
           },

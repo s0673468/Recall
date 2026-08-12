@@ -70,14 +70,14 @@ class RecallApi implements ReviewReplayGateway {
   Future<void> signOut() async {
     try {
       await client.auth.signOut();
-    } catch (error) {
+    } catch (_) {
       if (client.auth.currentSession != null) rethrow;
       // GoTrue can report a remote logout failure after it has already cleared
       // the local auth state. Complete that explicit user sign-out rather than
       // reporting a failure while leaving Recall visibly signed out.
       debugPrint(
         'Recall: remote sign-out failed after local session cleared; '
-        'completing local sign-out: $error',
+        'completing local sign-out',
       );
     }
     await _removePersistedSession?.call();
@@ -157,17 +157,16 @@ class RecallApi implements ReviewReplayGateway {
       return parsed;
     } on FsrsOptimizerApplyException {
       rethrow;
-    } catch (error) {
+    } catch (_) {
       try {
         await _restoreFsrsSetting(before, expectedCurrent: settingsValue);
-      } catch (rollbackError) {
-        throw FsrsOptimizerApplyException(
-          'fsrs_params write failed and rollback could not be proven: '
-          '$rollbackError',
+      } catch (_) {
+        throw const FsrsOptimizerApplyException(
+          'fsrs_params write failed and rollback could not be proven',
         );
       }
-      throw FsrsOptimizerApplyException(
-        'fsrs_params write failed; previous settings were restored: $error',
+      throw const FsrsOptimizerApplyException(
+        'fsrs_params write failed; previous settings were restored',
       );
     }
   }
