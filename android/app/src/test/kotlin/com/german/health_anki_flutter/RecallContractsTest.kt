@@ -133,6 +133,21 @@ class RecallContractsTest {
                 RecallNotificationReadiness.BLOCKED,
             ),
         )
+        assertFalse(
+            RecallReminderDeliveryEligibility.shouldReschedule(
+                RecallNotificationReadiness.READY,
+            ),
+        )
+        assertTrue(
+            RecallReminderDeliveryEligibility.shouldReschedule(
+                RecallNotificationReadiness.NEEDS_RUNTIME_PERMISSION,
+            ),
+        )
+        assertTrue(
+            RecallReminderDeliveryEligibility.shouldReschedule(
+                RecallNotificationReadiness.BLOCKED,
+            ),
+        )
     }
 
     @Test

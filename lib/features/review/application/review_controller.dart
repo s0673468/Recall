@@ -165,9 +165,6 @@ class ReviewController extends ChangeNotifier {
       _undo = null; // the session (and its undo snapshot) is gone
       _set(const ReviewState(loading: false));
     } else {
-      // A completed signed-out release belongs to the previous auth epoch.
-      // The next sign-out must run account-scoped cleanup again.
-      _signedOutReleaseTask = null;
       // A provider can switch accounts without emitting an intermediate local
       // sign-out. Do not let the old queue, due count, or review activity drive
       // the new owner's reminder while that owner's data is loading.
@@ -201,6 +198,22 @@ class ReviewController extends ChangeNotifier {
   }
 
   Future<void> _prepareSignedInSession(String ownerId, int generation) async {
+    // Supabase can emit a new signed-in session while the previous account's
+    // native reminder and local preference cleanup is still running. Never
+    // activate the new owner until that account-scoped release has completed,
+    // otherwise the old cleanup could clear the new owner's state.
+    final signedOutRelease = _signedOutReleaseTask;
+    if (signedOutRelease != null) {
+      await signedOutRelease;
+      if (identical(_signedOutReleaseTask, signedOutRelease)) {
+        _signedOutReleaseTask = null;
+      }
+    }
+    if (api.currentUser?.id != ownerId ||
+        _sessionSetupGeneration != generation) {
+      return;
+    }
+
     try {
       // Account-scoped local preferences are a queue input. Wait for that local
       // read, but let their cloud replay/refresh run independently so a slow or

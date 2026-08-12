@@ -12,7 +12,13 @@ import android.os.Build
 class RecallReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val readiness = RecallReminderNotifications.readiness(context)
-        if (!RecallReminderDeliveryEligibility.canAttemptDelivery(readiness)) return
+        if (RecallReminderDeliveryEligibility.shouldReschedule(readiness)) {
+            // AlarmManager alarms are one-shot. Keep the durable eligibility
+            // and arm the next daily slot so a later permission/settings change
+            // can recover without requiring an app launch or device reboot.
+            RecallReminderScheduler.restore(context)
+            return
+        }
         if (!RecallReminderScheduler.consume(context)) return
         val manager = RecallReminderNotifications.ensureChannel(context)
         val openStudy = Intent(Intent.ACTION_VIEW, Uri.parse(RecallContracts.studyUri), context, MainActivity::class.java)

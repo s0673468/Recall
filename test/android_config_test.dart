@@ -80,8 +80,7 @@ void main() {
     expect(
       int.parse(match!.group(1)!),
       greaterThan(2002),
-      reason:
-          'Android build 2002 is installed and must update in place',
+      reason: 'Android build 2002 is installed and must update in place',
     );
   });
 
@@ -388,7 +387,7 @@ void main() {
     );
   });
 
-  test('Android reminder eligibility is consumed by one delivery', () {
+  test('Android reminder eligibility survives blocked one-shot delivery', () {
     final receiver = reminderReceiver.readAsStringSync();
     final scheduler = reminderScheduler.readAsStringSync();
     final deliveryBlock = receiver.substring(
@@ -396,8 +395,15 @@ void main() {
       receiver.indexOf('class RecallReminderRestoreReceiver'),
     );
 
+    expect(deliveryBlock, contains('shouldReschedule(readiness)'));
+    expect(deliveryBlock, contains('RecallReminderScheduler.restore(context)'));
     expect(deliveryBlock, contains('RecallReminderScheduler.consume(context)'));
-    expect(deliveryBlock, isNot(contains('RecallReminderScheduler.restore')));
+    expect(
+      deliveryBlock.indexOf('RecallReminderScheduler.restore(context)'),
+      lessThan(
+        deliveryBlock.indexOf('RecallReminderScheduler.consume(context)'),
+      ),
+    );
     expect(scheduler, contains('fun consume(context: Context): Boolean'));
     expect(scheduler, contains('.edit().clear().commit()'));
     expect(scheduler, contains('Fail closed if the durable clear fails'));

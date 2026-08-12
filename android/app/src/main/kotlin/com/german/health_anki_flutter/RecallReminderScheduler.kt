@@ -9,6 +9,9 @@ internal object RecallReminderDeliveryEligibility {
     fun canAttemptDelivery(readiness: RecallNotificationReadiness): Boolean =
         readiness == RecallNotificationReadiness.READY
 
+    fun shouldReschedule(readiness: RecallNotificationReadiness): Boolean =
+        !canAttemptDelivery(readiness)
+
     fun canDeliver(wasActive: Boolean, clearCommitted: Boolean): Boolean =
         wasActive && clearCommitted
 }

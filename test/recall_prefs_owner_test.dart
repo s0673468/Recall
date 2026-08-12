@@ -359,6 +359,57 @@ void main() {
     expect(prefs.activeOwnerId, isNull);
   });
 
+  test('a new account waits for external sign-out cleanup', () async {
+    final api = _PrefsRecallApi()..useOwner('owner-a');
+    addTearDown(api.authStates.close);
+    addTearDown(api.client.dispose);
+    final prefs = RecallPrefsController(api: api);
+    await prefs.activateOwner('owner-a');
+    final cleanupStarted = Completer<void>();
+    final cleanupGate = Completer<void>();
+    final preparedOwners = <String>[];
+    final controller = ReviewController(
+      api: api,
+      engine: FsrsEngine(),
+      store: LocalReviewStore(),
+      prefs: prefs,
+      beforeSessionLoad: () async {
+        final ownerId = api.currentUser!.id;
+        await prefs.activateOwner(ownerId);
+        preparedOwners.add(ownerId);
+      },
+      afterSignOut: () async {
+        cleanupStarted.complete();
+        await cleanupGate.future;
+        await prefs.releaseOwner();
+      },
+    );
+    addTearDown(controller.dispose);
+
+    api.user = null;
+    api.authStates.add(const AuthState(AuthChangeEvent.signedOut, null));
+    await cleanupStarted.future;
+    api.useOwner('owner-b');
+    api.authStates.add(const AuthState(AuthChangeEvent.signedIn, null));
+    for (var i = 0; i < 10; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(
+      preparedOwners,
+      isEmpty,
+      reason: 'The old account cleanup must finish before owner B activates.',
+    );
+
+    cleanupGate.complete();
+    for (var i = 0; i < 30 && preparedOwners.isEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(preparedOwners, ['owner-b']);
+    expect(prefs.activeOwnerId, 'owner-b');
+  });
+
   test('foreground sync replays a pending preference write', () async {
     final api = _PrefsRecallApi()
       ..useOwner('owner-a')
