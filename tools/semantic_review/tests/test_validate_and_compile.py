@@ -438,7 +438,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError, "SVG namespace"):
             self.compile()
 
-    def test_placeholder_cluster_requires_a_move_for_every_card(self) -> None:
+    def test_placeholder_cluster_requires_moves_only_for_retained_cards(self) -> None:
         bundle_path = self.concepts / "none.json"
         placeholder = {**self.bundle, "node_id": "none"}
         placeholder["cards"] = [
@@ -506,8 +506,21 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         }
         (self.reviews / "none.json").write_text(json.dumps(none_review), encoding="utf-8")
 
-        with self.assertRaisesRegex(ReviewError, "every placeholder card"):
+        with self.assertRaisesRegex(ReviewError, "every retained placeholder card"):
             self.compile()
+
+        none_review["card_changes"][0].update(
+            {
+                "action": "delete",
+                "rationale": "The placeholder is low-value and has no useful destination.",
+                "cards": [],
+            }
+        )
+        (self.reviews / "none.json").write_text(json.dumps(none_review), encoding="utf-8")
+
+        summary = self.compile()
+
+        self.assertEqual(summary["deleted"], 1)
 
     def test_prep_manifest_nids_may_be_sorted_differently_from_batch_order(self) -> None:
         first = {**self.bundle["cards"][0], "nid": 202, "front": "Second-created front?"}

@@ -316,8 +316,18 @@ def validate_review(
         matching_change = next(change for change in normalized_changes if change["nid"] == nid)
         if matching_change["action"] in ("split", "delete"):
             raise ReviewError(f"{label}: node moves require a kept or edited original card")
-    if node_id == "none" and moved_nids != set(original_by_nid):
-        raise ReviewError("none: every placeholder card must have exactly one node move")
+    if node_id == "none":
+        if any(change["action"] == "split" for change in normalized_changes):
+            raise ReviewError("none: placeholder cards must be kept/edited and moved, or deleted")
+        retained_placeholder_nids = {
+            change["nid"]
+            for change in normalized_changes
+            if change["action"] in {"keep", "edit"}
+        }
+        if moved_nids != retained_placeholder_nids:
+            raise ReviewError(
+                "none: every retained placeholder card must have exactly one node move"
+            )
 
     for change in normalized_changes:
         nid = change["nid"]
