@@ -165,6 +165,30 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError, "keep must preserve front and back"):
             self.compile()
 
+    def test_rejects_control_characters_in_study_text(self) -> None:
+        self.write_review()
+        path = self.reviews / "concept-a.json"
+        review = json.loads(path.read_text(encoding="utf-8"))
+        review["card_changes"][0]["action"] = "edit"
+        review["card_changes"][0]["cards"][0]["back"] = (
+            "Broken " + chr(9) + "ext became a tab."
+        )
+        path.write_text(json.dumps(review), encoding="utf-8")
+
+        with self.assertRaisesRegex(ReviewError, "control character"):
+            self.compile()
+
+    def test_rejects_double_escaped_mathjax_delimiter(self) -> None:
+        self.write_review()
+        path = self.reviews / "concept-a.json"
+        review = json.loads(path.read_text(encoding="utf-8"))
+        review["card_changes"][0]["action"] = "edit"
+        review["card_changes"][0]["cards"][0]["back"] = r"Broken \\(x+1\\)."
+        path.write_text(json.dumps(review), encoding="utf-8")
+
+        with self.assertRaisesRegex(ReviewError, "double-escaped MathJax"):
+            self.compile()
+
     def test_rejects_missing_card_coverage(self) -> None:
         self.write_review(card_changes=[])
 

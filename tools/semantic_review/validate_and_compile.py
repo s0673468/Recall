@@ -50,11 +50,23 @@ def _require_string(value: object, label: str) -> str:
     return value
 
 
+def _validate_study_text(value: str, label: str) -> None:
+    controls = sorted(
+        {ord(character) for character in value if ord(character) < 32 and character not in "\n\r"}
+    )
+    if controls:
+        raise ReviewError(f"{label} contains a control character: {controls}")
+    if any(delimiter in value for delimiter in (r"\\(", r"\\)", r"\\[", r"\\]")):
+        raise ReviewError(f"{label} contains a double-escaped MathJax delimiter")
+
+
 def _validate_card_payload(card: object, label: str) -> dict[str, object]:
     if not isinstance(card, dict):
         raise ReviewError(f"{label} must be an object")
     front = _require_string(card.get("front"), f"{label}.front")
     back = _require_string(card.get("back"), f"{label}.back")
+    _validate_study_text(front, f"{label}.front")
+    _validate_study_text(back, f"{label}.back")
     tags_add = card.get("tags_add", [])
     tags_remove = card.get("tags_remove", [])
     for value, field in ((tags_add, "tags_add"), (tags_remove, "tags_remove")):
