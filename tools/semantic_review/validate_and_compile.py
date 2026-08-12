@@ -564,9 +564,18 @@ def compile_reviews(
                     mutation["remove"] = list(
                         dict.fromkeys([*mutation["remove"], *tags_remove])
                     )
+            apply_action = change["action"]
+            if apply_action == "keep" and any(
+                card["tags_add"] for card in compiled_cards
+            ):
+                # The trusted Anki writer deliberately ignores tag additions on
+                # keep records. Preserve the semantic keep in the review summary,
+                # but cross the apply boundary as a byte-identical edit so the
+                # additions exist before the guarded removal/CAS phase.
+                apply_action = "edit"
             decisions[nid] = {
                 "nid": nid,
-                "action": change["action"],
+                "action": apply_action,
                 "rationale": change["rationale"],
                 "score_before": change["score_before"],
                 "score_after": change["score_after"],

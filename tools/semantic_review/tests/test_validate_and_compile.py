@@ -219,6 +219,42 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         self.assertEqual(mutations[0]["add"], ["volatile"])
         self.assertEqual(mutations[0]["remove"], ["legacy"])
 
+    def test_compiles_unchanged_moved_card_as_apply_edit(self) -> None:
+        self.write_review(
+            node_moves=[
+                {
+                    "nid": 101,
+                    "from_node": "concept-a",
+                    "to_node": "concept-b",
+                    "rationale": "Concept B is the precise semantic owner.",
+                }
+            ],
+            proposed_nodes=[
+                {
+                    "node_id": "concept-b",
+                    "title": "Concept B",
+                    "module": "ML-extra",
+                    "difficulty": 2,
+                    "primer_html": "Reviewed concept B primer.",
+                    "rationale": "The catalog needs a dedicated owner.",
+                }
+            ],
+        )
+
+        summary = self.compile()
+
+        compiled = json.loads(
+            (self.compiled / "verified" / "batch_001.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(summary["kept"], 1)
+        self.assertEqual(compiled[0]["action"], "edit")
+        self.assertEqual(compiled[0]["cards"][0]["front"], "Original front?")
+        self.assertEqual(
+            compiled[0]["cards"][0]["tags_add"], ["node::concept-b"]
+        )
+
     def test_compiles_new_gap_card_with_real_concept_tag(self) -> None:
         self.write_review(
             new_cards=[
