@@ -1,0 +1,104 @@
+# Recall learning-material golden standard
+
+Version: 2026-08-11. Applies to every flashcard and concept primer in Recall.
+
+## What belongs in Recall
+
+Keep knowledge that is useful across future decisions, frequently applied, a prerequisite for
+other learning, easily confused, or expensive to reconstruct. Prefer durable mechanisms and
+decision rules over trivia. A volatile fact belongs only when its current value is itself useful;
+otherwise turn it into the stable principle behind the fact.
+
+Understand before memorizing. A card must make sense from its answer and its concept primer. Do
+not preserve a polished sentence whose meaning is unclear, false, or unsupported.
+
+## Flashcard rules
+
+1. **One gradeable retrieval target.** The learner must know what a correct answer contains. A
+   multi-step calculation may remain one card when the steps form one skill; a bundle of
+   independent facts must split.
+2. **Necessary context, no answer leakage.** State the domain, assumptions, units, convention,
+   direction, or paper when needed to make the answer unique. Do not include a synonym or formula
+   fragment that gives the answer away.
+3. **Minimum sufficient answer.** Lead with the exact answer. Add at most one short explanation,
+   boundary, or memory hook when it prevents a misconception. A primer, not a card back, owns the
+   longer explanation.
+4. **Successful effort.** Require genuine recall, derivation, completion, discrimination, or
+   sentence production. Difficulty is useful only when the target is understandable and the cue
+   makes successful retrieval plausible; obscurity is not a virtue.
+5. **Truth with scope.** Label definitions, theorems, heuristics, empirical findings, and design
+   conventions accurately. Preserve qualifications. Mathematical cards state dimensions,
+   assumptions, signs, and domains whenever omitting them changes the result.
+6. **Currentness and provenance.** Classify each claim as durable, time-bound, or disputed.
+   Fact-check time-bound and disputed claims against current primary sources. Keep source URLs and
+   access dates in the review manifest. Put a source/date on the study face only when the answer
+   depends on that source or date. Add `volatile` to claims requiring later re-checks.
+7. **Transfer, not paraphrase count.** A useful cluster may contain a definition, mechanism,
+   calculation/application, contrast, failure mode, and decision rule. Each must require a
+   distinct retrieval. More than about eight cards is a review trigger, not an automatic deletion
+   rule.
+8. **Control interference.** For confusable ideas, make the cues distinguish them and add one
+   contrast card when that contrast is useful. Avoid several fronts that can all be answered with
+   the same vague paragraph.
+9. **Preserve learning continuity.** Keep a good card unchanged. Edit before deleting. Delete only
+   an exact semantic duplicate, a false/obsolete low-value claim, or an orphaned fragment whose
+   useful target is covered elsewhere. Record the reason and replacement coverage.
+10. **Language rule.** Use English except for the Portuguese language being produced or analyzed.
+    Portuguese cards should elicit a sentence or contextual choice in Brazilian Portuguese, name
+    material accepted alternatives, and avoid bare conjugation-table recitation.
+11. **Formatting.** Use `<br>` for breaks and sparing `<b>` emphasis. Use MathJax delimiters
+    `\( ... \)` and `\[ ... \]` for formulas. No inline styles, emoji, nested wrappers, or
+    decorative prose.
+12. **Self-contained grading.** The back must let the learner decide whether the attempted answer
+    was correct. Do not rely on an unstated external diagram, prior card order, or an answer such as
+    “it depends” without the controlling condition.
+
+## Cluster and gap-fill rules
+
+- Review every existing card before adding to its cluster.
+- Map the cluster's prerequisite, core mechanism, application, contrast, limitation, and adjacent
+  decision before declaring a gap.
+- Add only high-value missing retrievals. Do not add a synonym, a second wording of the same fact,
+  or a detail better looked up.
+- Prefer a small connected cluster over an isolated card. New adjacent concepts require their own
+  node and primer rather than a catch-all `node::none` tag.
+- A cluster is complete enough when a learner can define the idea, use it in the common case, and
+  avoid its most consequential confusion. It need not exhaust the field.
+
+## Primer rules
+
+A primer is the explanatory layer behind the cards. It must be accurate, current, readable without
+other cards, and aligned with the cluster's vocabulary and conventions.
+
+- Keep 100-280 words, 2-5 paragraphs, no paragraph over 100 words, no more than one list and three
+  list items, and only the markup accepted by `scripts/check_primers.py`.
+- Give a compact mental model, one concrete example or derivation, and the most important boundary
+  or confusion. Do not turn the primer into a glossary or repeat every card answer.
+- A current paper or product-specific claim needs a date and primary-source provenance in the
+  review manifest. Stable concepts should not be cluttered with citations on the reading face.
+- Figures must agree with the text's notation and claim. A decorative or misleading figure is worse
+  than no figure.
+
+## Review score
+
+Score each card from 1 to 5 before and after:
+
+- **5:** valuable, unambiguous, atomic/gradeable, accurate with necessary scope, efficient, and
+  distinct within its cluster.
+- **4:** safe and useful; only minor wording or optional-context improvements remain.
+- **3:** learnable but ambiguous, bundled, redundant, weakly scoped, or weakly sourced.
+- **2:** materially confusing, obsolete, misleading, or testing the wrong target.
+- **1:** false, ungradeable, exact duplicate, or not worth retaining.
+
+Only cards scoring 4 or 5 may remain after the pass. A `keep` record must preserve the original
+front and back exactly.
+
+## Evidence basis
+
+- SuperMemo, “Twenty rules of formulating knowledge”: minimum information, unambiguous wording,
+  interference control, examples, and understanding before memorization.
+  https://www.supermemo.com/en/blog/twenty-rules-of-formulating-knowledge
+- Butler (2010), repeated testing and transfer. DOI: 10.1037/a0019902.
+- Butler et al. (2017), retrieval with varied examples and transfer. PMID: 29265856.
+- Higham et al. (2023), spaced retrieval, corrective feedback, and successive relearning.
+  https://discovery.ucl.ac.uk/10177745/1/Spaced%20Retrieval%20Practice%20Can%20Restudying%20Trump%20Retrieval.pdf

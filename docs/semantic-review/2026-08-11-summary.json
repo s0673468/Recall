@@ -1,0 +1,15 @@
+{
+  "clusters": 218,
+  "reviewed_clusters": 218,
+  "missing_clusters": [],
+  "existing_cards": 1668,
+  "new_card_records": 46,
+  "primer_edits": 208,
+  "figure_edits": 85,
+  "tag_mutations": 73,
+  "proposed_nodes": 2,
+  "kept": 490,
+  "edited": 1000,
+  "split": 0,
+  "deleted": 178
+}
