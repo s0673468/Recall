@@ -74,6 +74,7 @@ ReviewCard _card({
   String? tags,
   String front = 'front',
   String back = 'back',
+  bool contentRevalidationPending = false,
 }) => ReviewCard(
   id: id,
   guid: 'g$id',
@@ -90,6 +91,7 @@ ReviewCard _card({
   lastReview: lastReview,
   cloudSeen: cloudSeen,
   tags: tags,
+  contentRevalidationPending: contentRevalidationPending,
 );
 
 /// One row of the modelled `cards` table — the mutable server-side scheduling
@@ -189,8 +191,7 @@ class _FakeServer {
 
   int? findLogByEventId(int cardId, String clientEventId) {
     for (final row in reviewLog) {
-      if (row['card_id'] == cardId &&
-          row['client_event_id'] == clientEventId) {
+      if (row['card_id'] == cardId && row['client_event_id'] == clientEventId) {
         return row['id'] as int;
       }
     }
@@ -310,6 +311,7 @@ class _FakeRecallApi implements RecallApi {
       cloudSeen: row.cloudSeen,
       tags: template.tags,
       latexSvg: template.latexSvg,
+      contentRevalidationPending: template.contentRevalidationPending,
     );
   }
 
@@ -336,6 +338,17 @@ class _FakeRecallApi implements RecallApi {
         if (deckId == null || c.deckId == deckId) _project(c),
     ];
   }
+
+  @override
+  Future<List<ReviewCard>> fetchContentRevalidationQueue({
+    int? deckId,
+    int limit = RecallApi.contentRevalidationBatchSize,
+  }) async => [
+    for (final card in queue)
+      if (card.contentRevalidationPending &&
+          (deckId == null || card.deckId == deckId))
+        _project(card),
+  ].take(limit).toList();
 
   /// How many bonus batches were fetched, mirroring [queueFetches].
   int aheadFetches = 0;
@@ -792,10 +805,7 @@ void main() {
         now: now,
       );
       expect(out.state, 2);
-      expect(
-        out.due.difference(now),
-        greaterThan(const Duration(days: 30)),
-      );
+      expect(out.due.difference(now), greaterThan(const Duration(days: 30)));
     });
 
     test('rating previews show no cliff between Good and Easy', () {
@@ -869,12 +879,106 @@ void main() {
   });
 
   group('ReviewController', () {
+    test('material revalidation keeps FSRS history and prunes offline snapshot '
+        'after success', () async {
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.utc(2026, 8, 12, 12);
+      final revised = _card(
+        id: 91,
+        state: 2,
+        stability: 42.5,
+        difficulty: 3.25,
+        reps: 17,
+        lapses: 2,
+        due: DateTime.utc(2027, 1, 1, 12),
+        lastReview: DateTime.utc(2026, 7, 1, 12),
+        tags: 'topic content_revalidate::20260811T120000Z',
+        contentRevalidationPending: true,
+      );
+      final api = _FakeRecallApi([revised]);
+      final store = LocalReviewStore();
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+        clock: () => now,
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+      expect(controller.state.current?.id, 91);
+      expect(controller.state.current?.stability, 42.5);
+      expect(controller.state.current?.difficulty, 3.25);
+      expect(controller.state.current?.reps, 17);
+      expect(controller.state.current?.lapses, 2);
+      expect(controller.state.globalDueCount, 0);
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+      // This is an ordinary FSRS review, not a reset: all seventeen historic
+      // reps survive and this answer becomes rep eighteen.
+      expect(api.server.cards[91]?.reps, 18);
+      expect(api.server.cards[91]?.lapses, 2);
+
+      // Serialize behind the unawaited snapshot convergence write.
+      await store.outbox();
+      expect((await store.loadSnapshot())?.queue, isEmpty);
+    });
+
+    test(
+      'offline replay keeps a completed validation out of the cached queue',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final now = DateTime.utc(2026, 8, 12, 12);
+        final revised = _card(
+          id: 92,
+          state: 2,
+          stability: 30,
+          difficulty: 4,
+          reps: 12,
+          due: DateTime.utc(2027, 2, 1),
+          lastReview: DateTime.utc(2026, 7, 1),
+          tags: 'topic content_revalidate::20260811T120000Z',
+          contentRevalidationPending: true,
+        );
+        final store = LocalReviewStore();
+        final online = _FakeRecallApi([revised])..failApplyReview = true;
+        final first = ReviewController(
+          api: online,
+          engine: FsrsEngine(),
+          store: store,
+          clock: () => now,
+        );
+        addTearDown(first.dispose);
+        await first.load();
+        first.flip();
+        await first.rate(Rating.good);
+        await first.syncPending();
+        expect(await store.outbox(), hasLength(1));
+
+        final offline = _FakeRecallApi([])
+          ..failApplyReview = true
+          ..beforeQueue = () async => throw StateError('offline');
+        final restarted = ReviewController(
+          api: offline,
+          engine: FsrsEngine(),
+          store: store,
+          clock: () => now,
+        );
+        addTearDown(restarted.dispose);
+        await restarted.load();
+
+        expect(restarted.state.current, isNull);
+        expect(restarted.state.offline, isTrue);
+        expect(await store.outbox(), hasLength(1));
+      },
+    );
+
     test('auth failures never expose arbitrary exception text', () async {
       SharedPreferences.setMockInitialValues({});
       final api = _FakeRecallApi([])
-        ..signInError = StateError(
-          'sensitive-marker-one sensitive-marker-two',
-        );
+        ..signInError = StateError('sensitive-marker-one sensitive-marker-two');
       final controller = ReviewController(
         api: api,
         engine: FsrsEngine(),
@@ -1231,14 +1335,15 @@ void main() {
       );
       final queueStarted = Completer<void>();
       final releaseQueue = Completer<void>();
-      final api = _FakeRecallApi([
-        _card(state: 2, due: now.subtract(const Duration(hours: 1))),
-      ])
-        ..deckCounts = const {1: (due: 10, neu: 0)}
-        ..beforeQueue = () async {
-          queueStarted.complete();
-          await releaseQueue.future;
-        };
+      final api =
+          _FakeRecallApi([
+              _card(state: 2, due: now.subtract(const Duration(hours: 1))),
+            ])
+            ..deckCounts = const {1: (due: 10, neu: 0)}
+            ..beforeQueue = () async {
+              queueStarted.complete();
+              await releaseQueue.future;
+            };
       final controller = ReviewController(
         api: api,
         engine: FsrsEngine(),
@@ -1550,10 +1655,7 @@ void main() {
         for (var i = 0; i < 5; i++) {
           await Future<void>.delayed(Duration.zero);
         }
-        expect(
-          (await store.loadSnapshot())!.queue.map((card) => card.id),
-          [3],
-        );
+        expect((await store.loadSnapshot())!.queue.map((card) => card.id), [3]);
       },
     );
 
@@ -1903,11 +2005,7 @@ void main() {
         ],
         conceptNodes: const [
           ConceptNodeInfo(nodeId: 'm00-read', title: 'Read', module: 'M00'),
-          ConceptNodeInfo(
-            nodeId: 'm00-unread',
-            title: 'Unread',
-            module: 'M00',
-          ),
+          ConceptNodeInfo(nodeId: 'm00-unread', title: 'Unread', module: 'M00'),
         ],
         conceptPages: pages,
         readTodayPages: [pages.first],
@@ -2032,7 +2130,11 @@ void main() {
           server: server,
           deviceLabel: 'phone',
         ),
-        'ipad': _FakeRecallApi([studied()], server: server, deviceLabel: 'ipad'),
+        'ipad': _FakeRecallApi(
+          [studied()],
+          server: server,
+          deviceLabel: 'ipad',
+        ),
       };
       for (final e in order) {
         await devices[e['device']]!.applyReview(e);
@@ -2143,11 +2245,7 @@ void main() {
       // two devices rating in the same instant resolve first-writer-wins
       // rather than thrashing on flush order.
       final api = _FakeRecallApi([studied()]);
-      final tie = {
-        ...evening,
-        'client_id': 'other-device',
-        'stability': 99.0,
-      };
+      final tie = {...evening, 'client_id': 'other-device', 'stability': 99.0};
 
       await api.applyReview(evening);
       await api.applyReview(tie);
@@ -4016,32 +4114,35 @@ void main() {
       expect(api.applied, isEmpty);
     });
 
-    test('does not reintroduce a card reviewed before catch-up opt-in', () async {
-      final queue = _catchUpQueue(82);
-      final reviewed = queue.first;
-      final api = _FakeRecallApi(queue);
-      final controller = ReviewController(
-        api: api,
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-        clock: () => DateTime.utc(2026, 8, 5, 12),
-      );
-      addTearDown(controller.dispose);
+    test(
+      'does not reintroduce a card reviewed before catch-up opt-in',
+      () async {
+        final queue = _catchUpQueue(82);
+        final reviewed = queue.first;
+        final api = _FakeRecallApi(queue);
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+          clock: () => DateTime.utc(2026, 8, 5, 12),
+        );
+        addTearDown(controller.dispose);
 
-      await controller.load();
-      controller.flip();
-      await controller.rate(Rating.good);
-      await controller.syncPending();
-      expect(await controller.store.outbox(), isEmpty);
+        await controller.load();
+        controller.flip();
+        await controller.rate(Rating.good);
+        await controller.syncPending();
+        expect(await controller.store.outbox(), isEmpty);
 
-      await controller.startCatchUp();
+        await controller.startCatchUp();
 
-      expect(controller.state.catchUp.dueCount, 81);
-      expect(
-        controller.state.queue.any((card) => card.id == reviewed.id),
-        isFalse,
-      );
-    });
+        expect(controller.state.catchUp.dueCount, 81);
+        expect(
+          controller.state.queue.any((card) => card.id == reviewed.id),
+          isFalse,
+        );
+      },
+    );
 
     test(
       'filters a pending review before catch-up eligibility and ordering',
@@ -4147,49 +4248,51 @@ void main() {
       expect(controller.state.current, isNotNull);
     });
 
-    test('undo restores progress when the final catch-up card clears the mode',
-        () async {
-      final now = DateTime.utc(2026, 8, 5, 12);
-      final store = LocalReviewStore();
-      await store.saveCatchUpState(
-        CatchUpLocalState(
-          mode: CatchUpMode.active,
-          dayKey: '2026-08-05',
-          completedToday: 19,
-        ),
-      );
-      final controller = ReviewController(
-        api: _FakeRecallApi([
-          _card(
-            id: 904,
-            state: 2,
-            stability: 5,
-            difficulty: 5,
-            due: now.subtract(const Duration(hours: 1)),
-            lastReview: now.subtract(const Duration(days: 1)),
+    test(
+      'undo restores progress when the final catch-up card clears the mode',
+      () async {
+        final now = DateTime.utc(2026, 8, 5, 12);
+        final store = LocalReviewStore();
+        await store.saveCatchUpState(
+          CatchUpLocalState(
+            mode: CatchUpMode.active,
+            dayKey: '2026-08-05',
+            completedToday: 19,
           ),
-        ]),
-        engine: FsrsEngine(),
-        store: store,
-        clock: () => now,
-      );
-      addTearDown(controller.dispose);
+        );
+        final controller = ReviewController(
+          api: _FakeRecallApi([
+            _card(
+              id: 904,
+              state: 2,
+              stability: 5,
+              difficulty: 5,
+              due: now.subtract(const Duration(hours: 1)),
+              lastReview: now.subtract(const Duration(days: 1)),
+            ),
+          ]),
+          engine: FsrsEngine(),
+          store: store,
+          clock: () => now,
+        );
+        addTearDown(controller.dispose);
 
-      await controller.load();
-      expect(controller.state.catchUp.isActive, isTrue);
-      expect(controller.state.catchUp.completedToday, 19);
-      controller.flip();
-      await controller.rate(Rating.good);
-      expect(controller.state.catchUp.isNone, isTrue);
+        await controller.load();
+        expect(controller.state.catchUp.isActive, isTrue);
+        expect(controller.state.catchUp.completedToday, 19);
+        controller.flip();
+        await controller.rate(Rating.good);
+        expect(controller.state.catchUp.isNone, isTrue);
 
-      await controller.undo();
+        await controller.undo();
 
-      final restored = await store.loadCatchUpState();
-      expect(restored.mode, CatchUpMode.active);
-      expect(restored.completedToday, 19);
-      expect(controller.state.catchUp.isActive, isTrue);
-      expect(controller.state.catchUp.completedToday, 19);
-    });
+        final restored = await store.loadCatchUpState();
+        expect(restored.mode, CatchUpMode.active);
+        expect(restored.completedToday, 19);
+        expect(controller.state.catchUp.isActive, isTrue);
+        expect(controller.state.catchUp.completedToday, 19);
+      },
+    );
 
     test(
       'resets catch-up daily progress after midnight without reload',

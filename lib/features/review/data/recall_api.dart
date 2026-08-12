@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../settings/domain/recall_prefs.dart';
 import '../domain/stats_models.dart';
+import '../domain/content_revalidation.dart';
 import 'models.dart';
 import 'review_replay.dart';
 
@@ -35,6 +36,9 @@ class RecallApi implements ReviewReplayGateway {
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
       'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg,tags)';
   static const _duePageSize = 500;
+  static const contentRevalidationBatchSize = 20;
+  static const _contentRevalidationPageSize = 50;
+  static const _contentRevalidationScanLimit = 5000;
 
   String get device =>
       recallDeviceLabel(isWeb: kIsWeb, targetPlatform: defaultTargetPlatform);
@@ -271,6 +275,7 @@ class RecallApi implements ReviewReplayGateway {
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
   }) async {
+    final revalidationsFuture = _fetchContentRevalidationQueueOrEmpty(deckId);
     final nowIso = DateTime.now().toUtc().toIso8601String();
     final introducedToday = await _newCardsIntroducedToday(deckId: deckId);
     final remainingNewLimit = (newLimit - introducedToday).clamp(0, newLimit);
@@ -317,10 +322,115 @@ class RecallApi implements ReviewReplayGateway {
       );
     }
 
-    return [
+    final ordinary = [
       for (final r in dueRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
       ...newCards,
     ];
+    // Fetching the priority lane starts before the ordinary queue round-trips,
+    // so this adds no serial startup dependency. Deduplicate cards that are
+    // both materially revised and ordinarily due.
+    final revalidations = await revalidationsFuture;
+    final priorityIds = {for (final card in revalidations) card.id};
+    return [
+      ...revalidations,
+      for (final card in ordinary)
+        if (!priorityIds.contains(card.id)) card,
+    ];
+  }
+
+  Future<List<ReviewCard>> _fetchContentRevalidationQueueOrEmpty(
+    int? deckId,
+  ) async {
+    try {
+      return await fetchContentRevalidationQueue(deckId: deckId);
+    } catch (_) {
+      // The review-log read is an optional priority lane. Its outage must not
+      // take down the ordinary due/new queue.
+      debugPrint('Recall: content revalidation unavailable (non-fatal)');
+      return const [];
+    }
+  }
+
+  /// A small priority batch of mature cards whose content changed materially.
+  ///
+  /// Discovery is deliberately separate from the due/new queries: these cards
+  /// may be months from their ordinary due date, and surfacing them must not
+  /// change that scheduling state. The append-only review log is the
+  /// acknowledgement ledger. Again (rating 1) does not clear a revision;
+  /// Hard/Good/Easy after the marker do. Candidate scanning is capped so a
+  /// malformed or historic collection cannot turn startup into an unbounded
+  /// read.
+  Future<List<ReviewCard>> fetchContentRevalidationQueue({
+    int? deckId,
+    int limit = contentRevalidationBatchSize,
+  }) async {
+    final wanted = limit.clamp(0, contentRevalidationBatchSize).toInt();
+    if (wanted == 0) return const [];
+
+    final pending = <ReviewCard>[];
+    for (
+      var offset = 0;
+      offset < _contentRevalidationScanLimit && pending.length < wanted;
+      offset += _contentRevalidationPageSize
+    ) {
+      PostgrestFilterBuilder<List<Map<String, dynamic>>> query = client
+          .from('cards')
+          .select(_cardSelect)
+          .eq('deleted', false)
+          .eq('suspended', false)
+          .gt('reps', 0)
+          .like('notes.tags', '%$contentRevalidationTagPrefix%');
+      if (deckId != null) query = query.eq('notes.deck_id', deckId);
+      final rows = await query
+          .order('id', ascending: true)
+          .range(offset, offset + _contentRevalidationPageSize - 1);
+      if (rows.isEmpty) break;
+
+      final candidates = <({ReviewCard card, DateTime revision})>[];
+      for (final raw in rows) {
+        final card = ReviewCard.fromRow(Map<String, dynamic>.from(raw));
+        final revision = contentRevalidationRevision(card.tags);
+        if (revision != null) candidates.add((card: card, revision: revision));
+      }
+      if (candidates.isNotEmpty) {
+        final earliest = candidates
+            .map((candidate) => candidate.revision)
+            .reduce((a, b) => a.isBefore(b) ? a : b);
+        final successfulRows = await client
+            .from('review_log')
+            .select('card_id,rating,rating_at')
+            .inFilter('card_id', [
+              for (final candidate in candidates) candidate.card.id,
+            ])
+            .gt('rating', 1)
+            .gt('rating_at', earliest.toIso8601String());
+        final acknowledged = <int, List<DateTime>>{};
+        for (final row in successfulRows) {
+          final cardId = (row['card_id'] as num?)?.toInt();
+          final rating = (row['rating'] as num?)?.toInt();
+          final ratingAt = DateTime.tryParse(row['rating_at'] as String? ?? '');
+          if (cardId != null &&
+              rating != null &&
+              isSuccessfulContentRevalidationRating(rating) &&
+              ratingAt != null) {
+            acknowledged.putIfAbsent(cardId, () => []).add(ratingAt.toUtc());
+          }
+        }
+        for (final candidate in candidates) {
+          final isAcknowledged =
+              acknowledged[candidate.card.id]?.any(
+                (reviewedAt) => reviewedAt.isAfter(candidate.revision),
+              ) ??
+              false;
+          if (!isAcknowledged) {
+            pending.add(candidate.card.asContentRevalidationPending());
+            if (pending.length == wanted) break;
+          }
+        }
+      }
+      if (rows.length < _contentRevalidationPageSize) break;
+    }
+    return pending;
   }
 
   Future<List<Map<String, dynamic>>> _fetchAllDueRows(

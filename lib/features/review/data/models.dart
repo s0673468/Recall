@@ -163,6 +163,12 @@ class ReviewCard {
   /// an optional fallback — see [CardFace]. Extracted to raw `<svg …>` markup.
   final String? latexSvg;
 
+  /// True only when the queue fetch proved that this card has an unacknowledged
+  /// material content revision. This is presentation metadata, not scheduling
+  /// state, and is cached so the same validation card remains available
+  /// offline. It is never written to Supabase's cards row.
+  final bool contentRevalidationPending;
+
   const ReviewCard({
     required this.id,
     required this.guid,
@@ -180,6 +186,7 @@ class ReviewCard {
     this.cloudSeen = false,
     this.tags,
     this.latexSvg,
+    this.contentRevalidationPending = false,
   });
 
   bool get isNew => state == 0;
@@ -206,6 +213,26 @@ class ReviewCard {
     );
   }
 
+  ReviewCard asContentRevalidationPending() => ReviewCard(
+    id: id,
+    guid: guid,
+    deckId: deckId,
+    front: front,
+    back: back,
+    hasLatex: hasLatex,
+    stability: stability,
+    difficulty: difficulty,
+    due: due,
+    state: state,
+    reps: reps,
+    lapses: lapses,
+    lastReview: lastReview,
+    cloudSeen: cloudSeen,
+    tags: tags,
+    latexSvg: latexSvg,
+    contentRevalidationPending: true,
+  );
+
   /// Flat JSON for the offline snapshot cache (no nested `notes`).
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -224,6 +251,8 @@ class ReviewCard {
     'cloud_seen': cloudSeen,
     if (tags != null) 'tags': tags,
     if (latexSvg != null) 'latex_svg': latexSvg,
+    if (contentRevalidationPending)
+      'content_revalidation_pending': contentRevalidationPending,
   };
 
   factory ReviewCard.fromJson(Map<String, dynamic> m) => ReviewCard(
@@ -244,6 +273,8 @@ class ReviewCard {
     cloudSeen: (m['cloud_seen'] as bool?) ?? false,
     tags: m['tags'] as String?,
     latexSvg: m['latex_svg'] as String?,
+    contentRevalidationPending:
+        (m['content_revalidation_pending'] as bool?) ?? false,
   );
 }
 

@@ -51,40 +51,52 @@ void main() {
     List<Uri> cardRequests() =>
         requests.where((u) => u.path.endsWith('/cards')).toList();
 
-    test('fetchQueue filters suspended out of BOTH the due and new queries',
-        () async {
-      final api = apiReturning(const []);
-      await api.fetchQueue(newLimit: 5);
+    test(
+      'fetchQueue filters suspended out of every study queue query',
+      () async {
+        final api = apiReturning(const []);
+        await api.fetchQueue(newLimit: 5);
 
-      final cards = cardRequests();
-      expect(cards, hasLength(2), reason: 'one due query + one new query');
-      for (final u in cards) {
+        final cards = cardRequests();
         expect(
-          u.query,
-          contains('suspended=eq.false'),
-          reason: 'both queue queries must exclude suspended cards: $u',
+          cards,
+          hasLength(3),
+          reason: 'one revalidation, one due, and one new query',
         );
-      }
-      // Both halves of the queue are represented and each carries the filter.
-      final due = cards.singleWhere((u) => u.query.contains('state=neq.0'));
-      final neu = cards.singleWhere((u) => u.query.contains('state=eq.0'));
-      expect(due.query, contains('suspended=eq.false'));
-      expect(neu.query, contains('suspended=eq.false'));
-    });
+        for (final u in cards) {
+          expect(
+            u.query,
+            contains('suspended=eq.false'),
+            reason: 'both queue queries must exclude suspended cards: $u',
+          );
+        }
+        // Every lane is represented and carries the same dormancy filter.
+        final revised = cards.singleWhere(
+          (u) => u.query.contains('content_revalidate'),
+        );
+        final due = cards.singleWhere((u) => u.query.contains('state=neq.0'));
+        final neu = cards.singleWhere((u) => u.query.contains('state=eq.0'));
+        expect(revised.query, contains('suspended=eq.false'));
+        expect(due.query, contains('suspended=eq.false'));
+        expect(neu.query, contains('suspended=eq.false'));
+      },
+    );
 
-    test('fetchQueue keeps the suspended filter alongside a deck filter',
-        () async {
-      final api = apiReturning(const []);
-      await api.fetchQueue(deckId: 7, newLimit: 5);
+    test(
+      'fetchQueue keeps the suspended filter alongside a deck filter',
+      () async {
+        final api = apiReturning(const []);
+        await api.fetchQueue(deckId: 7, newLimit: 5);
 
-      final cards = cardRequests();
-      expect(cards, hasLength(2));
-      for (final u in cards) {
-        // Deck restriction and suspension filter coexist on both queries.
-        expect(u.query, contains('notes.deck_id=eq.7'));
-        expect(u.query, contains('suspended=eq.false'));
-      }
-    });
+        final cards = cardRequests();
+        expect(cards, hasLength(3));
+        for (final u in cards) {
+          // Deck restriction and suspension filter coexist on every queue lane.
+          expect(u.query, contains('notes.deck_id=eq.7'));
+          expect(u.query, contains('suspended=eq.false'));
+        }
+      },
+    );
 
     test('fetchDueDates excludes suspended cards from the forecast', () async {
       final api = apiReturning(const []);
@@ -95,17 +107,20 @@ void main() {
       expect(cards.single.query, contains('suspended=eq.false'));
     });
 
-    test('review history is NOT filtered by suspended (past reviews remain)',
-        () async {
-      // A suspended card keeps the stats/history of its earlier reviews; the
-      // review_log read must therefore carry no suspended predicate.
-      final api = apiReturning(const []);
-      await api.fetchReviewLog();
+    test(
+      'review history is NOT filtered by suspended (past reviews remain)',
+      () async {
+        // A suspended card keeps the stats/history of its earlier reviews; the
+        // review_log read must therefore carry no suspended predicate.
+        final api = apiReturning(const []);
+        await api.fetchReviewLog();
 
-      final logRequests =
-          requests.where((u) => u.path.endsWith('/review_log')).toList();
-      expect(logRequests, hasLength(1));
-      expect(logRequests.single.query, isNot(contains('suspended')));
-    });
+        final logRequests = requests
+            .where((u) => u.path.endsWith('/review_log'))
+            .toList();
+        expect(logRequests, hasLength(1));
+        expect(logRequests.single.query, isNot(contains('suspended')));
+      },
+    );
   });
 }
