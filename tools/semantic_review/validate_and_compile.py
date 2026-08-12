@@ -19,6 +19,7 @@ from typing import Any
 
 
 VALID_ACTIONS = {"keep", "edit", "split", "delete"}
+SVG_ROOT = "{http://www.w3.org/2000/svg}svg"
 REQUIRED_REVIEW_KEYS = {
     "node_id",
     "summary",
@@ -171,6 +172,10 @@ def _validate_figure(
             raise ReviewError(f"{node_id}: edited figure is invalid XML: {error}") from error
         if root.tag.rsplit("}", 1)[-1] != "svg":
             raise ReviewError(f"{node_id}: edited figure root must be svg")
+        if root.tag != SVG_ROOT:
+            raise ReviewError(
+                f"{node_id}: edited figure root must declare the standard SVG namespace"
+            )
         if any(element.tag.rsplit("}", 1)[-1] == "script" for element in root.iter()):
             raise ReviewError(f"{node_id}: edited figure cannot contain script")
     return {**candidate, "svg": svg}

@@ -413,6 +413,31 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             replacement,
         )
 
+    def test_rejects_edited_figure_without_svg_namespace(self) -> None:
+        figure_path = self.root / "concept-a.svg"
+        figure_path.write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>Old</text></svg>',
+            encoding="utf-8",
+        )
+        bundle = json.loads(
+            (self.concepts / "concept-a.json").read_text(encoding="utf-8")
+        )
+        bundle["figure_path"] = str(figure_path)
+        (self.concepts / "concept-a.json").write_text(
+            json.dumps(bundle), encoding="utf-8"
+        )
+        self.write_review(
+            figure={
+                "action": "edit",
+                "path": str(figure_path),
+                "rationale": "The original label was misleading.",
+                "svg": '<svg viewBox="0 0 20 10"><text>Precise</text></svg>',
+            }
+        )
+
+        with self.assertRaisesRegex(ReviewError, "SVG namespace"):
+            self.compile()
+
     def test_placeholder_cluster_requires_a_move_for_every_card(self) -> None:
         bundle_path = self.concepts / "none.json"
         placeholder = {**self.bundle, "node_id": "none"}
