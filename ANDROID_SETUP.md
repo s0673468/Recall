@@ -10,7 +10,7 @@ and platform integration code; scheduling and data ownership stay in Dart.
 - installed name: **Recall**
 - application ID: `com.german.health_anki_flutter`
 - minimum Android version: API 24
-- compile and target SDK: Flutter's pinned SDK 36 values
+- compile and target SDK: Flutter's pinned target SDK 36 values
 - Java language level: 17
 - authentication: Supabase email and password with a revocable session in
   Android encrypted storage
@@ -27,7 +27,7 @@ only `SUPABASE_URL` and the public `SUPABASE_ANON_KEY` in the ignored
 
 ## Build and test
 
-Install Flutter 3.44.2, Android SDK 36, and JDK 17 or newer. Android Studio's
+Install Flutter 3.44.9, Android SDK 36, and JDK 17 or newer. Android Studio's
 bundled JDK is supported. From the repository root:
 
 ```bash
@@ -111,7 +111,10 @@ adb shell dumpsys package com.german.health_anki_flutter
   through an explicit immutable `PendingIntent`.
 - Supabase remains the source of truth. Foreground, resume, and every transition
   back to a validated network drain the same durable idempotent review and flag
-  outboxes. Android schedules no hidden headless account work.
+  outboxes plus the account-scoped latest-value preference write. Local owner
+  keys are hashed, pending preferences replay before cloud reads, and startup
+  waits only for the local mirror. Android schedules no hidden headless account
+  work.
 - Backup and cleartext traffic are disabled. The diagnostics mirror is bounded,
   value-free, private, atomic, and excluded from backup.
 - Android 16+ edge-to-edge and predictive back are enabled. Narrow screens use a
@@ -121,7 +124,12 @@ adb shell dumpsys package com.german.health_anki_flutter
   completion. Android's system haptic setting is respected; no vibration
   permission is requested.
 - The launcher shortcut and home-screen widget open Study. The widget shows
-  only the all-decks due count and whether its aggregate snapshot is stale.
+  only the all-decks due count and whether its aggregate snapshot is stale. A
+  private one-shot inexact alarm updates the stale label after 12 hours without
+  waking the app for network work.
+- Reminder eligibility is consumed after one delivery. Android never rearms a
+  stale due-count decision for the next day; the next foreground/reconnect
+  reconciliation schedules from current account state.
 
 ## iOS parity and Android conventions
 
@@ -154,10 +162,19 @@ do not change Recall's data, scheduling, or offline guarantees.
 
 On Android 17, target-SDK 36 apps receive `ACCESS_LOCAL_NETWORK` implicitly
 through `INTERNET`. Recall does not declare or request that runtime permission
-and has no LAN feature. When Flutter's supported template moves to target SDK
-37, Recall should keep LAN access blocked rather than add the broad permission.
+and has no LAN feature. When Recall moves to target SDK 37, LAN access must stay
+blocked rather than adding the broad permission.
 
-Passkeys are not enabled. The current product has no passkey flow, and Android
+Recall must remain on target SDK 36 until Flutter 3.47 or a later stable release
+provides the built-in Kotlin migration needed for a fully supported Android 17
+toolchain. Android's API 37 side is ready with AGP 9.1.1, Gradle 9.3.1, and JDK
+17, but Flutter 3.44.9 still defaults to SDK 36 and its supported Kotlin matrix
+does not close over that AGP version. A locally successful forced target-37
+build is not sufficient production evidence. Re-evaluate this gate against the
+current stable Flutter release before changing `compileSdk` or `targetSdk`.
+
+Passkeys are not enabled. Supabase Flutter 2.17.1 keeps only the platform
+interface; Recall deliberately provides no native authenticator plugin. Android
 passkeys require coordinated Supabase Auth enablement, a relying-party domain,
 Digital Asset Links, and final signing fingerprints. Email/password remains the
 supported authentication path until those production prerequisites are
@@ -183,7 +200,9 @@ a Pixel model. Preserve the user's data and system settings.
 Current platform references:
 
 - [Flutter Android deployment](https://docs.flutter.dev/deployment/android)
+- [Flutter built-in Kotlin migration](https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-app-developers)
 - [Android 16 SDK setup](https://developer.android.com/about/versions/16/setup-sdk)
+- [Android Gradle plugin 9.1.1](https://developer.android.com/build/releases/agp-9-1-0-release-notes)
 - [Flutter edge-to-edge migration](https://docs.flutter.dev/release/breaking-changes/default-systemuimode-edge-to-edge)
 - [Flutter predictive back migration](https://docs.flutter.dev/release/breaking-changes/android-predictive-back)
 - [Android adaptive orientation and resizability](https://developer.android.com/develop/adaptive-apps/guides/app-orientation-aspect-ratio-resizability)

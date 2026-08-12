@@ -95,6 +95,7 @@ class StudyReminderController extends ChangeNotifier {
   int? _dueCount;
   DateTime? _lastReviewedAt;
   bool _reviewActivityKnown = false;
+  bool _initialized = false;
   Timer? _dayBoundaryTimer;
   Future<void> _operationTail = Future<void>.value();
   String? _lastAppliedSignature;
@@ -122,34 +123,21 @@ class StudyReminderController extends ChangeNotifier {
       _enqueue(() => _initialize(ownerId: ownerId, apply: apply));
 
   Future<void> _initialize({String? ownerId, required bool apply}) async {
-    if (_ownerId == ownerId) {
+    if (_initialized && _ownerId == ownerId) {
       // Auth emits token-refresh and repeated signed-in events for the same
       // account. Preserve the already reconciled local signals in that case;
       // resetting them would cancel a valid reminder until the next refresh.
       return;
     }
-    _dayBoundaryTimer?.cancel();
-    _dayBoundaryTimer = null;
-    _ownerId = ownerId;
-    _dueCount = null;
-    _lastReviewedAt = null;
-    _reviewActivityKnown = false;
-    _lastAppliedSignature = null;
-    // The native notification identifier is intentionally shared by the one
-    // account currently active on this device. Clear it before loading the
-    // next owner's preference so a slow preference read cannot leak the old
-    // owner's reminder into the new session.
     if (apply) await platform.cancel();
+    _resetOwnerState();
     if (ownerId == null) {
-      _value = const StudyReminderSettings(
-        enabled: false,
-        hour: defaultHour,
-        minute: defaultMinute,
-      );
+      _initialized = true;
       notifyListeners();
       return;
     }
     final prefs = await _prefsLoader();
+    _ownerId = ownerId;
     _value = StudyReminderSettings(
       enabled: prefs.getBool(_key(_enabledKey, ownerId)) ?? false,
       hour: (prefs.getInt(_key(_hourKey, ownerId)) ?? defaultHour).clamp(0, 23),
@@ -158,7 +146,23 @@ class StudyReminderController extends ChangeNotifier {
         59,
       ),
     );
+    _initialized = true;
     notifyListeners();
+  }
+
+  void _resetOwnerState() {
+    _dayBoundaryTimer?.cancel();
+    _dayBoundaryTimer = null;
+    _ownerId = null;
+    _dueCount = null;
+    _lastReviewedAt = null;
+    _reviewActivityKnown = false;
+    _lastAppliedSignature = null;
+    _value = const StudyReminderSettings(
+      enabled: false,
+      hour: defaultHour,
+      minute: defaultMinute,
+    );
   }
 
   Future<void> activateOwner(String ownerId) => initialize(ownerId: ownerId);
@@ -176,6 +180,7 @@ class StudyReminderController extends ChangeNotifier {
       _lastReviewedAt = null;
       _reviewActivityKnown = false;
       _lastAppliedSignature = null;
+      _initialized = true;
       _value = const StudyReminderSettings(
         enabled: false,
         hour: defaultHour,

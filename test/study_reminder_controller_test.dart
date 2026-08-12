@@ -10,6 +10,7 @@ class _FakeStudyReminderPlatform implements StudyReminderPlatform {
   final appliedContexts = <({int? dueCount, bool studiedToday})>[];
   var cancellations = 0;
   var settingsOpens = 0;
+  Object? cancelError;
 
   @override
   Future<bool> requestPermission() async {
@@ -31,11 +32,43 @@ class _FakeStudyReminderPlatform implements StudyReminderPlatform {
   }
 
   @override
-  Future<void> cancel() async => cancellations++;
+  Future<void> cancel() async {
+    cancellations++;
+    final error = cancelError;
+    if (error != null) throw error;
+  }
 }
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test(
+    'signed-out cold start cancels any stale native reminder once',
+    () async {
+      final platform = _FakeStudyReminderPlatform();
+      final controller = StudyReminderController(platform: platform);
+      addTearDown(controller.dispose);
+
+      await controller.initialize(ownerId: null);
+      await controller.initialize(ownerId: null);
+
+      expect(platform.cancellations, 1);
+      expect(controller.value.enabled, isFalse);
+    },
+  );
+
+  test('failed signed-out cold-start cancellation remains retryable', () async {
+    final platform = _FakeStudyReminderPlatform()
+      ..cancelError = StateError('native cancellation failed');
+    final controller = StudyReminderController(platform: platform);
+    addTearDown(controller.dispose);
+
+    await expectLater(controller.initialize(ownerId: null), throwsStateError);
+    platform.cancelError = null;
+    await controller.initialize(ownerId: null);
+
+    expect(platform.cancellations, 2);
+  });
 
   test('enabling requests permission then persists and schedules', () async {
     final platform = _FakeStudyReminderPlatform();

@@ -102,7 +102,7 @@ To place the protected local config on the clipboard without printing it:
 
 Paste that value into the secret workflow variable. The checked-in
 `ios/ci_scripts/ci_post_clone.sh` sits beside `Runner.xcworkspace`, as Xcode
-Cloud requires. It installs pinned Flutter 3.44.2, reconstructs and validates
+Cloud requires. It installs pinned Flutter 3.44.9, reconstructs and validates
 the ignored config, runs `flutter pub get`, and prepares the Release archive
 with Xcode Cloud's unique `CI_BUILD_NUMBER`.
 `ios/ci_scripts/ci_post_xcodebuild.sh` removes the reconstructed file after

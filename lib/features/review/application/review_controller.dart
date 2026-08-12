@@ -53,16 +53,22 @@ class ReviewController extends ChangeNotifier {
   /// Study preferences (new-card limit, retention, ordering). Optional so the
   /// existing test harness can construct the controller without one.
   final RecallPrefsController? prefs;
+  final Future<void> Function()? beforeSessionLoad;
   final Future<void> Function()? afterSignOut;
   final Future<void> Function()? afterSignIn;
   StreamSubscription<AuthState>? _authSub;
   String? _activeUserId;
+  String? _sessionSetupOwner;
+  Future<void>? _sessionSetupTask;
+  int _sessionSetupGeneration = 0;
+  Future<void>? _signedOutReleaseTask;
 
   ReviewController({
     required this.api,
     required this.engine,
     required this.store,
     this.prefs,
+    this.beforeSessionLoad,
     this.afterSignOut,
     this.afterSignIn,
     ReviewHaptics? haptics,
@@ -149,7 +155,11 @@ class ReviewController extends ChangeNotifier {
     final user = api.currentUser;
     if (user == null) {
       // Signed out — drop the session state and show the login gate.
+      _sessionSetupGeneration++;
       _activeUserId = null;
+      _sessionSetupOwner = null;
+      _sessionLoaded = false;
+      unawaited(_releaseAfterAuthSignOut());
       _invalidateActiveSession();
       engine.resetToDefaults();
       _undo = null; // the session (and its undo snapshot) is gone
@@ -158,20 +168,80 @@ class ReviewController extends ChangeNotifier {
       // A provider can switch accounts without emitting an intermediate local
       // sign-out. Do not let the old queue, due count, or review activity drive
       // the new owner's reminder while that owner's data is loading.
-      if (_activeUserId != null && _activeUserId != user.id) {
-        _invalidateActiveSession();
-        engine.resetToDefaults();
-        _set(const ReviewState(loading: false));
+      if (_activeUserId != user.id) {
+        _sessionSetupGeneration++;
+        if (_activeUserId != null) {
+          _sessionLoaded = false;
+          _invalidateActiveSession();
+          engine.resetToDefaults();
+          _set(const ReviewState(loading: false));
+        }
       }
       _activeUserId = user.id;
-      if (_state.queue.isEmpty && !_state.loading) {
-        // Signed in (or restored session) — load the queue.
-        unawaited(_afterSignIn());
-        unawaited(_loadSafely());
-      } else {
-        unawaited(_afterSignIn());
-        notifyListeners();
+      _startSignedInSession(user.id);
+    }
+  }
+
+  void _startSignedInSession(String ownerId) {
+    if (_sessionSetupOwner == ownerId && _sessionSetupTask != null) return;
+    final generation = _sessionSetupGeneration;
+    late final Future<void> task;
+    task = _prepareSignedInSession(ownerId, generation).whenComplete(() {
+      if (identical(_sessionSetupTask, task)) {
+        _sessionSetupTask = null;
+        _sessionSetupOwner = null;
       }
+    });
+    _sessionSetupOwner = ownerId;
+    _sessionSetupTask = task;
+    unawaited(task);
+  }
+
+  Future<void> _prepareSignedInSession(String ownerId, int generation) async {
+    // Supabase can emit a new signed-in session while the previous account's
+    // native reminder and local preference cleanup is still running. Never
+    // activate the new owner until that account-scoped release has completed,
+    // otherwise the old cleanup could clear the new owner's state.
+    final signedOutRelease = _signedOutReleaseTask;
+    if (signedOutRelease != null) {
+      await signedOutRelease;
+      if (identical(_signedOutReleaseTask, signedOutRelease)) {
+        _signedOutReleaseTask = null;
+      }
+    }
+    if (api.currentUser?.id != ownerId ||
+        _sessionSetupGeneration != generation) {
+      return;
+    }
+
+    try {
+      // Account-scoped local preferences are a queue input. Wait for that local
+      // read, but let their cloud replay/refresh run independently so a slow or
+      // offline network can never hold the study shell on startup.
+      await beforeSessionLoad?.call();
+    } catch (_) {
+      if (api.currentUser?.id == ownerId &&
+          _sessionSetupGeneration == generation) {
+        _set(
+          _state.copyWith(
+            loading: false,
+            authSubmitting: false,
+            error: 'Recall could not prepare this account. Try again.',
+          ),
+        );
+      }
+      return;
+    }
+    if (api.currentUser?.id != ownerId ||
+        _sessionSetupGeneration != generation) {
+      return;
+    }
+
+    unawaited(_afterSignIn());
+    if (_state.queue.isEmpty && !_state.loading) {
+      await _loadSafely();
+    } else {
+      notifyListeners();
     }
   }
 
@@ -180,6 +250,27 @@ class ReviewController extends ChangeNotifier {
       await afterSignIn?.call();
     } catch (_) {
       debugPrint('Recall: reminder re-arm failed (non-fatal)');
+    }
+  }
+
+  Future<void> _releaseAfterAuthSignOut() {
+    final existing = _signedOutReleaseTask;
+    if (existing != null) return existing;
+    final task = _runSignedOutRelease();
+    _signedOutReleaseTask = task;
+    return task;
+  }
+
+  Future<void> _runSignedOutRelease() async {
+    try {
+      final callback = afterSignOut;
+      if (callback != null) {
+        await callback();
+      } else {
+        await prefs?.releaseOwner();
+      }
+    } catch (_) {
+      debugPrint('Recall: signed-out resource release failed (non-fatal)');
     }
   }
 
@@ -217,7 +308,7 @@ class ReviewController extends ChangeNotifier {
     // Native delivery is account-scoped. Cancel only after the cloud/auth
     // session has actually been released; an offline/failed sign-out above
     // keeps the reminder armed instead of silently disabling every channel.
-    await afterSignOut?.call();
+    await _releaseAfterAuthSignOut();
   }
 
   void _invalidateActiveSession() {
@@ -883,8 +974,11 @@ class ReviewController extends ChangeNotifier {
   /// Flush queued reviews AND queued flags without reloading the queue — safe
   /// on foreground/app-resume. The two loops run concurrently and each swallows
   /// its own failures, so a stuck flag flush can never delay the review flush.
-  Future<void> syncPending() =>
-      Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
+  Future<void> syncPending() => Future.wait<void>([
+    _flushOutbox(),
+    _flushFlagOutbox(),
+    if (prefs != null) prefs!.syncOwner(),
+  ]);
 
   /// Flush durable study actions and summarize the result for iOS background
   /// fetch. A failed network attempt leaves every undelivered entry in place.

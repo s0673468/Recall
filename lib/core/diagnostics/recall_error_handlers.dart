@@ -51,7 +51,7 @@ bool recordUncaughtPlatformError(
     ),
   );
   // OperationalDiagnostics emits the allowlisted console event synchronously
-  // before its best-effort preference write. Keep the fatal-error contract:
-  // the embedder still decides how to handle an uncaught platform error.
-  return false;
+  // before its best-effort preference write. Mark the error handled so the
+  // embedder cannot fall back to printing the discarded exception or stack.
+  return true;
 }

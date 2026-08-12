@@ -4,15 +4,15 @@ description: >
   pre-installed ~/flutter — subosito/flutter-action cache-misses there and
   re-downloads the ~4GB SDK every run. On github-hosted runners, fall back to
   subosito. Vendored verbatim from the Health repo when Recall moved out
-  (slim phase 2); keep the flutter-version pinned to the local toolchain.
+  (slim phase 2); keep the Flutter version pinned to Recall's tested toolchain.
 
 inputs:
   flutter-version:
     description: >
       Flutter version for github-hosted runners. Ignored on self-hosted, which
-      uses whatever is pinned at ~/flutter. Keep in sync with the local toolchain.
+      uses whatever is pinned at ~/flutter. Keep in sync with Recall's tested toolchain.
     required: false
-    default: "3.44.2"
+    default: "3.44.9"
 
 runs:
   using: composite
@@ -91,8 +91,8 @@ runs:
       uses: subosito/flutter-action@v2
       with:
         channel: stable
-        # Pin to the local dev toolchain. Unpinned stable drifts ahead and fails
+        # Pin to Recall's tested toolchain. Unpinned stable drifts ahead and fails
         # `flutter analyze` on deprecations that don't exist locally (infos are
-        # fatal). Bump together with local Flutter upgrades.
+        # fatal). Bump only with matching local and device validation.
         flutter-version: ${{ inputs.flutter-version }}
         cache: true

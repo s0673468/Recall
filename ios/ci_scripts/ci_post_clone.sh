@@ -6,7 +6,7 @@ umask 077
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="${RECALL_CI_REPO_ROOT:-${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$script_dir/../.." && pwd)}}"
 workspace="${CI_WORKSPACE:-$(dirname "$repo_root")}"
-flutter_version="${RECALL_CI_FLUTTER_VERSION:-3.44.2}"
+flutter_version="${RECALL_CI_FLUTTER_VERSION:-3.44.9}"
 flutter_root="${RECALL_CI_FLUTTER_ROOT:-$workspace/flutter-$flutter_version}"
 flutter_repository="${RECALL_CI_FLUTTER_REPOSITORY:-https://github.com/flutter/flutter.git}"
 git_bin="${RECALL_CI_GIT_BIN:-git}"

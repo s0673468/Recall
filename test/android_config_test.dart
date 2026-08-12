@@ -6,6 +6,16 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final manifest = File('android/app/src/main/AndroidManifest.xml');
   final appBuild = File('android/app/build.gradle.kts');
+  final androidSettings = File('android/settings.gradle.kts');
+  final gradleProperties = File('android/gradle.properties');
+  final wrapperProperties = File(
+    'android/gradle/wrapper/gradle-wrapper.properties',
+  );
+  final setupFlutter = File('.github/actions/setup-flutter/action.yml');
+  final xcodeCloudSetup = File('ios/ci_scripts/ci_post_clone.sh');
+  final flutterMetadata = File('.metadata');
+  final pubspecLock = File('pubspec.lock');
+  final androidSetup = File('ANDROID_SETUP.md');
   final mainActivity = File(
     'android/app/src/main/kotlin/com/german/health_anki_flutter/'
     'MainActivity.kt',
@@ -13,6 +23,10 @@ void main() {
   final reminderReceiver = File(
     'android/app/src/main/kotlin/com/german/health_anki_flutter/'
     'RecallReminderReceiver.kt',
+  );
+  final reminderScheduler = File(
+    'android/app/src/main/kotlin/com/german/health_anki_flutter/'
+    'RecallReminderScheduler.kt',
   );
   final widgetProvider = File(
     'android/app/src/main/kotlin/com/german/health_anki_flutter/'
@@ -65,9 +79,8 @@ void main() {
     expect(match, isNotNull, reason: 'pubspec must declare a build number');
     expect(
       int.parse(match!.group(1)!),
-      greaterThan(2001),
-      reason:
-          'Android build 2001 was previously distributed and must update in place',
+      greaterThan(2002),
+      reason: 'Android build 2002 is installed and must update in place',
     );
   });
 
@@ -95,6 +108,72 @@ void main() {
     expect(build, contains('targetSdk = flutter.targetSdkVersion'));
     expect(build, contains('minSdk = 24'));
   });
+
+  test(
+    'Android 17 migration stays fail-closed on the supported stable matrix',
+    () {
+      final build = appBuild.readAsStringSync();
+      final settings = androidSettings.readAsStringSync();
+      final gradle = gradleProperties.readAsStringSync();
+      final wrapper = wrapperProperties.readAsStringSync();
+      final flutterSetup = setupFlutter.readAsStringSync();
+      final setupGuide = androidSetup.readAsStringSync();
+
+      expect(build, contains('compileSdk = flutter.compileSdkVersion'));
+      expect(build, contains('targetSdk = flutter.targetSdkVersion'));
+      expect(settings, contains('com.android.application") version "9.0.1"'));
+      expect(
+        settings,
+        contains('org.jetbrains.kotlin.android") version "2.3.20"'),
+      );
+      expect(gradle, contains('android.builtInKotlin=false'));
+      expect(gradle, contains('android.newDsl=false'));
+      expect(wrapper, contains('gradle-9.1.0-all.zip'));
+      expect(wrapper, contains('distributionSha256Sum='));
+      expect(flutterSetup, contains('default: "3.44.9"'));
+      expect(xcodeCloudSetup.readAsStringSync(), contains(':-3.44.9}'));
+      expect(
+        flutterMetadata.readAsStringSync(),
+        contains('6b182d2c7585eba26d4edce0f97630effd256c33'),
+      );
+      expect(setupGuide, contains('target SDK 36'));
+      expect(setupGuide, contains('Flutter 3.47'));
+      expect(setupGuide, contains('must remain on target SDK 36'));
+    },
+  );
+
+  test(
+    'Android keeps local network and unused native passkey surfaces blocked',
+    () {
+      final xml = manifest.readAsStringSync();
+      final lock = pubspecLock.readAsStringSync();
+      final directDependencies = pubspec.readAsStringSync();
+      final activity = mainActivity.readAsStringSync();
+
+      expect(xml, isNot(contains('android.permission.ACCESS_LOCAL_NETWORK')));
+      expect(directDependencies, contains('supabase_flutter: ^2.17.1'));
+      for (final removedPackage in [
+        'device_info_plus',
+        'package_info_plus',
+        'passkeys',
+        'passkeys_android',
+        'ua_client_hints',
+      ]) {
+        expect(
+          RegExp('^  $removedPackage:', multiLine: true).hasMatch(lock),
+          isFalse,
+          reason: '$removedPackage must not restore an unused Android surface.',
+        );
+      }
+      for (final removedRegistration in [
+        'DeviceInfoPlusPlugin',
+        'PackageInfoPlugin',
+        'UAClientHintsPlugin',
+      ]) {
+        expect(activity, isNot(contains(removedRegistration)));
+      }
+    },
+  );
 
   test('Android release signing is explicit and continuity-safe', () {
     final build = appBuild.readAsStringSync();
@@ -306,6 +385,66 @@ void main() {
       nativeSources,
       isNot(matches(RegExp(r'''["'](?:front|back)["']'''))),
     );
+  });
+
+  test('Android reminder eligibility survives blocked one-shot delivery', () {
+    final receiver = reminderReceiver.readAsStringSync();
+    final scheduler = reminderScheduler.readAsStringSync();
+    final deliveryBlock = receiver.substring(
+      receiver.indexOf('class RecallReminderReceiver'),
+      receiver.indexOf('class RecallReminderRestoreReceiver'),
+    );
+
+    expect(deliveryBlock, contains('shouldReschedule(readiness)'));
+    expect(deliveryBlock, contains('RecallReminderScheduler.restore(context)'));
+    expect(deliveryBlock, contains('RecallReminderScheduler.consume(context)'));
+    expect(
+      deliveryBlock.indexOf('RecallReminderScheduler.restore(context)'),
+      lessThan(
+        deliveryBlock.indexOf('RecallReminderScheduler.consume(context)'),
+      ),
+    );
+    expect(scheduler, contains('fun consume(context: Context): Boolean'));
+    expect(scheduler, contains('.edit().clear().commit()'));
+    expect(scheduler, contains('Fail closed if the durable clear fails'));
+  });
+
+  test('Android notification settings launch is versioned and guarded', () {
+    final notifications = notificationReadiness.readAsStringSync();
+    final activity = mainActivity.readAsStringSync();
+
+    expect(
+      notifications,
+      contains('Settings.ACTION_APP_NOTIFICATION_SETTINGS'),
+    );
+    expect(
+      notifications,
+      contains('Settings.ACTION_APPLICATION_DETAILS_SETTINGS'),
+    );
+    expect(notifications, contains('Uri.fromParts("package"'));
+    expect(notifications, contains('resolveActivity(context.packageManager)'));
+    expect(notifications, contains('catch (_: ActivityNotFoundException)'));
+    expect(notifications, contains('catch (_: SecurityException)'));
+    expect(
+      activity,
+      contains('RecallReminderNotifications.openSettings(this)'),
+    );
+  });
+
+  test('Android widget uses one private immutable stale-deadline refresh', () {
+    final provider = widgetProvider.readAsStringSync();
+    final info = widgetInfo.readAsStringSync();
+
+    expect(provider, contains('ACTION_REFRESH_STALE'));
+    expect(provider, contains('updatedAtEpochMs + staleAfterMs'));
+    expect(provider, contains('AlarmManager.RTC'));
+    expect(provider, contains('manager.set('));
+    expect(provider, isNot(contains('setAndAllowWhileIdle')));
+    expect(provider, contains('PendingIntent.FLAG_IMMUTABLE'));
+    expect(provider, contains('manager.cancel(staleRefreshIntent(context))'));
+    expect(provider, contains('if (intent.action == ACTION_REFRESH_STALE)'));
+    expect(provider, contains('updateAll(context)'));
+    expect(info, contains('android:updatePeriodMillis="0"'));
   });
 
   test('Android launcher icon is opaque and full xxxhdpi resolution', () {

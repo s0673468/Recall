@@ -66,6 +66,16 @@ class RecallAndroidHostTest {
         assumeTrue(manager.areNotificationsEnabled())
 
         try {
+            RecallReminderScheduler.apply(
+                context,
+                RecallReminderSettings(
+                    enabled = true,
+                    hour = 19,
+                    minute = 0,
+                    dueCount = 1,
+                    studiedToday = false,
+                ),
+            )
             RecallReminderReceiver().onReceive(context, Intent("recall.test.reminder"))
 
             val reminder = manager.activeNotifications.firstOrNull {
@@ -81,8 +91,44 @@ class RecallAndroidHostTest {
                 reminder.notification.extras.getCharSequence(Notification.EXTRA_TEXT) ==
                     context.getString(R.string.reminder_body),
             )
+            assertFalse(
+                "Reminder eligibility must be cleared after one delivery.",
+                RecallReminderScheduler.consume(context),
+            )
         } finally {
+            RecallReminderScheduler.cancel(context)
             manager.cancelAll()
+        }
+    }
+
+    @Test
+    fun reminderReceiverPreservesEligibilityWhenDeliveryIsBlocked() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assumeTrue(
+            RecallReminderNotifications.readiness(context) !=
+                RecallNotificationReadiness.READY,
+        )
+
+        try {
+            RecallReminderScheduler.apply(
+                context,
+                RecallReminderSettings(
+                    enabled = true,
+                    hour = 19,
+                    minute = 0,
+                    dueCount = 1,
+                    studiedToday = false,
+                ),
+            )
+
+            RecallReminderReceiver().onReceive(context, Intent("recall.test.blocked"))
+
+            assertTrue(
+                "Blocked delivery must leave eligibility recoverable.",
+                RecallReminderScheduler.consume(context),
+            )
+        } finally {
+            RecallReminderScheduler.cancel(context)
         }
     }
 }

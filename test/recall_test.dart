@@ -2436,6 +2436,47 @@ void main() {
       expect(tapped, Rating.easy);
     });
 
+    testWidgets('RatingBar adapts to a narrow large-text surface', (
+      tester,
+    ) async {
+      final now = DateTime.utc(2026, 8, 11, 12);
+      await tester.binding.setSurfaceSize(const Size(320, 640));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(320, 640),
+              textScaler: TextScaler.linear(2),
+            ),
+            child: Scaffold(
+              body: RatingBar(
+                preview: {
+                  for (final r in Rating.values)
+                    r: now.add(Duration(minutes: r.value)),
+                },
+                previewAt: now,
+                onRate: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(tester.takeException(), isNull);
+      final buttons = find.byType(FilledButton);
+      expect(buttons, findsNWidgets(4));
+      expect({
+        for (var i = 0; i < 4; i++) tester.getTopLeft(buttons.at(i)).dy,
+      }, hasLength(2));
+      for (var i = 0; i < 4; i++) {
+        expect(tester.getSize(buttons.at(i)).height, greaterThanOrEqualTo(48));
+      }
+      expect(find.bySemanticsLabel(RegExp(r'Again, 1m')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'Easy, 4m')), findsOneWidget);
+    });
+
     testWidgets('CardFace renders plain text', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(

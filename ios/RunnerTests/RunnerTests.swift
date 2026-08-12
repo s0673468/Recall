@@ -320,8 +320,29 @@ class RunnerTests: XCTestCase {
     XCTAssertEqual(granted, false)
   }
 
+  func testStudyReminderSettingsRecoveryUsesTheInjectedSystemOpener() {
+    let center = MockStudyNotificationCenter()
+    var settingsOpenCalls = 0
+    let plugin = makeReminderPlugin(center: center) { completion in
+      settingsOpenCalls += 1
+      completion(true)
+    }
+    var resultValue: Any?
+    let openExpectation = expectation(description: "settings result")
+
+    plugin.handle(FlutterMethodCall(methodName: "openSettings", arguments: nil)) {
+      resultValue = $0
+      openExpectation.fulfill()
+    }
+
+    wait(for: [openExpectation], timeout: 1)
+    XCTAssertEqual(settingsOpenCalls, 1)
+    XCTAssertNil(resultValue)
+  }
+
   private func makeReminderPlugin(
-    center: MockStudyNotificationCenter
+    center: MockStudyNotificationCenter,
+    settingsOpener: RecallStudySettingsOpener? = nil
   ) -> RecallStudyReminderPlugin {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(secondsFromGMT: -3)!
@@ -331,7 +352,8 @@ class RunnerTests: XCTestCase {
     return RecallStudyReminderPlugin(
       notificationCenter: center,
       now: { now },
-      calendar: calendar
+      calendar: calendar,
+      settingsOpener: settingsOpener ?? RecallStudyReminderPlugin.defaultSettingsOpener
     )
   }
 
