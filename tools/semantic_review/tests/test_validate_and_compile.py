@@ -140,13 +140,14 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             json.dumps(review), encoding="utf-8"
         )
 
-    def compile(self) -> dict[str, object]:
+    def compile(self, *, revision_at: str | None = None) -> dict[str, object]:
         return compile_reviews(
             concept_manifest_path=self.concept_manifest,
             reviews_dir=self.reviews,
             prep_job_dir=self.job,
             output_dir=self.compiled,
             require_complete=True,
+            revision_at=revision_at,
         )
 
     def test_compiles_exact_keep_into_existing_anki_batch(self) -> None:
@@ -177,11 +178,42 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError, "keep must preserve front and back"):
             self.compile()
 
+    def test_material_edit_requires_kind_and_publishes_revision_time(self) -> None:
+        self.write_review()
+        path = self.reviews / "concept-a.json"
+        review = json.loads(path.read_text(encoding="utf-8"))
+        change = review["card_changes"][0]
+        change["action"] = "edit"
+        change["cards"][0]["back"] = "Materially corrected back."
+        path.write_text(json.dumps(review), encoding="utf-8")
+
+        with self.assertRaisesRegex(ReviewError, "revision_kind"):
+            self.compile()
+
+        change["revision_kind"] = "material"
+        path.write_text(json.dumps(review), encoding="utf-8")
+        with self.assertRaisesRegex(ReviewError, "require --revision-at"):
+            self.compile()
+
+        summary = self.compile(revision_at="20260812T120000Z")
+        self.assertEqual(summary["edited"], 1)
+        compiled = json.loads(
+            (self.compiled / "verified" / "batch_001.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        manifest = json.loads(
+            (self.compiled / "manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(compiled[0]["revision_kind"], "material")
+        self.assertEqual(manifest["revision_at"], "20260812T120000Z")
+
     def test_rejects_control_characters_in_study_text(self) -> None:
         self.write_review()
         path = self.reviews / "concept-a.json"
         review = json.loads(path.read_text(encoding="utf-8"))
         review["card_changes"][0]["action"] = "edit"
+        review["card_changes"][0]["revision_kind"] = "wording"
         review["card_changes"][0]["cards"][0]["back"] = (
             "Broken " + chr(9) + "ext became a tab."
         )
@@ -195,6 +227,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         path = self.reviews / "concept-a.json"
         review = json.loads(path.read_text(encoding="utf-8"))
         review["card_changes"][0]["action"] = "edit"
+        review["card_changes"][0]["revision_kind"] = "wording"
         review["card_changes"][0]["cards"][0]["back"] = r"Broken \\(x+1\\)."
         path.write_text(json.dumps(review), encoding="utf-8")
 
@@ -285,6 +318,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         path = self.reviews / "concept-a.json"
         review = json.loads(path.read_text(encoding="utf-8"))
         review["card_changes"][0]["action"] = "edit"
+        review["card_changes"][0]["revision_kind"] = "wording"
         review["card_changes"][0]["rationale"] = "Retag after semantic review."
         review["card_changes"][0]["cards"][0]["tags_add"] = ["volatile"]
         review["card_changes"][0]["cards"][0]["tags_remove"] = ["legacy"]
@@ -367,6 +401,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
                 {
                     "nid": 101,
                     "action": "split",
+                    "revision_kind": "wording",
                     "rationale": "Two independent retrievals were bundled.",
                     "score_before": 3,
                     "score_after": 4,
@@ -417,6 +452,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
                 {
                     "nid": 101,
                     "action": "split",
+                    "revision_kind": "wording",
                     "rationale": "Two independent retrievals were bundled.",
                     "score_before": 3,
                     "score_after": 4,
@@ -453,6 +489,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         path = self.reviews / "concept-a.json"
         review = json.loads(path.read_text(encoding="utf-8"))
         review["card_changes"][0]["action"] = "edit"
+        review["card_changes"][0]["revision_kind"] = "wording"
         review["card_changes"][0]["cards"][0]["tags_remove"] = ["node::concept-a"]
         path.write_text(json.dumps(review), encoding="utf-8")
 
@@ -465,6 +502,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
                 {
                     "nid": 101,
                     "action": "edit",
+                    "revision_kind": "wording",
                     "rationale": "Move to the precise semantic owner.",
                     "score_before": 3,
                     "score_after": 4,

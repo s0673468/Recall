@@ -67,6 +67,13 @@ buffer — never an authority.
   *review/scheduling* half: it computes FSRS outcomes and writes the resulting
   scheduling state + review log back to Supabase.
 
+Material content edits use a timestamped note marker to request one near-term
+validation review. Recall derives acknowledgement from a later successful row
+in the existing append-only review log; it never resets FSRS history or adds a
+second scheduling authority. See
+[`docs/content-revalidation.md`](docs/content-revalidation.md) for the exact
+authoring, offline, and convergence contract.
+
 ### Multi-device review conflicts
 
 Two devices can each rate the same card while offline and flush in either

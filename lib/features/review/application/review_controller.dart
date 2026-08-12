@@ -552,7 +552,7 @@ class ReviewController extends ChangeNotifier {
     final local = BacklogCatchUp.normalizeLocalState(rawLocal, now);
     if (local != rawLocal) await _saveCatchUpStateQuietly(local);
 
-    final dueCount = queue.where((card) => !card.isNew).length;
+    final dueCount = queue.where(_countsTowardsGlobalDue).length;
     final recentAverage = BacklogCatchUp.recentDailyAverage(
       recentReviews,
       now: now,
@@ -604,18 +604,29 @@ class ReviewController extends ChangeNotifier {
     List<ReviewCard> source,
     CatchUpView catchUp,
   ) {
-    if (!catchUp.isActive) return source;
-    final due = [
+    final revalidations = [
       for (final card in source)
+        if (card.contentRevalidationPending) card,
+    ];
+    final ordinary = [
+      for (final card in source)
+        if (!card.contentRevalidationPending) card,
+    ];
+    if (!catchUp.isActive) return [...revalidations, ...ordinary];
+    final due = [
+      for (final card in ordinary)
         if (!card.isNew) card,
     ];
     final ordered = BacklogCatchUp.orderDue(due, engine, now: clock());
     // New cards stay behind the existing due-card gate while a catch-up plan
     // is active; no new-card limit or server query is changed.
-    return BacklogCatchUp.takeForToday(
-      ordered,
-      completedToday: catchUp.completedToday,
-    );
+    return [
+      ...revalidations,
+      ...BacklogCatchUp.takeForToday(
+        ordered,
+        completedToday: catchUp.completedToday,
+      ),
+    ];
   }
 
   Future<void> _saveCatchUpStateQuietly(CatchUpLocalState state) async {
@@ -789,7 +800,7 @@ class ReviewController extends ChangeNotifier {
     _catchUpSourceQueue = source;
     final view = _state.catchUp.copyWith(
       mode: mode,
-      dueCount: source.where((card) => !card.isNew).length,
+      dueCount: source.where(_countsTowardsGlobalDue).length,
       completedToday: nextLocal.completedToday,
     );
     _interactionGeneration++;
@@ -1003,13 +1014,28 @@ class ReviewController extends ChangeNotifier {
     if (_state.isDone) {
       haptics.completion();
     }
+    if (card.contentRevalidationPending && rating != Rating.again) {
+      // The cloud review log remains authoritative, but the disposable
+      // snapshot must converge too. Otherwise a successful online review
+      // followed by an offline restart could repaint this validation card
+      // after its outbox entry had already been removed.
+      unawaited(
+        _saveSnapshotQuietly(
+          loadToken: _loadSequence,
+          decks: _state.decks,
+          queue: _catchUpSourceQueue,
+          globalDueCount: _state.globalDueCount,
+          globalDueUpdatedAt: _state.globalDueUpdatedAt,
+        ),
+      );
+    }
     // Sync behind the UI — the next card must never wait on the network.
     unawaited(_flushOutbox());
   }
 
   Future<CatchUpView> _recordCatchUpReview(ReviewCard card) async {
     final current = _state.catchUp;
-    if (card.isNew || current.dueCount <= 0) return current;
+    if (!_countsTowardsGlobalDue(card) || current.dueCount <= 0) return current;
 
     final now = clock();
     final local = current.isActive
@@ -1199,6 +1225,17 @@ class ReviewController extends ChangeNotifier {
           catchUp: u.catchUp,
         ),
       );
+      if (u.card.contentRevalidationPending) {
+        unawaited(
+          _saveSnapshotQuietly(
+            loadToken: _loadSequence,
+            decks: _state.decks,
+            queue: _catchUpSourceQueue,
+            globalDueCount: _state.globalDueCount,
+            globalDueUpdatedAt: _state.globalDueUpdatedAt,
+          ),
+        );
+      }
       haptics.undo();
     } finally {
       _undoInFlight = false;
