@@ -61,6 +61,7 @@ class ReviewController extends ChangeNotifier {
   String? _sessionSetupOwner;
   Future<void>? _sessionSetupTask;
   int _sessionSetupGeneration = 0;
+  Future<void>? _signedOutReleaseTask;
 
   ReviewController({
     required this.api,
@@ -158,12 +159,15 @@ class ReviewController extends ChangeNotifier {
       _activeUserId = null;
       _sessionSetupOwner = null;
       _sessionLoaded = false;
-      unawaited(_releasePrefsAfterExternalSignOut());
+      unawaited(_releaseAfterAuthSignOut());
       _invalidateActiveSession();
       engine.resetToDefaults();
       _undo = null; // the session (and its undo snapshot) is gone
       _set(const ReviewState(loading: false));
     } else {
+      // A completed signed-out release belongs to the previous auth epoch.
+      // The next sign-out must run account-scoped cleanup again.
+      _signedOutReleaseTask = null;
       // A provider can switch accounts without emitting an intermediate local
       // sign-out. Do not let the old queue, due count, or review activity drive
       // the new owner's reminder while that owner's data is loading.
@@ -236,11 +240,24 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  Future<void> _releasePrefsAfterExternalSignOut() async {
+  Future<void> _releaseAfterAuthSignOut() {
+    final existing = _signedOutReleaseTask;
+    if (existing != null) return existing;
+    final task = _runSignedOutRelease();
+    _signedOutReleaseTask = task;
+    return task;
+  }
+
+  Future<void> _runSignedOutRelease() async {
     try {
-      await prefs?.releaseOwner();
+      final callback = afterSignOut;
+      if (callback != null) {
+        await callback();
+      } else {
+        await prefs?.releaseOwner();
+      }
     } catch (_) {
-      debugPrint('Recall: local prefs release failed (non-fatal)');
+      debugPrint('Recall: signed-out resource release failed (non-fatal)');
     }
   }
 
@@ -278,7 +295,7 @@ class ReviewController extends ChangeNotifier {
     // Native delivery is account-scoped. Cancel only after the cloud/auth
     // session has actually been released; an offline/failed sign-out above
     // keeps the reminder armed instead of silently disabling every channel.
-    await afterSignOut?.call();
+    await _releaseAfterAuthSignOut();
   }
 
   void _invalidateActiveSession() {

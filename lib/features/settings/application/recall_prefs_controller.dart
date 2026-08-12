@@ -16,8 +16,8 @@ import '../domain/recall_prefs.dart';
 /// record is replayed before any cloud read and remains authoritative until the
 /// server accepts it.
 class RecallPrefsController extends ChangeNotifier {
-  /// Legacy single-account mirror. Product startup migrates it only while a
-  /// restored owner is known, and removes it on a signed-out startup.
+  /// Legacy single-account mirror. It has no owner marker, so product startup
+  /// discards it instead of ever assigning it to an authenticated account.
   static const localKey = 'recall_prefs_v1';
   static const _ownerLocalPrefix = 'recall_prefs_v2';
   static const _ownerPendingPrefix = 'recall_prefs_pending_v1';
@@ -80,18 +80,13 @@ class RecallPrefsController extends ChangeNotifier {
 
       final prefs = await _prefsLoader();
       final ownerKey = localKeyForOwner(ownerId);
-      var localRaw = prefs.getString(ownerKey);
+      final localRaw = prefs.getString(ownerKey);
 
-      // The old mirror had no owner marker. It is safe to claim only when a
-      // restored authenticated owner is already known. A signed-out startup
-      // calls releaseOwner() first and removes this ambiguous legacy value.
-      if (localRaw == null) {
-        final legacyRaw = prefs.getString(localKey);
-        if (legacyRaw != null) {
-          localRaw = legacyRaw;
-          await _setStringStrict(prefs, ownerKey, legacyRaw);
-          await _removeStrict(prefs, localKey);
-        }
+      // The old mirror has no owner marker. Even a restored session cannot
+      // prove which account wrote it, so discard it and let the owner-scoped
+      // mirror or Supabase source of truth restore the current account.
+      if (prefs.containsKey(localKey)) {
+        await _removeStrict(prefs, localKey);
       }
 
       final pendingRaw = prefs.getString(pendingKeyForOwner(ownerId));

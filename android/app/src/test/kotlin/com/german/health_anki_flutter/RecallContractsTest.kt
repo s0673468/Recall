@@ -118,6 +118,21 @@ class RecallContractsTest {
                 clearCommitted = true,
             ),
         )
+        assertTrue(
+            RecallReminderDeliveryEligibility.canAttemptDelivery(
+                RecallNotificationReadiness.READY,
+            ),
+        )
+        assertFalse(
+            RecallReminderDeliveryEligibility.canAttemptDelivery(
+                RecallNotificationReadiness.NEEDS_RUNTIME_PERMISSION,
+            ),
+        )
+        assertFalse(
+            RecallReminderDeliveryEligibility.canAttemptDelivery(
+                RecallNotificationReadiness.BLOCKED,
+            ),
+        )
     }
 
     @Test

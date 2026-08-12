@@ -136,6 +136,28 @@ void main() {
     );
   });
 
+  test('an ambiguous legacy mirror is never assigned to an owner', () async {
+    SharedPreferences.setMockInitialValues({
+      RecallPrefsController.localKey:
+          '{"new_limit_default":3,"desired_retention":0.97}',
+    });
+    final api = _PrefsRecallApi()..useOwner('owner-b');
+    addTearDown(api.authStates.close);
+    addTearDown(api.client.dispose);
+    final prefs = RecallPrefsController(api: api);
+
+    await prefs.activateOwner('owner-b');
+
+    expect(prefs.value, const RecallPrefs());
+    expect(prefs.hasStoredPrefs, isFalse);
+    final storage = await SharedPreferences.getInstance();
+    expect(storage.getString(RecallPrefsController.localKey), isNull);
+    expect(
+      storage.getString(RecallPrefsController.localKeyForOwner('owner-b')),
+      isNull,
+    );
+  });
+
   test(
     'failed save survives restart, replays once, and beats stale cloud',
     () async {
@@ -305,6 +327,36 @@ void main() {
     expect(prefs.activeOwnerId, isNull);
     expect(prefs.value, const RecallPrefs());
     expect(prefs.hasStoredPrefs, isFalse);
+  });
+
+  test('external sign-out runs account-scoped cleanup exactly once', () async {
+    final api = _PrefsRecallApi()..useOwner('owner-a');
+    addTearDown(api.authStates.close);
+    addTearDown(api.client.dispose);
+    final prefs = RecallPrefsController(api: api);
+    await prefs.activateOwner('owner-a');
+    var releases = 0;
+    final controller = ReviewController(
+      api: api,
+      engine: FsrsEngine(),
+      store: LocalReviewStore(),
+      prefs: prefs,
+      afterSignOut: () async {
+        releases++;
+        await prefs.releaseOwner();
+      },
+    );
+    addTearDown(controller.dispose);
+
+    api.user = null;
+    api.authStates.add(const AuthState(AuthChangeEvent.signedOut, null));
+    api.authStates.add(const AuthState(AuthChangeEvent.signedOut, null));
+    for (var i = 0; i < 20 && releases == 0; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(releases, 1);
+    expect(prefs.activeOwnerId, isNull);
   });
 
   test('foreground sync replays a pending preference write', () async {

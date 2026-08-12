@@ -100,4 +100,35 @@ class RecallAndroidHostTest {
             manager.cancelAll()
         }
     }
+
+    @Test
+    fun reminderReceiverPreservesEligibilityWhenDeliveryIsBlocked() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        assumeTrue(
+            RecallReminderNotifications.readiness(context) !=
+                RecallNotificationReadiness.READY,
+        )
+
+        try {
+            RecallReminderScheduler.apply(
+                context,
+                RecallReminderSettings(
+                    enabled = true,
+                    hour = 19,
+                    minute = 0,
+                    dueCount = 1,
+                    studiedToday = false,
+                ),
+            )
+
+            RecallReminderReceiver().onReceive(context, Intent("recall.test.blocked"))
+
+            assertTrue(
+                "Blocked delivery must leave eligibility recoverable.",
+                RecallReminderScheduler.consume(context),
+            )
+        } finally {
+            RecallReminderScheduler.cancel(context)
+        }
+    }
 }

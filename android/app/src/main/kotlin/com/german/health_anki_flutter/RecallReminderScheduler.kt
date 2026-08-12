@@ -6,6 +6,9 @@ import android.content.Context
 import android.content.Intent
 
 internal object RecallReminderDeliveryEligibility {
+    fun canAttemptDelivery(readiness: RecallNotificationReadiness): Boolean =
+        readiness == RecallNotificationReadiness.READY
+
     fun canDeliver(wasActive: Boolean, clearCommitted: Boolean): Boolean =
         wasActive && clearCommitted
 }
