@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 import tempfile
@@ -22,6 +23,37 @@ from apply_tag_mutations import (  # noqa: E402
 
 
 class TagMutationTest(unittest.TestCase):
+    def create_collection(
+        self,
+        path: Path,
+        tags: str,
+        *,
+        collection_created: int = 1_700_000_000,
+        deck_name: str = "ML",
+    ) -> None:
+        connection = sqlite3.connect(path)
+        connection.executescript(
+            """
+            CREATE TABLE notes (id INTEGER PRIMARY KEY, tags TEXT, mod INTEGER, usn INTEGER);
+            CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER);
+            CREATE TABLE tags (tag TEXT PRIMARY KEY, usn INTEGER, collapsed INTEGER, config TEXT);
+            CREATE TABLE col (crt INTEGER, scm INTEGER, mod INTEGER);
+            CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE notetypes (id INTEGER PRIMARY KEY, name TEXT);
+            CREATE TABLE graves (oid INTEGER, type INTEGER, usn INTEGER);
+            """
+        )
+        connection.execute("INSERT INTO notes VALUES (7, ?, 1, 0)", (tags,))
+        connection.execute("INSERT INTO cards VALUES (70, 7)")
+        connection.execute(
+            "INSERT INTO col VALUES (?, 1700000100, 1)",
+            (collection_created,),
+        )
+        connection.execute("INSERT INTO decks VALUES (1, ?)", (deck_name,))
+        connection.execute("INSERT INTO notetypes VALUES (1, 'Basic')")
+        connection.commit()
+        connection.close()
+
     def test_desired_tags_removes_old_node_and_preserves_unrelated_order(self) -> None:
         result = desired_tags(
             " deck::ml node::old marker::keep node::new ",
@@ -60,9 +92,7 @@ class TagMutationTest(unittest.TestCase):
             desired_tags(" node::old node::new ", mutation)
 
         with self.assertRaisesRegex(MutationError, "unexpected node tag"):
-            desired_tags(
-                " node::old node::new node::concurrent legacy ", mutation
-            )
+            desired_tags(" node::old node::new node::concurrent legacy ", mutation)
 
     def test_load_mutations_rejects_duplicate_nids_and_add_remove_overlap(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -87,20 +117,8 @@ class TagMutationTest(unittest.TestCase):
             root = Path(temp_dir)
             db = root / "collection.anki2"
             backup = root / "before.anki2"
+            self.create_collection(db, " deck::ml node::old ")
             connection = sqlite3.connect(db)
-            connection.create_collation(
-                "unicase", lambda a, b: (a.lower() > b.lower()) - (a.lower() < b.lower())
-            )
-            connection.executescript(
-                """
-                CREATE TABLE notes (id INTEGER PRIMARY KEY, tags TEXT, mod INTEGER, usn INTEGER);
-                CREATE TABLE tags (tag TEXT PRIMARY KEY COLLATE unicase, usn INTEGER, collapsed INTEGER, config TEXT);
-                CREATE TABLE col (mod INTEGER);
-                INSERT INTO notes VALUES (7, ' deck::ml node::old ', 1, 0);
-                INSERT INTO col VALUES (1);
-                """
-            )
-            connection.commit()
             backup_connection = sqlite3.connect(backup)
             connection.backup(backup_connection)
             backup_connection.close()
@@ -164,18 +182,7 @@ class TagMutationTest(unittest.TestCase):
                 (db, " node::old node::new "),
                 (backup, " node::different "),
             ):
-                connection = sqlite3.connect(path)
-                connection.executescript(
-                    """
-                    CREATE TABLE notes (id INTEGER PRIMARY KEY, tags TEXT, mod INTEGER, usn INTEGER);
-                    CREATE TABLE tags (tag TEXT PRIMARY KEY, usn INTEGER, collapsed INTEGER, config TEXT);
-                    CREATE TABLE col (mod INTEGER);
-                    """
-                )
-                connection.execute("INSERT INTO notes VALUES (7, ?, 1, 0)", (tags,))
-                connection.execute("INSERT INTO col VALUES (1)")
-                connection.commit()
-                connection.close()
+                self.create_collection(path, tags)
             mutation = {
                 "nid": 7,
                 "add": ["node::new"],
@@ -188,6 +195,73 @@ class TagMutationTest(unittest.TestCase):
                     db_path=db,
                     mutations=[mutation],
                     backup_path=backup,
+                    commit=True,
+                )
+
+    def test_apply_rejects_live_database_or_hard_link_as_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db = root / "collection.anki2"
+            hard_link = root / "not-independent.anki2"
+            self.create_collection(db, " node::old node::new ")
+            os.link(db, hard_link)
+            mutation = {
+                "nid": 7,
+                "add": ["node::new"],
+                "remove": ["node::old"],
+                "expected_original_tags": ["node::old"],
+            }
+
+            for path in (db, hard_link):
+                with self.subTest(path=path.name):
+                    with self.assertRaisesRegex(MutationError, "independent"):
+                        apply_mutations(
+                            db_path=db,
+                            mutations=[mutation],
+                            backup_path=path,
+                            commit=True,
+                        )
+
+    def test_apply_rejects_minimal_or_different_collection_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db = root / "collection.anki2"
+            minimal = root / "minimal.anki2"
+            different = root / "different.anki2"
+            self.create_collection(db, " node::old node::new ")
+            self.create_collection(
+                different,
+                " node::old ",
+                collection_created=1_600_000_000,
+            )
+            connection = sqlite3.connect(minimal)
+            connection.executescript(
+                """
+                CREATE TABLE notes (id INTEGER PRIMARY KEY, tags TEXT);
+                INSERT INTO notes VALUES (7, ' node::old ');
+                """
+            )
+            connection.commit()
+            connection.close()
+            mutation = {
+                "nid": 7,
+                "add": ["node::new"],
+                "remove": ["node::old"],
+                "expected_original_tags": ["node::old"],
+            }
+
+            with self.assertRaisesRegex(MutationError, "complete Anki collection"):
+                apply_mutations(
+                    db_path=db,
+                    mutations=[mutation],
+                    backup_path=minimal,
+                    commit=True,
+                )
+            with self.assertRaisesRegex(MutationError, "different Anki collection"):
+                apply_mutations(
+                    db_path=db,
+                    mutations=[mutation],
+                    backup_path=different,
                     commit=True,
                 )
 

@@ -52,7 +52,11 @@ def _require_string(value: object, label: str) -> str:
 
 def _validate_study_text(value: str, label: str) -> None:
     controls = sorted(
-        {ord(character) for character in value if ord(character) < 32 and character not in "\n\r"}
+        {
+            ord(character)
+            for character in value
+            if ord(character) < 32 and character not in "\n\r"
+        }
     )
     if controls:
         raise ReviewError(f"{label} contains a control character: {controls}")
@@ -90,7 +94,9 @@ def _load_primer_validator(metis_root: Path):
     checker_path = metis_root / "scripts" / "check_primers.py"
     if not checker_path.is_file():
         raise ReviewError(f"METIS primer validator missing: {checker_path}")
-    spec = importlib.util.spec_from_file_location("recall_semantic_primer_check", checker_path)
+    spec = importlib.util.spec_from_file_location(
+        "recall_semantic_primer_check", checker_path
+    )
     if spec is None or spec.loader is None:
         raise ReviewError(f"could not load METIS primer validator: {checker_path}")
     module = importlib.util.module_from_spec(spec)
@@ -125,6 +131,14 @@ def _primer_filename(value: str, label: str) -> str:
     return filename
 
 
+def _batch_name(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value or Path(value).name != value:
+        raise ReviewError(f"{label} must be a plain filename component")
+    if value in {".", "..", "batch_additions"}:
+        raise ReviewError(f"{label} is reserved or invalid")
+    return value
+
+
 def _validate_figure(
     review: dict[str, object],
     bundle: dict[str, object],
@@ -137,7 +151,9 @@ def _validate_figure(
         if candidate is not None and (
             not isinstance(candidate, dict) or candidate.get("action") != "missing"
         ):
-            raise ReviewError(f"{node_id}: cluster without a figure must use action missing")
+            raise ReviewError(
+                f"{node_id}: cluster without a figure must use action missing"
+            )
         return {
             "action": "missing",
             "path": None,
@@ -150,7 +166,9 @@ def _validate_figure(
     try:
         original_root = ET.fromstring(source_path.read_text(encoding="utf-8"))
     except (OSError, ET.ParseError) as error:
-        raise ReviewError(f"{node_id}: original figure is invalid XML: {error}") from error
+        raise ReviewError(
+            f"{node_id}: original figure is invalid XML: {error}"
+        ) from error
     if original_root.tag.rsplit("}", 1)[-1] != "svg":
         raise ReviewError(f"{node_id}: original figure root must be svg")
     if any(
@@ -181,7 +199,9 @@ def _validate_figure(
         try:
             root = ET.fromstring(svg)
         except ET.ParseError as error:
-            raise ReviewError(f"{node_id}: edited figure is invalid XML: {error}") from error
+            raise ReviewError(
+                f"{node_id}: edited figure is invalid XML: {error}"
+            ) from error
         if root.tag.rsplit("}", 1)[-1] != "svg":
             raise ReviewError(f"{node_id}: edited figure root must be svg")
         if root.tag != SVG_ROOT:
@@ -228,18 +248,29 @@ def validate_review(
         )
         _require_string(source.get("accessed"), f"{node_id}.sources[{index}].accessed")
         supports = source.get("supports")
-        if not isinstance(supports, list) or not supports or not all(
-            isinstance(claim, str) and claim.strip() for claim in supports
+        if (
+            not isinstance(supports, list)
+            or not supports
+            or not all(isinstance(claim, str) and claim.strip() for claim in supports)
         ):
             raise ReviewError(f"{node_id}.sources[{index}].supports must name claims")
 
     input_cards = bundle.get("cards")
     if not isinstance(input_cards, list):
         raise ReviewError(f"{node_id}: bundle cards must be a list")
-    original_by_nid = {
-        int(card["nid"]): card for card in input_cards if isinstance(card, dict)
-    }
-    expected_order = list(original_by_nid)
+    original_by_nid: dict[int, dict[str, object]] = {}
+    expected_order: list[int] = []
+    for index, card in enumerate(input_cards):
+        label = f"{node_id}.bundle.cards[{index}]"
+        if not isinstance(card, dict):
+            raise ReviewError(f"{label} must be an object")
+        nid = card.get("nid")
+        if not isinstance(nid, int) or isinstance(nid, bool) or nid <= 0:
+            raise ReviewError(f"{label}.nid must be a positive integer")
+        if nid in original_by_nid:
+            raise ReviewError(f"{node_id}: duplicate bundle nid {nid}")
+        original_by_nid[nid] = card
+        expected_order.append(nid)
 
     changes = review.get("card_changes")
     if not isinstance(changes, list):
@@ -271,9 +302,16 @@ def validate_review(
         raw_cards = change.get("cards")
         if not isinstance(raw_cards, list):
             raise ReviewError(f"{label}.cards must be a list")
-        expected_lengths = {"keep": {1}, "edit": {1}, "split": set(range(2, 1000)), "delete": {0}}
+        expected_lengths = {
+            "keep": {1},
+            "edit": {1},
+            "split": set(range(2, 1000)),
+            "delete": {0},
+        }
         if len(raw_cards) not in expected_lengths[action]:
-            raise ReviewError(f"{label}: action {action} is incompatible with {len(raw_cards)} cards")
+            raise ReviewError(
+                f"{label}: action {action} is incompatible with {len(raw_cards)} cards"
+            )
         cards = [
             _validate_card_payload(card, f"{label}.cards[{card_index}]")
             for card_index, card in enumerate(raw_cards)
@@ -297,15 +335,21 @@ def validate_review(
         proposed_id = _require_string(proposed.get("node_id"), f"{label}.node_id")
         _primer_filename(proposed_id, f"{label}.node_id")
         if proposed_id in known_nodes or proposed_id in proposed_ids:
-            raise ReviewError(f"{label}: proposed node id already exists or is duplicated")
+            raise ReviewError(
+                f"{label}: proposed node id already exists or is duplicated"
+            )
         proposed_ids.add(proposed_id)
         _require_string(proposed.get("title"), f"{label}.title")
         _require_string(proposed.get("module"), f"{label}.module")
         if proposed.get("difficulty") not in (1, 2, 3):
             raise ReviewError(f"{label}.difficulty must be 1, 2, or 3")
-        primer_html = _require_string(proposed.get("primer_html"), f"{label}.primer_html")
+        primer_html = _require_string(
+            proposed.get("primer_html"), f"{label}.primer_html"
+        )
         _require_string(proposed.get("rationale"), f"{label}.rationale")
-        _validate_primer_candidate(primer_html, node_id=proposed_id, metis_root=metis_root)
+        _validate_primer_candidate(
+            primer_html, node_id=proposed_id, metis_root=metis_root
+        )
 
     node_moves = review.get("node_moves")
     if not isinstance(node_moves, list):
@@ -317,20 +361,30 @@ def validate_review(
             raise ReviewError(f"{label} must be an object")
         nid = move.get("nid")
         if not isinstance(nid, int) or nid not in original_by_nid or nid in moved_nids:
-            raise ReviewError(f"{label}.nid is missing, duplicated, or outside the cluster")
+            raise ReviewError(
+                f"{label}.nid is missing, duplicated, or outside the cluster"
+            )
         moved_nids.add(nid)
         if move.get("from_node") != node_id:
             raise ReviewError(f"{label}.from_node must equal {node_id}")
         target = _require_string(move.get("to_node"), f"{label}.to_node")
         if target == "none" or target not in known_nodes | proposed_ids:
-            raise ReviewError(f"{label}.to_node is not an existing or proposed real node")
+            raise ReviewError(
+                f"{label}.to_node is not an existing or proposed real node"
+            )
         _require_string(move.get("rationale"), f"{label}.rationale")
-        matching_change = next(change for change in normalized_changes if change["nid"] == nid)
+        matching_change = next(
+            change for change in normalized_changes if change["nid"] == nid
+        )
         if matching_change["action"] in ("split", "delete"):
-            raise ReviewError(f"{label}: node moves require a kept or edited original card")
+            raise ReviewError(
+                f"{label}: node moves require a kept or edited original card"
+            )
     if node_id == "none":
         if any(change["action"] == "split" for change in normalized_changes):
-            raise ReviewError("none: placeholder cards must be kept/edited and moved, or deleted")
+            raise ReviewError(
+                "none: placeholder cards must be kept/edited and moved, or deleted"
+            )
         retained_placeholder_nids = {
             change["nid"]
             for change in normalized_changes
@@ -360,6 +414,14 @@ def validate_review(
             for tag in card["tags_remove"]
             if tag.startswith("node::")
         }
+        unknown_added_nodes = {
+            tag for tag in added_nodes if tag[6:] not in known_nodes | proposed_ids
+        }
+        if unknown_added_nodes:
+            raise ReviewError(
+                f"{node_id}: nid {nid} adds unknown node tags "
+                f"{sorted(unknown_added_nodes)}"
+            )
         changes_concept = bool((added_nodes - original_nodes) or removed_nodes)
         if changes_concept and nid not in moved_nids:
             raise ReviewError(
@@ -387,10 +449,17 @@ def validate_review(
         ]
         for card_index, card in enumerate(cards):
             if card["tags_remove"]:
-                raise ReviewError(f"{label}.cards[{card_index}]: new cards cannot remove tags")
+                raise ReviewError(
+                    f"{label}.cards[{card_index}]: new cards cannot remove tags"
+                )
             node_tags = [tag for tag in card["tags_add"] if tag.startswith("node::")]
-            if len(node_tags) != 1 or node_tags[0][6:] not in known_nodes | proposed_ids:
-                raise ReviewError(f"{label}.cards[{card_index}] needs one real node tag")
+            if (
+                len(node_tags) != 1
+                or node_tags[0][6:] not in known_nodes | proposed_ids
+            ):
+                raise ReviewError(
+                    f"{label}.cards[{card_index}] needs one real node tag"
+                )
         normalized_adds.append({**addition, "nid": None, "cards": cards})
 
     primer = review.get("primer")
@@ -405,7 +474,9 @@ def validate_review(
             or primer.get("html") is not None
             or primer.get("path") is not None
         ):
-            raise ReviewError(f"{node_id}: cluster without a primer must use primer action missing")
+            raise ReviewError(
+                f"{node_id}: cluster without a primer must use primer action missing"
+            )
     elif primer.get("path") != original_primer_path:
         raise ReviewError(f"{node_id}: primer path must match the input bundle")
     elif primer_action == "keep":
@@ -471,13 +542,17 @@ def compile_reviews(
             raise ReviewError("known concept manifest must be a list")
         for index, row in enumerate(known_manifest):
             if not isinstance(row, dict):
-                raise ReviewError(f"known concept manifest row {index} must be an object")
+                raise ReviewError(
+                    f"known concept manifest row {index} must be an object"
+                )
             known_nodes.add(
                 _require_string(row.get("node_id"), f"known_manifest[{index}].node_id")
             )
 
     missing_clusters = [
-        node_id for node_id in node_rows if not (reviews_dir / f"{node_id}.json").is_file()
+        node_id
+        for node_id in node_rows
+        if not (reviews_dir / f"{node_id}.json").is_file()
     ]
     if missing_clusters and require_complete:
         raise ReviewError(f"missing cluster reviews: {missing_clusters}")
@@ -569,7 +644,9 @@ def compile_reviews(
                             "nid": nid,
                             "add": [],
                             "remove": [],
-                            "expected_original_tags": original_by_nid[nid].get("tags", []),
+                            "expected_original_tags": original_by_nid[nid].get(
+                                "tags", []
+                            ),
                         },
                     )
                     mutation["add"] = list(dict.fromkeys([*mutation["add"], *tags_add]))
@@ -610,7 +687,9 @@ def compile_reviews(
         if review["figure"]["action"] == "edit":
             figure_path = Path(str(review["figure"]["path"]))
             if not figure_path.is_file():
-                raise ReviewError(f"{node_id}: original figure is missing: {figure_path}")
+                raise ReviewError(
+                    f"{node_id}: original figure is missing: {figure_path}"
+                )
             figure_changes.append(
                 {
                     "node_id": node_id,
@@ -622,19 +701,34 @@ def compile_reviews(
             )
 
     prep_manifest = _load_json(prep_job_dir / "manifest.json")
-    expected_nids = prep_manifest.get("nids") if isinstance(prep_manifest, dict) else None
-    if not isinstance(expected_nids, list) or set(expected_nids) != set(decisions):
-        raise ReviewError("compiled card decisions do not match the prepared Anki manifest")
-
-    if output_dir.exists() and any(output_dir.iterdir()):
-        raise ReviewError(f"output directory is not empty: {output_dir}")
-    verified_dir = output_dir / "verified"
-    verified_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "manifest.json").write_text(
-        json.dumps(prep_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    expected_nids = (
+        prep_manifest.get("nids") if isinstance(prep_manifest, dict) else None
     )
+    if (
+        not isinstance(expected_nids, list)
+        or not all(
+            isinstance(nid, int) and not isinstance(nid, bool) and nid > 0
+            for nid in expected_nids
+        )
+        or len(expected_nids) != len(set(expected_nids))
+        or set(expected_nids) != set(decisions)
+    ):
+        raise ReviewError(
+            "compiled card decisions do not match the prepared Anki manifest"
+        )
+
+    batch_values = prep_manifest.get("batches")
+    if not isinstance(batch_values, list):
+        raise ReviewError("prepared Anki manifest batches must be a list")
+    batch_names = [
+        _batch_name(value, f"prepared Anki manifest batches[{index}]")
+        for index, value in enumerate(batch_values)
+    ]
+    if len(batch_names) != len(set(batch_names)):
+        raise ReviewError("prepared Anki manifest contains duplicate batch names")
+
     compiled_nids: list[int] = []
-    batch_names = prep_manifest.get("batches", [])
+    prepared_outputs: list[tuple[str, list[dict[str, object]]]] = []
     for batch_name in batch_names:
         batch = _load_json(prep_job_dir / "in" / f"{batch_name}.json")
         cards = batch.get("cards") if isinstance(batch, dict) else None
@@ -644,16 +738,30 @@ def compile_reviews(
         for card in cards:
             nid = card.get("nid") if isinstance(card, dict) else None
             if nid not in decisions:
-                raise ReviewError(f"prepared batch {batch_name} references unknown nid {nid}")
+                raise ReviewError(
+                    f"prepared batch {batch_name} references unknown nid {nid}"
+                )
             compiled_nids.append(nid)
             records.append(decisions[nid])
-        (verified_dir / f"{batch_name}.json").write_text(
-            json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        prepared_outputs.append((batch_name, records))
     if len(compiled_nids) != len(set(compiled_nids)) or set(compiled_nids) != set(
         expected_nids
     ):
-        raise ReviewError("compiled batches do not exactly cover the prepared Anki manifest")
+        raise ReviewError(
+            "compiled batches do not exactly cover the prepared Anki manifest"
+        )
+
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise ReviewError(f"output directory is not empty: {output_dir}")
+    verified_dir = output_dir / "verified"
+    verified_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "manifest.json").write_text(
+        json.dumps(prep_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    for batch_name, records in prepared_outputs:
+        (verified_dir / f"{batch_name}.json").write_text(
+            json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     if additions:
         (verified_dir / "batch_additions.json").write_text(
             json.dumps(additions, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -668,7 +776,9 @@ def compile_reviews(
         "source_ledger.json": source_ledger,
     }
     for name, payload in artifacts.items():
-        (output_dir / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        (output_dir / name).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
     if primer_changes or proposed_nodes:
         primer_dir = output_dir / "primer_files"
         primer_dir.mkdir()
@@ -696,7 +806,9 @@ def compile_reviews(
             path = Path(str(change["path"]))
             filename = path.name
             if path.suffix != ".svg" or not filename:
-                raise ReviewError(f"{change['node_id']}: figure path must name an SVG file")
+                raise ReviewError(
+                    f"{change['node_id']}: figure path must name an SVG file"
+                )
             destination = figure_dir / filename
             if destination.exists():
                 raise ReviewError(f"duplicate figure output filename: {filename}")

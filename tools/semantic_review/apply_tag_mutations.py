@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -65,7 +66,9 @@ def load_mutations(path: Path) -> list[dict[str, object]]:
             raise MutationError(f"{label}.remove must not be empty")
         overlap = set(add).intersection(remove)
         if overlap:
-            raise MutationError(f"{label} puts tags in both add and remove: {sorted(overlap)}")
+            raise MutationError(
+                f"{label} puts tags in both add and remove: {sorted(overlap)}"
+            )
         mutations.append(
             {
                 "nid": nid,
@@ -110,9 +113,7 @@ def desired_tags(current: str, mutation: dict[str, object]) -> str:
     if present_removals not in (set(), remove):
         raise MutationError(f"nid {nid}: mutation is partially applied")
 
-    allowed_node_tags = {
-        tag for tag in expected.union(add) if tag.startswith("node::")
-    }
+    allowed_node_tags = {tag for tag in expected.union(add) if tag.startswith("node::")}
     unexpected_nodes = {
         tag for tag in token_set if tag.startswith("node::")
     } - allowed_node_tags
@@ -126,14 +127,73 @@ def desired_tags(current: str, mutation: dict[str, object]) -> str:
     return _anki_tags([tag for tag in tokens if tag not in remove])
 
 
-def _require_backup(path: Path | None) -> None:
+REQUIRED_ANKI_TABLES = {
+    "cards",
+    "col",
+    "decks",
+    "graves",
+    "notes",
+    "notetypes",
+    "tags",
+}
+
+
+def _require_backup(path: Path | None, db_path: Path) -> None:
     if path is None:
         raise MutationError("--backup is required when applying")
     if not path.is_file() or path.is_symlink() or path.stat().st_size == 0:
         raise MutationError(f"backup is missing, empty, or not a regular file: {path}")
+    try:
+        if os.path.samefile(path, db_path):
+            raise MutationError("backup must be independent from the live database")
+    except OSError as error:
+        raise MutationError(
+            f"could not compare backup and live database: {error}"
+        ) from error
 
 
-def _verify_backup(path: Path, mutations: list[dict[str, object]]) -> None:
+def _collection_identity(
+    connection: sqlite3.Connection, label: str
+) -> tuple[object, ...]:
+    tables = {
+        str(row[0])
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+    }
+    missing = sorted(REQUIRED_ANKI_TABLES - tables)
+    if missing:
+        raise MutationError(
+            f"{label} is not a complete Anki collection; missing {missing}"
+        )
+    col_rows = connection.execute("SELECT crt, scm FROM col").fetchall()
+    if len(col_rows) != 1:
+        raise MutationError(f"{label} must contain exactly one collection row")
+    decks = connection.execute("SELECT id, name FROM decks ORDER BY id").fetchall()
+    notetypes = connection.execute(
+        "SELECT id, name FROM notetypes ORDER BY id"
+    ).fetchall()
+    if not decks or not notetypes:
+        raise MutationError(f"{label} has no deck or note-type metadata")
+    orphans = connection.execute(
+        "SELECT COUNT(*) FROM cards WHERE nid NOT IN (SELECT id FROM notes)"
+    ).fetchone()[0]
+    noteless = connection.execute(
+        "SELECT COUNT(*) FROM notes WHERE id NOT IN (SELECT nid FROM cards)"
+    ).fetchone()[0]
+    if orphans or noteless:
+        raise MutationError(
+            f"{label} is structurally incomplete: orphan_cards={orphans}, "
+            f"noteless_notes={noteless}"
+        )
+    return (tuple(col_rows[0]), tuple(decks), tuple(notetypes))
+
+
+def _verify_backup(
+    path: Path,
+    mutations: list[dict[str, object]],
+    live_connection: sqlite3.Connection,
+) -> None:
     """Prove the supplied backup contains the exact reviewed pre-pass tag state."""
     connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     connection.create_collation("unicase", _unicase)
@@ -141,6 +201,10 @@ def _verify_backup(path: Path, mutations: list[dict[str, object]]) -> None:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":
             raise MutationError(f"backup SQLite integrity check failed: {integrity}")
+        backup_identity = _collection_identity(connection, "backup")
+        live_identity = _collection_identity(live_connection, "live database")
+        if backup_identity != live_identity:
+            raise MutationError("backup belongs to a different Anki collection")
         for mutation in mutations:
             nid = int(mutation["nid"])
             row = connection.execute(
@@ -151,7 +215,9 @@ def _verify_backup(path: Path, mutations: list[dict[str, object]]) -> None:
             actual = str(row[0] or "").split()
             expected = list(mutation["expected_original_tags"])
             if actual != expected:
-                raise MutationError(f"nid {nid}: backup tags do not match reviewed original")
+                raise MutationError(
+                    f"nid {nid}: backup tags do not match reviewed original"
+                )
     finally:
         connection.close()
 
@@ -164,17 +230,18 @@ def apply_mutations(
     commit: bool,
 ) -> dict[str, Any]:
     if not db_path.is_file() or db_path.is_symlink():
-        raise MutationError(f"Anki database is missing or not a regular file: {db_path}")
-    if commit:
-        _require_backup(backup_path)
-        assert backup_path is not None
-        _verify_backup(backup_path, mutations)
+        raise MutationError(
+            f"Anki database is missing or not a regular file: {db_path}"
+        )
 
     connection = sqlite3.connect(db_path)
     connection.create_collation("unicase", _unicase)
     try:
         if commit:
+            _require_backup(backup_path, db_path)
+            assert backup_path is not None
             connection.execute("BEGIN IMMEDIATE")
+            _verify_backup(backup_path, mutations, connection)
         rows: dict[int, str] = {}
         for mutation in mutations:
             nid = int(mutation["nid"])
@@ -186,12 +253,12 @@ def apply_mutations(
             rows[nid] = str(row[0] or "")
 
         desired_by_nid = {
-            int(mutation["nid"]): desired_tags(
-                rows[int(mutation["nid"])], mutation
-            )
+            int(mutation["nid"]): desired_tags(rows[int(mutation["nid"])], mutation)
             for mutation in mutations
         }
-        changed = [nid for nid, desired in desired_by_nid.items() if desired != rows[nid]]
+        changed = [
+            nid for nid, desired in desired_by_nid.items() if desired != rows[nid]
+        ]
 
         if not commit:
             return {

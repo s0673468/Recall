@@ -12,6 +12,7 @@ TOOL_ROOT = Path(__file__).resolve().parents[1]
 if str(TOOL_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOL_ROOT))
 
+from apply_tag_mutations import load_mutations  # noqa: E402
 from validate_and_compile import ReviewError, compile_reviews  # noqa: E402
 
 
@@ -22,7 +23,9 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         imported_roots = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                imported_roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+                imported_roots.update(
+                    alias.name.split(".", 1)[0] for alias in node.names
+                )
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported_roots.add(node.module.split(".", 1)[0])
 
@@ -82,7 +85,9 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             encoding="utf-8",
         )
         (self.job / "in" / "batch_001.json").write_text(
-            json.dumps({"batch_id": "batch_001", "deck": "ML", "cards": self.bundle["cards"]}),
+            json.dumps(
+                {"batch_id": "batch_001", "deck": "ML", "cards": self.bundle["cards"]}
+            ),
             encoding="utf-8",
         )
 
@@ -121,12 +126,19 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             ],
             "new_cards": [],
             "node_moves": [],
-            "primer": {"action": "missing", "path": None, "rationale": "No primer.", "html": None},
+            "primer": {
+                "action": "missing",
+                "path": None,
+                "rationale": "No primer.",
+                "html": None,
+            },
             "proposed_nodes": [],
             "unresolved": [],
         }
         review.update(overrides)
-        (self.reviews / "concept-a.json").write_text(json.dumps(review), encoding="utf-8")
+        (self.reviews / "concept-a.json").write_text(
+            json.dumps(review), encoding="utf-8"
+        )
 
     def compile(self) -> dict[str, object]:
         return compile_reviews(
@@ -195,6 +207,49 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError, "card coverage mismatch"):
             self.compile()
 
+    def test_rejects_duplicate_bundle_or_prep_manifest_nids(self) -> None:
+        bundle_path = self.concepts / "concept-a.json"
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        bundle["cards"].append(
+            {**bundle["cards"][0], "front": "Duplicate nid, different content?"}
+        )
+        bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+        self.write_review()
+
+        with self.assertRaisesRegex(ReviewError, "duplicate bundle nid"):
+            self.compile()
+
+        bundle["cards"] = bundle["cards"][:1]
+        bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+        prep_manifest = json.loads(
+            (self.job / "manifest.json").read_text(encoding="utf-8")
+        )
+        prep_manifest["nids"] = [101, 101]
+        (self.job / "manifest.json").write_text(
+            json.dumps(prep_manifest), encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(ReviewError, "prepared Anki manifest"):
+            self.compile()
+
+    def test_rejects_batch_names_that_escape_the_job_directory(self) -> None:
+        self.write_review()
+        target = self.root / "outside-target.json"
+        target.write_text("sentinel", encoding="utf-8")
+        prep_manifest = json.loads(
+            (self.job / "manifest.json").read_text(encoding="utf-8")
+        )
+        prep_manifest["batches"] = [str(target.with_suffix(""))]
+        (self.job / "manifest.json").write_text(
+            json.dumps(prep_manifest), encoding="utf-8"
+        )
+
+        with self.assertRaisesRegex(ReviewError, "plain filename component"):
+            self.compile()
+
+        self.assertEqual(target.read_text(encoding="utf-8"), "sentinel")
+        self.assertFalse(self.compiled.exists())
+
     def test_rejects_post_review_score_below_four(self) -> None:
         self.write_review()
         path = self.reviews / "concept-a.json"
@@ -211,7 +266,9 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewError, "at least one accuracy source"):
             self.compile()
 
-    def test_incomplete_mode_reports_missing_cluster_without_writing_batches(self) -> None:
+    def test_incomplete_mode_reports_missing_cluster_without_writing_batches(
+        self,
+    ) -> None:
         summary = compile_reviews(
             concept_manifest_path=self.concept_manifest,
             reviews_dir=self.reviews,
@@ -268,16 +325,12 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         summary = self.compile()
 
         compiled = json.loads(
-            (self.compiled / "verified" / "batch_001.json").read_text(
-                encoding="utf-8"
-            )
+            (self.compiled / "verified" / "batch_001.json").read_text(encoding="utf-8")
         )
         self.assertEqual(summary["kept"], 1)
         self.assertEqual(compiled[0]["action"], "edit")
         self.assertEqual(compiled[0]["cards"][0]["front"], "Original front?")
-        self.assertEqual(
-            compiled[0]["cards"][0]["tags_add"], ["node::concept-b"]
-        )
+        self.assertEqual(compiled[0]["cards"][0]["tags_add"], ["node::concept-b"])
 
     def test_compiles_new_gap_card_with_real_concept_tag(self) -> None:
         self.write_review(
@@ -338,9 +391,7 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         self.compile()
 
         compiled = json.loads(
-            (self.compiled / "verified" / "batch_001.json").read_text(
-                encoding="utf-8"
-            )
+            (self.compiled / "verified" / "batch_001.json").read_text(encoding="utf-8")
         )
         self.assertEqual(compiled[0]["cards"][0]["tags_add"], [])
         self.assertEqual(
@@ -348,15 +399,106 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             ["ml", "node::concept-a"],
         )
 
+    def test_split_child_inheritance_never_leaks_into_original_tag_mutation(
+        self,
+    ) -> None:
+        bundle_path = self.concepts / "concept-a.json"
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        bundle["cards"][0]["tags"].append("legacy")
+        bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+        (self.job / "in" / "batch_001.json").write_text(
+            json.dumps(
+                {"batch_id": "batch_001", "deck": "ML", "cards": bundle["cards"]}
+            ),
+            encoding="utf-8",
+        )
+        self.write_review(
+            card_changes=[
+                {
+                    "nid": 101,
+                    "action": "split",
+                    "rationale": "Two independent retrievals were bundled.",
+                    "score_before": 3,
+                    "score_after": 4,
+                    "cards": [
+                        {
+                            "front": "First atomic front?",
+                            "back": "First atomic back.",
+                            "tags_add": [],
+                            "tags_remove": ["legacy"],
+                        },
+                        {
+                            "front": "Second atomic front?",
+                            "back": "Second atomic back.",
+                            "tags_add": [],
+                            "tags_remove": [],
+                        },
+                    ],
+                }
+            ]
+        )
+
+        self.compile()
+
+        mutations = load_mutations(self.compiled / "tag_mutations.json")
+        self.assertEqual(mutations[0]["add"], [])
+        self.assertEqual(mutations[0]["remove"], ["legacy"])
+        compiled = json.loads(
+            (self.compiled / "verified" / "batch_001.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("legacy", compiled[0]["cards"][1]["tags_add"])
+
     def test_rejects_unrecorded_concept_tag_change(self) -> None:
         self.write_review()
         path = self.reviews / "concept-a.json"
         review = json.loads(path.read_text(encoding="utf-8"))
         review["card_changes"][0]["action"] = "edit"
-        review["card_changes"][0]["cards"][0]["tags_add"] = ["node::other"]
+        review["card_changes"][0]["cards"][0]["tags_remove"] = ["node::concept-a"]
         path.write_text(json.dumps(review), encoding="utf-8")
 
         with self.assertRaisesRegex(ReviewError, "requires a node_moves record"):
+            self.compile()
+
+    def test_rejects_unknown_node_tag_even_with_a_valid_move(self) -> None:
+        self.write_review(
+            card_changes=[
+                {
+                    "nid": 101,
+                    "action": "edit",
+                    "rationale": "Move to the precise semantic owner.",
+                    "score_before": 3,
+                    "score_after": 4,
+                    "cards": [
+                        {
+                            "front": "Original front?",
+                            "back": "Original back.",
+                            "tags_add": ["node::not-in-catalog"],
+                            "tags_remove": [],
+                        }
+                    ],
+                }
+            ],
+            node_moves=[
+                {
+                    "nid": 101,
+                    "from_node": "concept-a",
+                    "to_node": "concept-b",
+                    "rationale": "Concept B owns this retrieval.",
+                }
+            ],
+            proposed_nodes=[
+                {
+                    "node_id": "concept-b",
+                    "title": "Concept B",
+                    "module": "ML-extra",
+                    "difficulty": 2,
+                    "primer_html": "Reviewed concept B primer.",
+                    "rationale": "A dedicated owner is valuable.",
+                }
+            ],
+        )
+
+        with self.assertRaisesRegex(ReviewError, "adds unknown node tags"):
             self.compile()
 
     def test_rejects_tag_removal_from_a_brand_new_card(self) -> None:
@@ -450,10 +592,14 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             json.dumps(bundle), encoding="utf-8"
         )
         self.write_review()
-        with self.assertRaisesRegex(ReviewError, "figure was not independently reviewed"):
+        with self.assertRaisesRegex(
+            ReviewError, "figure was not independently reviewed"
+        ):
             self.compile()
 
-        replacement = '<svg xmlns="http://www.w3.org/2000/svg"><text>Precise</text></svg>'
+        replacement = (
+            '<svg xmlns="http://www.w3.org/2000/svg"><text>Precise</text></svg>'
+        )
         self.write_review(
             figure={
                 "action": "edit",
@@ -520,12 +666,18 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             }
         )
         self.concept_manifest.write_text(json.dumps(manifest), encoding="utf-8")
-        prep_manifest = json.loads((self.job / "manifest.json").read_text(encoding="utf-8"))
+        prep_manifest = json.loads(
+            (self.job / "manifest.json").read_text(encoding="utf-8")
+        )
         prep_manifest["batches"].append("batch_002")
         prep_manifest["nids"].append(202)
-        (self.job / "manifest.json").write_text(json.dumps(prep_manifest), encoding="utf-8")
+        (self.job / "manifest.json").write_text(
+            json.dumps(prep_manifest), encoding="utf-8"
+        )
         (self.job / "in" / "batch_002.json").write_text(
-            json.dumps({"batch_id": "batch_002", "deck": "ML", "cards": placeholder["cards"]}),
+            json.dumps(
+                {"batch_id": "batch_002", "deck": "ML", "cards": placeholder["cards"]}
+            ),
             encoding="utf-8",
         )
         self.write_review()
@@ -560,11 +712,18 @@ class SemanticReviewCompilerTest(unittest.TestCase):
             ],
             "new_cards": [],
             "node_moves": [],
-            "primer": {"action": "missing", "path": None, "rationale": "No primer.", "html": None},
+            "primer": {
+                "action": "missing",
+                "path": None,
+                "rationale": "No primer.",
+                "html": None,
+            },
             "proposed_nodes": [],
             "unresolved": [],
         }
-        (self.reviews / "none.json").write_text(json.dumps(none_review), encoding="utf-8")
+        (self.reviews / "none.json").write_text(
+            json.dumps(none_review), encoding="utf-8"
+        )
 
         with self.assertRaisesRegex(ReviewError, "every retained placeholder card"):
             self.compile()
@@ -576,14 +735,22 @@ class SemanticReviewCompilerTest(unittest.TestCase):
                 "cards": [],
             }
         )
-        (self.reviews / "none.json").write_text(json.dumps(none_review), encoding="utf-8")
+        (self.reviews / "none.json").write_text(
+            json.dumps(none_review), encoding="utf-8"
+        )
 
         summary = self.compile()
 
         self.assertEqual(summary["deleted"], 1)
 
-    def test_prep_manifest_nids_may_be_sorted_differently_from_batch_order(self) -> None:
-        first = {**self.bundle["cards"][0], "nid": 202, "front": "Second-created front?"}
+    def test_prep_manifest_nids_may_be_sorted_differently_from_batch_order(
+        self,
+    ) -> None:
+        first = {
+            **self.bundle["cards"][0],
+            "nid": 202,
+            "front": "Second-created front?",
+        }
         second = self.bundle["cards"][0]
         bundle_path = self.concepts / "concept-a.json"
         bundle = {**self.bundle, "card_count": 2, "cards": [first, second]}
@@ -592,11 +759,15 @@ class SemanticReviewCompilerTest(unittest.TestCase):
         manifest[0]["card_count"] = 2
         self.concept_manifest.write_text(json.dumps(manifest), encoding="utf-8")
         (self.job / "manifest.json").write_text(
-            json.dumps({"mode": "revise", "batches": ["batch_001"], "nids": [101, 202]}),
+            json.dumps(
+                {"mode": "revise", "batches": ["batch_001"], "nids": [101, 202]}
+            ),
             encoding="utf-8",
         )
         (self.job / "in" / "batch_001.json").write_text(
-            json.dumps({"batch_id": "batch_001", "deck": "ML", "cards": [first, second]}),
+            json.dumps(
+                {"batch_id": "batch_001", "deck": "ML", "cards": [first, second]}
+            ),
             encoding="utf-8",
         )
         self.write_review(
