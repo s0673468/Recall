@@ -70,7 +70,8 @@ python3 tools/semantic_review/apply_tag_mutations.py \
 The apply mode requires an existing non-empty backup plus a literal
 confirmation. It locks the collection, compares every note with its reviewed
 original state, proves the backup is an independent complete copy of the same
-Anki collection and contains the exact pre-pass tags, changes tags with
+Anki collection using collection metadata and each changed note's stable GUID,
+and confirms the exact pre-pass tags before changing tags with
 compare-and-swap updates, runs SQLite's integrity check, and reads every tag set
 back before committing:
 

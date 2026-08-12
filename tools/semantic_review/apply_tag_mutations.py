@@ -207,12 +207,21 @@ def _verify_backup(
             raise MutationError("backup belongs to a different Anki collection")
         for mutation in mutations:
             nid = int(mutation["nid"])
-            row = connection.execute(
-                "SELECT tags FROM notes WHERE id=?", (nid,)
+            backup_row = connection.execute(
+                "SELECT guid, mid, tags FROM notes WHERE id=?", (nid,)
             ).fetchone()
-            if row is None:
+            live_row = live_connection.execute(
+                "SELECT guid, mid FROM notes WHERE id=?", (nid,)
+            ).fetchone()
+            if backup_row is None:
                 raise MutationError(f"nid {nid}: note is missing from backup")
-            actual = str(row[0] or "").split()
+            if live_row is None:
+                raise MutationError(f"nid {nid}: note is missing from live database")
+            if tuple(backup_row[:2]) != tuple(live_row):
+                raise MutationError(
+                    f"nid {nid}: backup note identity does not match live database"
+                )
+            actual = str(backup_row[2] or "").split()
             expected = list(mutation["expected_original_tags"])
             if actual != expected:
                 raise MutationError(

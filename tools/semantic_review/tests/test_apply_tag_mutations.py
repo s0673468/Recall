@@ -30,11 +30,19 @@ class TagMutationTest(unittest.TestCase):
         *,
         collection_created: int = 1_700_000_000,
         deck_name: str = "ML",
+        note_guid: str = "stable-guid-7",
     ) -> None:
         connection = sqlite3.connect(path)
         connection.executescript(
             """
-            CREATE TABLE notes (id INTEGER PRIMARY KEY, tags TEXT, mod INTEGER, usn INTEGER);
+            CREATE TABLE notes (
+                id INTEGER PRIMARY KEY,
+                guid TEXT,
+                mid INTEGER,
+                tags TEXT,
+                mod INTEGER,
+                usn INTEGER
+            );
             CREATE TABLE cards (id INTEGER PRIMARY KEY, nid INTEGER);
             CREATE TABLE tags (tag TEXT PRIMARY KEY, usn INTEGER, collapsed INTEGER, config TEXT);
             CREATE TABLE col (crt INTEGER, scm INTEGER, mod INTEGER);
@@ -43,7 +51,10 @@ class TagMutationTest(unittest.TestCase):
             CREATE TABLE graves (oid INTEGER, type INTEGER, usn INTEGER);
             """
         )
-        connection.execute("INSERT INTO notes VALUES (7, ?, 1, 0)", (tags,))
+        connection.execute(
+            "INSERT INTO notes VALUES (7, ?, 1, ?, 1, 0)",
+            (note_guid, tags),
+        )
         connection.execute("INSERT INTO cards VALUES (70, 7)")
         connection.execute(
             "INSERT INTO col VALUES (?, 1700000100, 1)",
@@ -262,6 +273,38 @@ class TagMutationTest(unittest.TestCase):
                     db_path=db,
                     mutations=[mutation],
                     backup_path=different,
+                    commit=True,
+                )
+
+    def test_apply_rejects_metadata_collision_with_different_note_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            db = root / "collection.anki2"
+            backup = root / "colliding-clone.anki2"
+            self.create_collection(
+                db,
+                " node::old node::new ",
+                note_guid="live-guid-7",
+            )
+            self.create_collection(
+                backup,
+                " node::old ",
+                note_guid="independent-guid-7",
+            )
+            mutation = {
+                "nid": 7,
+                "add": ["node::new"],
+                "remove": ["node::old"],
+                "expected_original_tags": ["node::old"],
+            }
+
+            with self.assertRaisesRegex(MutationError, "note identity"):
+                apply_mutations(
+                    db_path=db,
+                    mutations=[mutation],
+                    backup_path=backup,
                     commit=True,
                 )
 
