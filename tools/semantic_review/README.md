@@ -20,6 +20,10 @@ change fields, cards, scheduling, or decks.
 
 Every existing note id must appear exactly once and in its original concept
 order. Kept cards must be byte-identical. Remaining cards must score 4 or 5.
+Every edit or split must declare `revision_kind` as `wording` or `material`.
+When at least one edit is material, compilation also requires one canonical UTC
+`--revision-at YYYYMMDDTHHMMSSZ`; the guarded writer uses it for the near-term
+content-revalidation marker without resetting scheduling.
 The compiler rejects unresolved claims, missing clusters, malformed actions,
 unknown decks or concept tags, clusters without an accuracy source, incomplete
 placeholder-node moves, and output directories that already contain files.
@@ -32,6 +36,7 @@ python3 tools/semantic_review/validate_and_compile.py \
   --reviews-dir /private/tmp/recall-semantic/verified \
   --prep-job-dir /private/tmp/recall-semantic/jobs/full-pass \
   --output-dir /private/tmp/recall-semantic/compiled \
+  --revision-at 20260812T120000Z \
   --metis-root /Users/germanchernukhin/Code/METIS
 ```
 

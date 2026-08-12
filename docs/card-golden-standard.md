@@ -1,6 +1,6 @@
 # Recall learning-material golden standard
 
-Version: 2026-08-11. Applies to every flashcard and concept primer in Recall.
+Version: 2026-08-12. Applies to every flashcard and concept primer in Recall.
 
 ## What belongs in Recall
 
@@ -92,6 +92,22 @@ Score each card from 1 to 5 before and after:
 
 Only cards scoring 4 or 5 may remain after the pass. A `keep` record must preserve the original
 front and back exactly.
+
+## Revision and gardening rules
+
+- Classify every edit or split as `revision_kind: wording` or `material`. Material means the
+  expected retrieval, factual content, scope, assumption, answer boundary, or grading decision
+  changed. Spelling, grammar, markup, and equally precise phrasing are wording changes.
+- Publish one canonical UTC `revision_at` for a batch containing material changes. Previously
+  studied material edits receive the corresponding `content_revalidate::<timestamp>` marker;
+  wording edits do not advance it. A later Hard, Good, or Easy review acknowledges that revision.
+  Again leaves it pending. Never reset FSRS history to force a rereview.
+- Garden in bounded batches of 20-40 cards. Open learner flags come first. Fill the rest only from
+  mature evidence: a high Again rate after at least five reviews, repeated lapses, consistently
+  slow answers, failed post-edit validation, or a due `volatile` source check.
+- A gardening signal is a reason to inspect, not permission to rewrite. Apply the same truth,
+  deduplication, concept-ownership, source, backup, and exact-readback gates as a large semantic
+  pass.
 
 ## Evidence basis
 

@@ -9,6 +9,7 @@ The existing ``anki_apply.py`` remains the only collection writer.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import importlib.util
 import json
 import tempfile
@@ -19,6 +20,8 @@ from typing import Any
 
 
 VALID_ACTIONS = {"keep", "edit", "split", "delete"}
+VALID_REVISION_KINDS = {"wording", "material"}
+REVISION_AT_FORMAT = "%Y%m%dT%H%M%SZ"
 SVG_ROOT = "{http://www.w3.org/2000/svg}svg"
 REQUIRED_REVIEW_KEYS = {
     "node_id",
@@ -316,6 +319,16 @@ def validate_review(
             _validate_card_payload(card, f"{label}.cards[{card_index}]")
             for card_index, card in enumerate(raw_cards)
         ]
+        revision_kind = change.get("revision_kind")
+        if action in {"edit", "split"}:
+            if revision_kind not in VALID_REVISION_KINDS:
+                raise ReviewError(
+                    f"{label}.revision_kind must be wording or material"
+                )
+        elif revision_kind is not None:
+            raise ReviewError(
+                f"{label}.revision_kind is only valid for edit or split"
+            )
         original = original_by_nid[nid]
         if action == "keep" and (
             cards[0]["front"] != original.get("front")
@@ -510,6 +523,7 @@ def compile_reviews(
     prep_job_dir: Path,
     output_dir: Path,
     require_complete: bool,
+    revision_at: str | None = None,
     metis_root: Path | None = None,
     known_concept_manifest_path: Path | None = None,
 ) -> dict[str, object]:
@@ -605,6 +619,7 @@ def compile_reviews(
     proposed_nodes: list[dict[str, object]] = []
     source_ledger: list[dict[str, object]] = []
     action_counts: Counter[str] = Counter()
+    has_material_changes = False
 
     for node_id in node_rows:
         review = reviews[node_id]
@@ -662,6 +677,14 @@ def compile_reviews(
                 # but cross the apply boundary as a byte-identical edit so the
                 # additions exist before the guarded removal/CAS phase.
                 apply_action = "edit"
+            revision_kind = (
+                change.get("revision_kind")
+                if change["action"] in {"edit", "split"}
+                else "wording" if apply_action == "edit" else None
+            )
+            has_material_changes = (
+                has_material_changes or revision_kind == "material"
+            )
             decisions[nid] = {
                 "nid": nid,
                 "action": apply_action,
@@ -670,6 +693,8 @@ def compile_reviews(
                 "score_after": change["score_after"],
                 "cards": compiled_cards,
             }
+            if revision_kind is not None:
+                decisions[nid]["revision_kind"] = revision_kind
             action_counts[change["action"]] += 1
         additions.extend(review["new_cards"])
         proposed_nodes.extend(review["proposed_nodes"])
@@ -751,12 +776,29 @@ def compile_reviews(
             "compiled batches do not exactly cover the prepared Anki manifest"
         )
 
+    if has_material_changes:
+        if revision_at is None:
+            raise ReviewError("material changes require --revision-at")
+        try:
+            parsed_revision = dt.datetime.strptime(revision_at, REVISION_AT_FORMAT)
+        except ValueError as error:
+            raise ReviewError(
+                "revision_at must be canonical UTC YYYYMMDDTHHMMSSZ"
+            ) from error
+        if parsed_revision.strftime(REVISION_AT_FORMAT) != revision_at:
+            raise ReviewError("revision_at must be canonical UTC YYYYMMDDTHHMMSSZ")
+    elif revision_at is not None:
+        raise ReviewError("revision_at is only valid when a material edit exists")
+
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ReviewError(f"output directory is not empty: {output_dir}")
     verified_dir = output_dir / "verified"
     verified_dir.mkdir(parents=True, exist_ok=True)
+    compiled_manifest = dict(prep_manifest)
+    if revision_at is not None:
+        compiled_manifest["revision_at"] = revision_at
     (output_dir / "manifest.json").write_text(
-        json.dumps(prep_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(compiled_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     for batch_name, records in prepared_outputs:
         (verified_dir / f"{batch_name}.json").write_text(
@@ -848,6 +890,10 @@ def main() -> int:
         help="optional full catalog used to validate cross-cluster node moves",
     )
     parser.add_argument("--allow-incomplete", action="store_true")
+    parser.add_argument(
+        "--revision-at",
+        help="UTC YYYYMMDDTHHMMSSZ publication time required by material edits",
+    )
     args = parser.parse_args()
     try:
         summary = compile_reviews(
@@ -856,6 +902,7 @@ def main() -> int:
             prep_job_dir=args.prep_job_dir,
             output_dir=args.output_dir,
             require_complete=not args.allow_incomplete,
+            revision_at=args.revision_at,
             metis_root=args.metis_root,
             known_concept_manifest_path=args.known_concept_manifest,
         )
