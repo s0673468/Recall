@@ -201,20 +201,25 @@ exit 23
     expect(config.existsSync(), isFalse);
   });
 
-  test('widget build number follows Flutter build number', () {
+  test('widget version follows the containing Flutter app version', () {
     final project = File(
       '$repositoryRoot/ios/Runner.xcodeproj/project.pbxproj',
     ).readAsStringSync();
     final widgetConfigurations = RegExp(
       r'baseConfigurationReference = [^;]+ /\* Generated\.xcconfig \*/;'
       r'[\s\S]*?CODE_SIGN_ENTITLEMENTS = RecallWidget/RecallWidget\.entitlements;'
-      r'[\s\S]*?CURRENT_PROJECT_VERSION = ([^;]+);',
+      r'[\s\S]*?CURRENT_PROJECT_VERSION = ([^;]+);'
+      r'[\s\S]*?MARKETING_VERSION = ([^;]+);',
     ).allMatches(project);
 
     expect(widgetConfigurations, hasLength(3));
     expect(
       widgetConfigurations.map((match) => match.group(1)),
       everyElement(r'"$(FLUTTER_BUILD_NUMBER)"'),
+    );
+    expect(
+      widgetConfigurations.map((match) => match.group(2)),
+      everyElement(r'"$(FLUTTER_BUILD_NAME)"'),
     );
   });
 }
