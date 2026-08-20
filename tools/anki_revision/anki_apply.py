@@ -684,7 +684,7 @@ def main() -> int:
         parser.error(f"--apply requires --confirmation {APPLY_CONFIRMATION}")
     try:
         summary, receipt = execute_job(
-            job_dir=ac.job_dir(str(args.root), args.job),
+            job_dir=Path(ac.job_dir(str(args.root), args.job)),
             db_path=args.db,
             tag=args.tag,
             commit=args.apply,

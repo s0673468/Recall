@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import shutil
 import sqlite3
@@ -7,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 TOOL_ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +78,37 @@ def write_job(
 
 
 class ApplyTest(unittest.TestCase):
+    def test_cli_converts_job_dir_to_path_before_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db = root / "collection.anki2"
+            create_collection(db)
+            write_job(
+                root,
+                {
+                    "nid": 7,
+                    "action": "keep",
+                    "cards": [
+                        {"front": "Old?", "back": "Old.", "tags_add": []}
+                    ],
+                },
+            )
+            argv = [
+                "anki_apply.py",
+                "--job",
+                "job",
+                "--db",
+                str(db),
+                "--root",
+                str(root),
+                "--tag",
+                "cli_path_test",
+            ]
+            with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(
+                io.StringIO()
+            ):
+                self.assertEqual(anki_apply.main(), 0)
+
     def test_external_handoff_requires_current_evidence_and_real_node_owner(
         self,
     ) -> None:
