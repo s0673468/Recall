@@ -10,5 +10,7 @@ Recall library review. They intentionally exclude private card text and local An
   verification, and the value-free local/cloud/Android delivery checks.
 - `2026-08-20-second-readability-summary.json` records the stricter second pass and the Android
   reading, search, error-state, accessibility, version, and APK delivery checks.
+- `2026-08-20-low-density-third-pass-summary.json` records the card-by-card caveat and jargon
+  cleanup, independent semantic verification, and exact local/cloud delivery checks.
 
 The review rules are defined in [`../card-golden-standard.md`](../card-golden-standard.md).
