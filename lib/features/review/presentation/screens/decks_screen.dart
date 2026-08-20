@@ -51,9 +51,9 @@ class DecksScreenState extends State<DecksScreen> {
           child: FutureBuilder<Map<int, ({int due, int neu})>>(
             future: _counts,
             builder: (context, snap) {
-              final counts = snap.data ?? const {};
-              final totalDue = counts.values.fold(0, (a, b) => a + b.due);
-              final totalNew = counts.values.fold(0, (a, b) => a + b.neu);
+              final counts = snap.data;
+              final totalDue = counts?.values.fold(0, (a, b) => a + b.due);
+              final totalNew = counts?.values.fold(0, (a, b) => a + b.neu);
               return ListView(
                 padding: const EdgeInsets.fromLTRB(
                   UiSpacing.sm,
@@ -73,7 +73,9 @@ class DecksScreenState extends State<DecksScreen> {
                     ),
                   ),
                   RecallMotionSwap(
-                    child: snap.connectionState == ConnectionState.done
+                    child: snap.hasError
+                        ? _CountError(onRetry: _retry)
+                        : snap.connectionState == ConnectionState.done
                         ? const SizedBox(
                             key: ValueKey('deck_counts_ready'),
                             height: UiSpacing.xs,
@@ -97,8 +99,8 @@ class DecksScreenState extends State<DecksScreen> {
                     _tile(
                       label: d.name.replaceAll('::', '  ›  '),
                       icon: Icons.folder_outlined,
-                      due: counts[d.deckId]?.due ?? 0,
-                      neu: counts[d.deckId]?.neu ?? 0,
+                      due: counts?[d.deckId]?.due,
+                      neu: counts?[d.deckId]?.neu,
                       onTap: () => widget.onStudyDeck(d.deckId),
                     ),
                 ],
@@ -113,8 +115,8 @@ class DecksScreenState extends State<DecksScreen> {
   Widget _tile({
     required String label,
     required IconData icon,
-    required int due,
-    required int neu,
+    required int? due,
+    required int? neu,
     required VoidCallback onTap,
   }) {
     return Material(
@@ -142,8 +144,8 @@ class DecksScreenState extends State<DecksScreen> {
                   ),
                 ),
               ),
-              if (due > 0) _count('$due due', UiColors.primary),
-              if (neu > 0) ...[
+              if (due != null && due > 0) _count('$due due', UiColors.primary),
+              if (neu != null && neu > 0) ...[
                 const SizedBox(width: UiSpacing.sm),
                 _count('$neu new', UiColors.chartBlue),
               ],
@@ -167,6 +169,40 @@ class DecksScreenState extends State<DecksScreen> {
       fontFamily: 'monospace',
       fontSize: 11,
       fontWeight: FontWeight.w600,
+    ),
+  );
+
+  void _retry() {
+    setState(() {
+      _counts = widget.api.fetchDeckCounts();
+    });
+  }
+}
+
+class _CountError extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _CountError({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    key: const ValueKey('deck_counts_error'),
+    padding: const EdgeInsets.fromLTRB(
+      UiSpacing.sm,
+      UiSpacing.xs,
+      UiSpacing.sm,
+      UiSpacing.sm,
+    ),
+    child: Row(
+      children: [
+        const Expanded(
+          child: Text(
+            'Could not load deck counts.',
+            style: TextStyle(color: UiColors.textMuted, fontSize: 12),
+          ),
+        ),
+        TextButton(onPressed: onRetry, child: const Text('Retry')),
+      ],
     ),
   );
 }

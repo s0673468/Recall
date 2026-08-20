@@ -466,6 +466,7 @@ class _CardPanel extends StatelessWidget {
               latexSvg: card.latexSvg,
               cacheKey: '${card.id}:front',
               style: style,
+              selectable: false,
               // The deleted answers live in the front's {{cN::…}} markup, so the
               // front itself fills them in on flip (the back is the extra field
               // and is often just a summary). A no-op for non-cloze fronts.
@@ -493,6 +494,8 @@ class _CardPanel extends StatelessWidget {
                             hasLatex: card.hasLatex,
                             latexSvg: card.latexSvg,
                             cacheKey: '${card.id}:back',
+                            selectable: false,
+                            textAlign: TextAlign.start,
                             style: style.copyWith(
                               color: UiColors.textSecondary,
                               fontWeight: FontWeight.w400,

@@ -79,8 +79,8 @@ void main() {
     expect(match, isNotNull, reason: 'pubspec must declare a build number');
     expect(
       int.parse(match!.group(1)!),
-      greaterThan(2002),
-      reason: 'Android build 2002 is installed and must update in place',
+      greaterThan(2004),
+      reason: 'Android build 2004 is installed and must update in place',
     );
   });
 

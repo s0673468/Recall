@@ -96,6 +96,7 @@ class PrimerScreen extends StatelessWidget {
                       hasLatex: true,
                       revealCloze: true,
                       selectable: false,
+                      textAlign: TextAlign.start,
                       // Unlike card faces, a primer body can change server-side
                       // within a session (rows are updated in place), so the
                       // memo key must vary with content, not just identity.
