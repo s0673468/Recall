@@ -1,0 +1,59 @@
+{
+  "schema": "recall.low-density-third-pass-summary/v1",
+  "catalog_cards": 1536,
+  "rewritten": 190,
+  "kept": 1346,
+  "factual_holds": 0,
+  "review_focus": [
+    "remove detached caveats that do not change the prompt's correct answer",
+    "fold essential boundaries into the main explanation",
+    "replace avoidable technical jargon with plain adult language",
+    "keep one gradeable retrieval target readable in one pass"
+  ],
+  "independent_verification": {
+    "rewrites_accepted": 190,
+    "findings_repaired": 1,
+    "unresolved_findings": 0
+  },
+  "answer_density": {
+    "catalog_before": {
+      "average_characters": 152.0,
+      "average_words": 22.5,
+      "over_240_characters": 118,
+      "over_320_characters": 1,
+      "over_55_words": 0,
+      "common_mix_up_labels": 3
+    },
+    "catalog_after": {
+      "average_characters": 144.4,
+      "average_words": 21.3,
+      "over_240_characters": 90,
+      "over_320_characters": 1,
+      "over_55_words": 0,
+      "common_mix_up_labels": 0
+    },
+    "changed_cards_before": {
+      "average_characters": 192.4,
+      "average_words": 28.9,
+      "over_240_characters": 29
+    },
+    "changed_cards_after": {
+      "average_characters": 131.4,
+      "average_words": 19.7,
+      "over_240_characters": 1
+    }
+  },
+  "delivery": {
+    "compiled_apply_readback": "passed",
+    "local_structural_validation": "passed",
+    "local_lint_findings": 0,
+    "local_active_notes": 1536,
+    "cloud_active_notes": 1536,
+    "missing_in_cloud": 0,
+    "extra_in_cloud": 0,
+    "field_mismatches": 0,
+    "local_cloud_digest_match": true,
+    "scheduling_and_decks_preserved": true,
+    "android_delivery": "synced content update; no APK change required"
+  }
+}
