@@ -25,6 +25,7 @@ import 'package:health_anki_flutter/features/settings/application/recall_prefs_c
 import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/decks_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
+import 'package:health_anki_flutter/features/review/presentation/screens/primer_library_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/read_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/stats_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
@@ -2599,6 +2600,81 @@ void main() {
       expect(find.textContaining('eramos'), findsOneWidget);
     });
 
+    testWidgets('long answers are left aligned and scroll from the text', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: _FakeRecallApi([
+          _card(
+            id: 506,
+            front: 'Why does this work?',
+            back: List.generate(
+              30,
+              (index) => 'Step ${index + 1} explains one part clearly.',
+            ).join('<br><br>'),
+          ),
+        ]),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+
+      final faces = tester.widgetList<CardFace>(find.byType(CardFace)).toList();
+      expect(faces, hasLength(2));
+      expect(faces.every((face) => !face.selectable), isTrue);
+      expect(faces.last.textAlign, TextAlign.start);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('recall_study_card')),
+          matching: find.byType(SelectableText),
+        ),
+        findsNothing,
+      );
+
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(
+          of: find.byKey(const Key('recall_study_card')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(scrollable.position.maxScrollExtent, greaterThan(500));
+
+      final card = tester.getRect(find.byKey(const Key('recall_study_card')));
+      final answer = tester.getRect(find.byType(CardFace).last);
+      final scrollViewport = tester.getRect(
+        find.descendant(
+          of: find.byKey(const Key('recall_study_card')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      final dragStart = Offset(
+        answer.center.dx,
+        (scrollViewport.bottom - 10).clamp(answer.top + 1, answer.bottom - 1),
+      );
+      expect(card.contains(dragStart), isTrue);
+      expect(answer.contains(dragStart), isTrue);
+      await tester.dragFrom(dragStart, const Offset(0, -350));
+      await tester.pumpAndSettle();
+
+      expect(scrollable.position.pixels, greaterThan(100));
+    });
+
     testWidgets('StudyScreen fills in the cloze on flip (plain-summary back)', (
       tester,
     ) async {
@@ -2687,6 +2763,41 @@ void main() {
   });
 
   group('Decks screen', () {
+    testWidgets('a count failure is visible and never looks like zero due', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card()])..failDeckCounts = true;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: DecksScreen(
+              controller: controller,
+              api: api,
+              onStudyDeck: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not load deck counts.'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.textContaining('0 due'), findsNothing);
+      expect(
+        find.byKey(const Key('recall_deck_row_All decks')),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('renders decks as flat ruled rows with explicit counts', (
       tester,
     ) async {
@@ -2836,6 +2947,63 @@ void main() {
       await tester.tap(find.text('Read'));
       await tester.pumpAndSettle();
     }
+
+    testWidgets('primer library search filters titles and modules', (
+      tester,
+    ) async {
+      final pages = [
+        ConceptPage(
+          nodeId: node.nodeId,
+          title: 'Vector geometry primer',
+          bodyHtml: 'Projection',
+          updatedAt: DateTime.utc(2026, 7, 29),
+        ),
+        ConceptPage(
+          nodeId: 'm01-attention',
+          title: 'Attention primer',
+          bodyHtml: 'Queries and keys',
+          updatedAt: DateTime.utc(2026, 7, 29),
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: PrimerLibraryContent(
+                pages: pages,
+                conceptNodes: const [
+                  node,
+                  ConceptNodeInfo(
+                    nodeId: 'm01-attention',
+                    title: 'Attention',
+                    module: 'M01',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Vector geometry primer'), findsOneWidget);
+      expect(find.text('Attention primer'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('recall_primer_search')),
+        'attention',
+      );
+      await tester.pump();
+
+      expect(find.text('Vector geometry primer'), findsNothing);
+      expect(find.text('Attention primer'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('recall_primer_search')),
+        'M00',
+      );
+      await tester.pump();
+      expect(find.text('Vector geometry primer'), findsOneWidget);
+      expect(find.text('Attention primer'), findsNothing);
+    });
 
     testWidgets('shows a primer reviewed today above the grouped library', (
       tester,

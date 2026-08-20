@@ -159,6 +159,17 @@ void main() {
         });
       }
       expect((projection as TextSpan?)?.style?.fontWeight, FontWeight.w700);
+      expect(
+        tester
+            .widgetList<RichText>(
+              find.descendant(
+                of: find.byType(CardFace),
+                matching: find.byType(RichText),
+              ),
+            )
+            .every((text) => text.textAlign == TextAlign.start),
+        isTrue,
+      );
       expect(tester.takeException(), isNull);
     });
 

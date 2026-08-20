@@ -47,6 +47,11 @@ class CardFace extends StatelessWidget {
   /// otherwise wins drags that start on the text instead of scrolling the page.
   final bool selectable;
 
+  /// Short prompts and formulas read naturally when centered. Paragraph-like
+  /// answers and primers need a stable left edge, so their callers opt into
+  /// [TextAlign.start].
+  final TextAlign textAlign;
+
   const CardFace({
     super.key,
     required this.html,
@@ -56,6 +61,7 @@ class CardFace extends StatelessWidget {
     this.revealCloze = false,
     this.cacheKey,
     this.selectable = true,
+    this.textAlign = TextAlign.center,
   });
 
   /// Math delimiters, as a single alternation with one capture group each:
@@ -100,8 +106,8 @@ class CardFace extends StatelessWidget {
           children: _trimSpans(spans),
         );
         return selectable
-            ? SelectableText.rich(textSpan, textAlign: TextAlign.center)
-            : Text.rich(textSpan, textAlign: TextAlign.center);
+            ? SelectableText.rich(textSpan, textAlign: textAlign)
+            : Text.rich(textSpan, textAlign: textAlign);
       },
     );
   }

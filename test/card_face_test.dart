@@ -14,6 +14,27 @@ Widget _host(Widget child) => MaterialApp(
 
 void main() {
   group('CardFace rich HTML', () {
+    testWidgets('honors start alignment in non-selectable reading mode', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: 'A paragraph should read from a stable left edge.',
+            hasLatex: false,
+            selectable: false,
+            textAlign: TextAlign.start,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+
+      final richText = tester.widget<RichText>(find.byType(RichText));
+      expect(richText.textAlign, TextAlign.start);
+      expect(find.byType(SelectableText), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('renders bold text as a weighted span', (tester) async {
       await tester.pumpWidget(
         _host(

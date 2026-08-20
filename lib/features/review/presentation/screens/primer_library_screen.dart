@@ -46,7 +46,7 @@ class PrimerLibraryScreen extends StatelessWidget {
 }
 
 /// Reusable grouped primer rows for the standalone library and Read tab.
-class PrimerLibraryContent extends StatelessWidget {
+class PrimerLibraryContent extends StatefulWidget {
   final List<ConceptPage> pages;
   final List<ConceptNodeInfo> conceptNodes;
 
@@ -57,10 +57,32 @@ class PrimerLibraryContent extends StatelessWidget {
   });
 
   @override
+  State<PrimerLibraryContent> createState() => _PrimerLibraryContentState();
+}
+
+class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final moduleByNode = {
-      for (final node in conceptNodes) node.nodeId: node.module,
+      for (final node in widget.conceptNodes) node.nodeId: node.module,
     };
+    final query = _query.trim().toLowerCase();
+    final pages = query.isEmpty
+        ? widget.pages
+        : widget.pages.where((page) {
+            final module = moduleByNode[page.nodeId] ?? '';
+            return page.title.toLowerCase().contains(query) ||
+                module.toLowerCase().contains(query);
+          });
     final grouped = <String, List<ConceptPage>>{};
     for (final page in pages) {
       final module = moduleByNode[page.nodeId];
@@ -81,6 +103,46 @@ class PrimerLibraryContent extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            UiSpacing.sm,
+            UiSpacing.sm,
+            UiSpacing.sm,
+            UiSpacing.xs,
+          ),
+          child: TextField(
+            key: const Key('recall_primer_search'),
+            controller: _searchController,
+            autocorrect: false,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              labelText: 'Search primers',
+              hintText: 'Title or module',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() => _query = '');
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+            ),
+            onChanged: (value) => setState(() => _query = value),
+          ),
+        ),
+        if (modules.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(UiSpacing.md),
+            child: Text(
+              query.isEmpty
+                  ? 'No primers available.'
+                  : 'No primers match your search.',
+              style: const TextStyle(color: UiColors.textMuted),
+            ),
+          ),
         for (final module in modules) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(
@@ -104,8 +166,10 @@ class PrimerLibraryContent extends StatelessWidget {
               onTap: () => Navigator.of(context).push(
                 buildRecallPageRoute<void>(
                   nativeIos: recallRunsAsNativeIos(),
-                  builder: (_) =>
-                      PrimerScreen(page: page, conceptNodes: conceptNodes),
+                  builder: (_) => PrimerScreen(
+                    page: page,
+                    conceptNodes: widget.conceptNodes,
+                  ),
                 ),
               ),
             ),
