@@ -1,0 +1,51 @@
+{
+  "schema": "recall.readability-second-pass-summary/v1",
+  "catalog_cards": 1536,
+  "rewritten": 165,
+  "kept": 1371,
+  "factual_holds": 0,
+  "independent_verification": {
+    "rewrites_accepted": 165,
+    "findings_repaired": 12,
+    "factual_holds_resolved": 2,
+    "unresolved_findings": 0
+  },
+  "answer_density": {
+    "before": {
+      "average_characters": 151.9,
+      "average_words": 22.4,
+      "over_240_characters": 133,
+      "over_320_characters": 1,
+      "over_55_words": 0
+    },
+    "after": {
+      "average_characters": 152.0,
+      "average_words": 22.5,
+      "over_240_characters": 118,
+      "over_320_characters": 1,
+      "over_55_words": 0
+    }
+  },
+  "delivery": {
+    "local_active_notes": 1536,
+    "cloud_active_notes": 1536,
+    "missing_in_cloud": 0,
+    "extra_in_cloud": 0,
+    "field_mismatches": 0,
+    "android_version_name": "1.0.4",
+    "android_version_code": 2005,
+    "android_release_build": "passed",
+    "android_signer_continuity": "matched installed emulator build",
+    "android_emulator_update_and_launch": "passed",
+    "phone_size_signed_in_state_renders": "passed with local deterministic data",
+    "android_large_text_sign_in": "passed at 150 percent",
+    "physical_android_install": "not_run_device_offline"
+  },
+  "android_improvements": [
+    "left-aligned paragraph answers and primers",
+    "scroll gestures work when started on card text",
+    "deck count failures are explicit and retryable",
+    "primer library search by title or module",
+    "version continuity above the previously distributed build"
+  ]
+}
