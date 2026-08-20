@@ -1,6 +1,6 @@
 # Recall learning-material golden standard
 
-Version: 2026-08-12. Applies to every flashcard and concept primer in Recall.
+Version: 2026-08-19. Applies to every flashcard and concept primer in Recall.
 
 ## What belongs in Recall
 
@@ -23,33 +23,38 @@ not preserve a polished sentence whose meaning is unclear, false, or unsupported
 3. **Minimum sufficient answer.** Lead with the exact answer. Add at most one short explanation,
    boundary, or memory hook when it prevents a misconception. A primer, not a card back, owns the
    longer explanation.
-4. **Successful effort.** Require genuine recall, derivation, completion, discrimination, or
+4. **Readable in one pass.** Explain what is happening and why in familiar, concrete language
+   before relying on technical labels. Keep the exact term, formula, or qualification, but do not
+   make the learner unpack compressed academic prose or defensive caveat stacks. A strong default
+   is: direct answer, one plain-language mechanism or example, then one short boundary only when it
+   changes what counts as correct. Move further nuance to the primer or another card.
+5. **Successful effort.** Require genuine recall, derivation, completion, discrimination, or
    sentence production. Difficulty is useful only when the target is understandable and the cue
    makes successful retrieval plausible; obscurity is not a virtue.
-5. **Truth with scope.** Label definitions, theorems, heuristics, empirical findings, and design
+6. **Truth with scope.** Label definitions, theorems, heuristics, empirical findings, and design
    conventions accurately. Preserve qualifications. Mathematical cards state dimensions,
    assumptions, signs, and domains whenever omitting them changes the result.
-6. **Currentness and provenance.** Classify each claim as durable, time-bound, or disputed.
+7. **Currentness and provenance.** Classify each claim as durable, time-bound, or disputed.
    Fact-check time-bound and disputed claims against current primary sources. Keep source URLs and
    access dates in the review manifest. Put a source/date on the study face only when the answer
    depends on that source or date. Add `volatile` to claims requiring later re-checks.
-7. **Transfer, not paraphrase count.** A useful cluster may contain a definition, mechanism,
+8. **Transfer, not paraphrase count.** A useful cluster may contain a definition, mechanism,
    calculation/application, contrast, failure mode, and decision rule. Each must require a
    distinct retrieval. More than about eight cards is a review trigger, not an automatic deletion
    rule.
-8. **Control interference.** For confusable ideas, make the cues distinguish them and add one
+9. **Control interference.** For confusable ideas, make the cues distinguish them and add one
    contrast card when that contrast is useful. Avoid several fronts that can all be answered with
    the same vague paragraph.
-9. **Preserve learning continuity.** Keep a good card unchanged. Edit before deleting. Delete only
+10. **Preserve learning continuity.** Keep a good card unchanged. Edit before deleting. Delete only
    an exact semantic duplicate, a false/obsolete low-value claim, or an orphaned fragment whose
    useful target is covered elsewhere. Record the reason and replacement coverage.
-10. **Language rule.** Use English except for the Portuguese language being produced or analyzed.
+11. **Language rule.** Use English except for the Portuguese language being produced or analyzed.
     Portuguese cards should elicit a sentence or contextual choice in Brazilian Portuguese, name
     material accepted alternatives, and avoid bare conjugation-table recitation.
-11. **Formatting.** Use `<br>` for breaks and sparing `<b>` emphasis. Use MathJax delimiters
+12. **Formatting.** Use `<br>` for breaks and sparing `<b>` emphasis. Use MathJax delimiters
     `\( ... \)` and `\[ ... \]` for formulas. No inline styles, emoji, nested wrappers, or
     decorative prose.
-12. **Self-contained grading.** The back must let the learner decide whether the attempted answer
+13. **Self-contained grading.** The back must let the learner decide whether the attempted answer
     was correct. Do not rely on an unstated external diagram, prior card order, or an answer such as
     “it depends” without the controlling condition.
 
@@ -83,9 +88,9 @@ other cards, and aligned with the cluster's vocabulary and conventions.
 
 Score each card from 1 to 5 before and after:
 
-- **5:** valuable, unambiguous, atomic/gradeable, accurate with necessary scope, efficient, and
-  distinct within its cluster.
-- **4:** safe and useful; only minor wording or optional-context improvements remain.
+- **5:** valuable, unambiguous, atomic/gradeable, accurate with necessary scope, understandable on
+  the first reading, efficient, and distinct within its cluster.
+- **4:** safe, useful, and readable; only minor wording or optional-context improvements remain.
 - **3:** learnable but ambiguous, bundled, redundant, weakly scoped, or weakly sourced.
 - **2:** materially confusing, obsolete, misleading, or testing the wrong target.
 - **1:** false, ungradeable, exact duplicate, or not worth retaining.

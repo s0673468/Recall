@@ -1,0 +1,39 @@
+{
+  "schema": "recall.readability-pass-summary/v1",
+  "catalog_cards": 1536,
+  "rewritten": 677,
+  "kept": 859,
+  "factual_holds": 0,
+  "independent_verification": {
+    "rewrites_accepted": 677,
+    "findings_repaired": 14,
+    "unresolved_findings": 0
+  },
+  "answer_density": {
+    "before": {
+      "average_characters": 166.3,
+      "average_words": 23.8,
+      "over_240_characters": 323,
+      "over_320_characters": 50,
+      "over_55_words": 2
+    },
+    "after": {
+      "average_characters": 151.9,
+      "average_words": 22.4,
+      "over_240_characters": 133,
+      "over_320_characters": 1,
+      "over_55_words": 0
+    }
+  },
+  "delivery": {
+    "local_active_notes": 1536,
+    "cloud_active_notes": 1536,
+    "missing_in_cloud": 0,
+    "extra_in_cloud": 0,
+    "field_mismatches": 0,
+    "android_debug_build": "passed",
+    "android_emulator_install_and_launch": "passed",
+    "phone_size_longest_answer_render": "passed",
+    "physical_android_readback": "not_run_device_offline"
+  }
+}
