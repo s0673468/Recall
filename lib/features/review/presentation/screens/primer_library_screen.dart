@@ -110,27 +110,30 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
             UiSpacing.sm,
             UiSpacing.xs,
           ),
-          child: TextField(
-            key: const Key('recall_primer_search'),
-            controller: _searchController,
-            autocorrect: false,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              labelText: 'Search primers',
-              hintText: 'Title or module',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: query.isEmpty
-                  ? null
-                  : IconButton(
-                      tooltip: 'Clear search',
-                      onPressed: () {
-                        _searchController.clear();
-                        setState(() => _query = '');
-                      },
-                      icon: const Icon(Icons.close),
-                    ),
+          child: Material(
+            color: Colors.transparent,
+            child: TextField(
+              key: const Key('recall_primer_search'),
+              controller: _searchController,
+              autocorrect: false,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                labelText: 'Search primers',
+                hintText: 'Title or module',
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() => _query = '');
+                        },
+                        icon: const Icon(Icons.close),
+                      ),
+              ),
+              onChanged: (value) => setState(() => _query = value),
             ),
-            onChanged: (value) => setState(() => _query = value),
           ),
         ),
         if (modules.isEmpty)
