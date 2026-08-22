@@ -367,6 +367,11 @@ class ReviewController extends ChangeNotifier {
   /// behind the daily cap.
   List<ReviewCard> _catchUpSourceQueue = const [];
 
+  /// Decks admitted to the normal all-decks stream by the latest deck read.
+  /// A direct deck selection bypasses this set so optional curricula remain
+  /// fully reviewable when the learner opens them explicitly.
+  Set<int> _automaticDeckIds = const {};
+
   Future<void> load({int? deckId, bool keepReviewed = true}) async {
     _sessionLoaded = true;
     final loadToken = ++_loadSequence;
@@ -405,7 +410,14 @@ class ReviewController extends ChangeNotifier {
       if (snapshot != null && snapshot.queue.isNotEmpty) {
         final pending = await store.outbox();
         if (loadToken != _loadSequence) return; // superseded while reading disk
-        final queue = _withoutPendingReviews(snapshot.queue, pending);
+        final snapshotAutomaticDeckIds = automaticReviewDeckIds(snapshot.decks);
+        _automaticDeckIds = snapshotAutomaticDeckIds;
+        final streamQueue = _queueForSelectedStream(
+          snapshot.queue,
+          deckId: _state.deckFilter,
+          automaticDeckIds: snapshotAutomaticDeckIds,
+        );
+        final queue = _withoutPendingReviews(streamQueue, pending);
         final catchUp = await _buildCatchUpView(
           queue,
           const [],
@@ -453,19 +465,33 @@ class ReviewController extends ChangeNotifier {
       // Independent round-trips — run them together instead of serially.
       // _refreshFsrsSettings never throws (it falls back to defaults).
       final active = _activePrefs;
-      final results = await Future.wait<Object?>([
-        _refreshFsrsSettings(loadToken),
-        api.fetchDecks(),
-        api.fetchQueue(
+      final decksFuture = api.fetchDecks();
+      final queueFuture = () async {
+        final decks = await decksFuture;
+        final includedDeckIds = _state.deckFilter == null
+            ? automaticReviewDeckIds(decks)
+            : null;
+        return api.fetchQueue(
           deckId: _state.deckFilter,
+          includedDeckIds: includedDeckIds,
           newLimit: active.newLimitForDeck(_state.deckFilter),
           order: active.newOrder,
-        ),
-        _fetchGlobalDueSnapshot(),
+        );
+      }();
+      final globalDueFuture = () async {
+        final decks = await decksFuture;
+        return _fetchGlobalDueSnapshot(automaticReviewDeckIds(decks));
+      }();
+      final results = await Future.wait<Object?>([
+        _refreshFsrsSettings(loadToken),
+        decksFuture,
+        queueFuture,
+        globalDueFuture,
         _fetchRecentReviewLog(),
         _fetchReviewActivity(),
       ]);
       final decks = results[1] as List<DeckRow>;
+      _automaticDeckIds = automaticReviewDeckIds(decks);
       final fetchedQueue = results[2] as List<ReviewCard>;
       final fetchedDue = results[3] as ({int count, DateTime updatedAt})?;
       final recentReviews = results[4] as List<ReviewLogEntry>;
@@ -565,7 +591,14 @@ class ReviewController extends ChangeNotifier {
       if (snapshot != null) {
         final pending = await store.outbox();
         if (loadToken != _loadSequence) return; // superseded while reading disk
-        final queue = _withoutPendingReviews(snapshot.queue, pending);
+        final snapshotAutomaticDeckIds = automaticReviewDeckIds(snapshot.decks);
+        _automaticDeckIds = snapshotAutomaticDeckIds;
+        final streamQueue = _queueForSelectedStream(
+          snapshot.queue,
+          deckId: _state.deckFilter,
+          automaticDeckIds: snapshotAutomaticDeckIds,
+        );
+        final queue = _withoutPendingReviews(streamQueue, pending);
         final catchUp = await _buildCatchUpView(
           queue,
           const [],
@@ -621,6 +654,18 @@ class ReviewController extends ChangeNotifier {
         if (!pendingCardIds.contains(card.id)) card,
     ];
   }
+
+  List<ReviewCard> _queueForSelectedStream(
+    List<ReviewCard> queue, {
+    required int? deckId,
+    required Set<int> automaticDeckIds,
+  }) => [
+    for (final card in queue)
+      if (deckId != null
+          ? card.deckId == deckId
+          : automaticDeckIds.contains(card.deckId))
+        card,
+  ];
 
   Future<List<ReviewLogEntry>> _fetchRecentReviewLog() async {
     try {
@@ -778,13 +823,17 @@ class ReviewController extends ChangeNotifier {
 
   /// Widget metadata is useful but optional: an unavailable aggregate RPC
   /// must never turn a healthy study queue into an offline/error screen.
-  Future<({int count, DateTime updatedAt})?> _fetchGlobalDueSnapshot() async {
+  Future<({int count, DateTime updatedAt})?> _fetchGlobalDueSnapshot(
+    Set<int> automaticDeckIds,
+  ) async {
     try {
       final deckCounts = await api.fetchDeckCounts();
       return (
-        count: deckCounts.values.fold<int>(
+        count: deckCounts.entries.fold<int>(
           0,
-          (total, count) => total + count.due,
+          (total, entry) =>
+              total +
+              (automaticDeckIds.contains(entry.key) ? entry.value.due : 0),
         ),
         updatedAt: clock().toUtc(),
       );
@@ -948,6 +997,7 @@ class ReviewController extends ChangeNotifier {
     try {
       final queue = await api.fetchAheadQueue(
         deckId: _state.deckFilter,
+        includedDeckIds: _state.deckFilter == null ? _automaticDeckIds : null,
         order: _activePrefs.newOrder,
       );
       if (loadToken != _loadSequence) return;
@@ -1339,7 +1389,10 @@ class ReviewController extends ChangeNotifier {
 
   bool _countsTowardsGlobalDue(ReviewCard card) {
     final due = card.due;
-    return !card.isNew && due != null && !due.isAfter(clock().toUtc());
+    return _automaticDeckIds.contains(card.deckId) &&
+        !card.isNew &&
+        due != null &&
+        !due.isAfter(clock().toUtc());
   }
 
   /// Single-flight outbox flush. Concurrent callers (rate + app-resume +

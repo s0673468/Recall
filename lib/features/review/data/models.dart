@@ -14,6 +14,24 @@ class DeckRow {
   factory DeckRow.fromJson(Map<String, dynamic> m) => DeckRow.fromMap(m);
 }
 
+/// Whether a deck belongs in the normal automatic-review stream.
+///
+/// Optional curricula live under the explicit `Opt-in::` root and are opened
+/// from the Decks screen instead. `Portuguese` is retained as a compatibility
+/// root until the existing desktop deck is renamed into that namespace.
+/// Matching the complete root keeps technical names such as `ML-extra` and
+/// `Extra Trees` in the automatic stream. The existing `Experimental::` root
+/// is also manual-only because it contains optional research curricula.
+bool isAutomaticReviewDeckName(String name) {
+  final root = name.split('::').first.trim().toLowerCase();
+  return root != 'opt-in' && root != 'portuguese' && root != 'experimental';
+}
+
+Set<int> automaticReviewDeckIds(Iterable<DeckRow> decks) => {
+  for (final deck in decks)
+    if (isAutomaticReviewDeckName(deck.name)) deck.deckId,
+};
+
 /// The lifecycle marker carried by an optional DIR-1b optimizer result.
 ///
 /// Older `fsrs_params` rows have no marker and are treated as applied for

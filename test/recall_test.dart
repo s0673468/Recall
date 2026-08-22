@@ -236,6 +236,7 @@ class _FakeServer {
 class _FakeRecallApi implements RecallApi {
   final List<ReviewCard> queue;
   final FsrsSettings? fsrsSettings;
+  final List<DeckRow> decks;
 
   /// The server this device syncs against. Two fakes sharing one instance is
   /// how a two-device conflict is expressed.
@@ -267,10 +268,12 @@ class _FakeRecallApi implements RecallApi {
   /// Records the (newLimit, order) fetchQueue was last called with.
   int? lastNewLimit;
   NewOrder? lastOrder;
+  Set<int>? lastIncludedDeckIds;
 
   _FakeRecallApi(
     this.queue, {
     this.fsrsSettings,
+    this.decks = const [DeckRow(deckId: 1, name: 'ML')],
     _FakeServer? server,
     this.deviceLabel = 'test',
   }) : server = server ?? _FakeServer() {
@@ -320,34 +323,38 @@ class _FakeRecallApi implements RecallApi {
   Stream<AuthState> get onAuthStateChange => const Stream<AuthState>.empty();
 
   @override
-  Future<List<DeckRow>> fetchDecks() async => const [
-    DeckRow(deckId: 1, name: 'Portuguese'),
-  ];
+  Future<List<DeckRow>> fetchDecks() async => decks;
 
   @override
   Future<List<ReviewCard>> fetchQueue({
     int? deckId,
+    Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
   }) async {
     queueFetches++;
     lastNewLimit = newLimit;
     lastOrder = order;
+    lastIncludedDeckIds = includedDeckIds;
     await beforeQueue?.call();
     return [
       for (final c in queue)
-        if (deckId == null || c.deckId == deckId) _project(c),
+        if ((deckId == null || c.deckId == deckId) &&
+            (includedDeckIds == null || includedDeckIds.contains(c.deckId)))
+          _project(c),
     ];
   }
 
   @override
   Future<List<ReviewCard>> fetchContentRevalidationQueue({
     int? deckId,
+    Set<int>? includedDeckIds,
     int limit = RecallApi.contentRevalidationBatchSize,
   }) async => [
     for (final card in queue)
       if (card.contentRevalidationPending &&
-          (deckId == null || card.deckId == deckId))
+          (deckId == null || card.deckId == deckId) &&
+          (includedDeckIds == null || includedDeckIds.contains(card.deckId)))
         _project(card),
   ].take(limit).toList();
 
@@ -359,6 +366,7 @@ class _FakeRecallApi implements RecallApi {
   @override
   Future<List<ReviewCard>> fetchAheadQueue({
     int? deckId,
+    Set<int>? includedDeckIds,
     Duration horizon = const Duration(hours: 24),
     int limit = 20,
     NewOrder order = NewOrder.oldestFirst,
@@ -367,7 +375,9 @@ class _FakeRecallApi implements RecallApi {
     final cutoff = DateTime.now().toUtc().add(horizon);
     final all = [
       for (final c in queue)
-        if (deckId == null || c.deckId == deckId) _project(c),
+        if ((deckId == null || c.deckId == deckId) &&
+            (includedDeckIds == null || includedDeckIds.contains(c.deckId)))
+          _project(c),
     ];
     final ahead = [
       for (final c in all)
@@ -880,6 +890,53 @@ void main() {
   });
 
   group('ReviewController', () {
+    test(
+      'automatic review excludes opt-in decks but direct deck study includes them',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final now = DateTime.utc(2026, 8, 22, 12);
+        final api = _FakeRecallApi(
+          [
+            _card(id: 1, deckId: 1),
+            _card(
+              id: 2,
+              deckId: 2,
+              state: 2,
+              reps: 4,
+              due: now.subtract(const Duration(hours: 1)),
+              lastReview: now.subtract(const Duration(days: 7)),
+            ),
+          ],
+          decks: const [
+            DeckRow(deckId: 1, name: 'ML'),
+            DeckRow(deckId: 2, name: 'Portuguese'),
+          ],
+        )..deckCounts = const {1: (due: 4, neu: 3), 2: (due: 9, neu: 8)};
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+          clock: () => now,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+
+        expect(controller.state.queue.map((card) => card.id), [1]);
+        expect(api.lastIncludedDeckIds, {1});
+        expect(controller.state.globalDueCount, 4);
+
+        await controller.selectDeck(2);
+
+        expect(controller.state.queue.map((card) => card.id), [2]);
+        expect(api.lastIncludedDeckIds, isNull);
+
+        controller.flip();
+        await controller.rate(Rating.good);
+        expect(controller.state.globalDueCount, 4);
+      },
+    );
+
     test('material revalidation keeps FSRS history and prunes offline snapshot '
         'after success', () async {
       SharedPreferences.setMockInitialValues({});
@@ -1150,9 +1207,13 @@ void main() {
       () async {
         SharedPreferences.setMockInitialValues({});
         final now = DateTime.utc(2026, 7, 13, 12);
-        final api = _FakeRecallApi([
-          _card(state: 2, due: now.subtract(const Duration(hours: 1))),
-        ])..deckCounts = const {1: (due: 3, neu: 2), 2: (due: 4, neu: 9)};
+        final api = _FakeRecallApi(
+          [_card(state: 2, due: now.subtract(const Duration(hours: 1)))],
+          decks: const [
+            DeckRow(deckId: 1, name: 'ML'),
+            DeckRow(deckId: 2, name: 'Math'),
+          ],
+        )..deckCounts = const {1: (due: 3, neu: 2), 2: (due: 4, neu: 9)};
         final controller = ReviewController(
           api: api,
           engine: FsrsEngine(),
@@ -1329,7 +1390,7 @@ void main() {
       final store = LocalReviewStore();
       final now = DateTime.utc(2026, 7, 13, 12);
       await store.saveSnapshot(
-        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+        decks: const [DeckRow(deckId: 1, name: 'ML')],
         queue: [_card(state: 2, due: now.subtract(const Duration(hours: 1)))],
         globalDueCount: 10,
         globalDueUpdatedAt: now.subtract(const Duration(minutes: 30)),
@@ -1548,7 +1609,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final store = LocalReviewStore();
       await store.saveSnapshot(
-        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+        decks: const [DeckRow(deckId: 1, name: 'ML')],
         queue: [_card(id: 42, front: 'cached card')],
       );
       final api = _FakeRecallApi([_card(id: 1, front: 'fresh card')]);
@@ -1575,6 +1636,39 @@ void main() {
       expect(controller.state.queue.single.id, 1);
       expect(controller.state.offline, isFalse);
     });
+
+    test(
+      'offline snapshot cannot leak an opt-in card into automatic review',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final store = LocalReviewStore();
+        await store.saveSnapshot(
+          decks: const [
+            DeckRow(deckId: 1, name: 'ML'),
+            DeckRow(deckId: 2, name: 'Portuguese'),
+          ],
+          queue: [_card(id: 1, deckId: 1), _card(id: 2, deckId: 2)],
+        );
+        final api = _FakeRecallApi(
+          const [],
+          decks: const [
+            DeckRow(deckId: 1, name: 'ML'),
+            DeckRow(deckId: 2, name: 'Portuguese'),
+          ],
+        )..beforeQueue = () async => throw StateError('offline');
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        await controller.load();
+
+        expect(controller.state.queue.map((card) => card.id), [1]);
+        expect(controller.state.offline, isTrue);
+      },
+    );
 
     test('offline restart never repaints cards with pending reviews', () async {
       SharedPreferences.setMockInitialValues({});
@@ -1690,7 +1784,7 @@ void main() {
         final cards = [_card(id: 1), _card(id: 2)];
         final store = LocalReviewStore();
         await store.saveSnapshot(
-          decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+          decks: const [DeckRow(deckId: 1, name: 'ML')],
           queue: cards,
         );
         final api = _FakeRecallApi(cards);
@@ -1717,7 +1811,7 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       final store = LocalReviewStore();
       await store.saveSnapshot(
-        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+        decks: const [DeckRow(deckId: 1, name: 'ML')],
         queue: [_card(id: 42, front: 'cached card')],
       );
       final api = _FakeRecallApi([_card(id: 1, front: 'fresh card')]);
@@ -1743,7 +1837,7 @@ void main() {
       // Queue and place preserved; only metadata refreshed.
       expect(controller.state.queue.single.id, 42);
       expect(controller.state.showBack, isTrue);
-      expect(controller.state.decks.single.name, 'Portuguese');
+      expect(controller.state.decks.single.name, 'ML');
     });
 
     test(
@@ -2043,6 +2137,7 @@ void main() {
       await controller.load();
       await tester.pumpWidget(
         MaterialApp(
+          theme: buildRecallTheme(),
           home: Scaffold(
             body: StudyScreen(controller: controller, api: api, store: store),
           ),
@@ -2778,6 +2873,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: buildRecallTheme(),
           home: Scaffold(
             body: DecksScreen(
               controller: controller,
@@ -2793,7 +2889,7 @@ void main() {
       expect(find.text('Retry'), findsOneWidget);
       expect(find.textContaining('0 due'), findsNothing);
       expect(
-        find.byKey(const Key('recall_deck_row_All decks')),
+        find.byKey(const Key('recall_deck_row_Automatic review')),
         findsOneWidget,
       );
     });
@@ -2802,8 +2898,14 @@ void main() {
       tester,
     ) async {
       SharedPreferences.setMockInitialValues({});
-      final api = _FakeRecallApi([_card()])
-        ..deckCounts = const {1: (due: 3, neu: 2)};
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final api = _FakeRecallApi(
+        [_card()],
+        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+      )..deckCounts = const {1: (due: 3, neu: 2)};
       final controller = ReviewController(
         api: api,
         engine: FsrsEngine(),
@@ -2814,6 +2916,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
+          theme: buildRecallTheme(),
           home: Scaffold(
             body: DecksScreen(
               controller: controller,
@@ -2826,15 +2929,16 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        find.byKey(const Key('recall_deck_row_All decks')),
+        find.byKey(const Key('recall_deck_row_Automatic review')),
         findsOneWidget,
       );
       expect(
         find.byKey(const Key('recall_deck_row_Portuguese')),
         findsOneWidget,
       );
-      expect(find.text('3 due'), findsNWidgets(2));
-      expect(find.text('2 new'), findsNWidgets(2));
+      expect(find.text('3 due'), findsOneWidget);
+      expect(find.text('2 new'), findsOneWidget);
+      expect(find.text('Open manually'), findsOneWidget);
       final row = tester.widget<Container>(
         find.byKey(const Key('recall_deck_row_Portuguese')),
       );
@@ -2845,8 +2949,10 @@ void main() {
 
     testWidgets('reload keeps the state update synchronous', (tester) async {
       SharedPreferences.setMockInitialValues({});
-      final api = _FakeRecallApi([_card()])
-        ..deckCounts = const {1: (due: 3, neu: 2)};
+      final api = _FakeRecallApi(
+        [_card()],
+        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
+      )..deckCounts = const {1: (due: 3, neu: 2)};
       final controller = ReviewController(
         api: api,
         engine: FsrsEngine(),
@@ -2872,7 +2978,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      expect(find.text('3 due'), findsNWidgets(2));
+      expect(find.text('3 due'), findsOneWidget);
     });
   });
 
