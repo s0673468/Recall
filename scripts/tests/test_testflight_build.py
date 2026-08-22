@@ -641,7 +641,6 @@ class TestFlightReadbackTests(unittest.TestCase):
                 "filter[app]": "app-recall",
                 "filter[name]": "German",
                 "filter[isInternalGroup]": "true",
-                "filter[builds]": "build-52",
                 "limit": 200,
             }
         )
@@ -681,6 +680,23 @@ class TestFlightReadbackTests(unittest.TestCase):
                         ]
                     }
                 ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [
+                    {
+                        "data": [
+                            {"type": "betaTesters", "id": "tester-german"}
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/builds?limit=200",
+                ): [
+                    {"data": [{"type": "builds", "id": "build-52"}]}
+                ],
             }
         )
         output = io.StringIO()
@@ -696,8 +712,12 @@ class TestFlightReadbackTests(unittest.TestCase):
             "build-52",
         )
         self.assertIn(
-            "VALID and attached to internal group German",
+            "VALID, attached to internal group German, and available to 1 "
+            "eligible tester",
             output.getvalue(),
+        )
+        self.assertFalse(
+            any("filter%5Bbuilds%5D" in path for _, path, _ in client.calls)
         )
 
     def test_times_out_when_german_group_is_not_attached(self) -> None:
@@ -706,7 +726,6 @@ class TestFlightReadbackTests(unittest.TestCase):
                 "filter[app]": "app-recall",
                 "filter[name]": "German",
                 "filter[isInternalGroup]": "true",
-                "filter[builds]": "build-53",
                 "limit": 200,
             }
         )
@@ -732,7 +751,35 @@ class TestFlightReadbackTests(unittest.TestCase):
                         ]
                     }
                 ],
-                ("GET", f"/betaGroups?{group_query}"): [{"data": []}],
+                ("GET", f"/betaGroups?{group_query}"): [
+                    {
+                        "data": [
+                            {
+                                "type": "betaGroups",
+                                "id": "group-german",
+                                "attributes": {
+                                    "name": "German",
+                                    "isInternalGroup": True,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [
+                    {
+                        "data": [
+                            {"type": "betaTesters", "id": "tester-german"}
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/builds?limit=200",
+                ): [{"data": []}],
             }
         )
         clock = iter([0.0, 2.0])
@@ -749,6 +796,71 @@ class TestFlightReadbackTests(unittest.TestCase):
                 sleep=lambda _seconds: None,
                 timeout=1,
                 monotonic=lambda: next(clock),
+            )
+
+    def test_rejects_an_internal_group_without_an_eligible_tester(self) -> None:
+        group_query = urllib.parse.urlencode(
+            {
+                "filter[app]": "app-recall",
+                "filter[name]": "German",
+                "filter[isInternalGroup]": "true",
+                "limit": 200,
+            }
+        )
+        client = FakeClient(
+            {
+                (
+                    "GET",
+                    "/ciBuildRuns/run-54/builds?"
+                    "fields[builds]=version,processingState,"
+                    "usesNonExemptEncryption",
+                ): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": "build-54",
+                                "attributes": {
+                                    "version": "54",
+                                    "processingState": "VALID",
+                                    "usesNonExemptEncryption": False,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                ("GET", f"/betaGroups?{group_query}"): [
+                    {
+                        "data": [
+                            {
+                                "type": "betaGroups",
+                                "id": "group-german",
+                                "attributes": {
+                                    "name": "German",
+                                    "isInternalGroup": True,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [{"data": []}],
+            }
+        )
+
+        with self.assertRaisesRegex(
+            delivery.DeliveryError,
+            "has no eligible testers",
+        ):
+            delivery.poll_testflight(
+                client,
+                run_id="run-54",
+                target=self.target(),
+                output=io.StringIO(),
+                sleep=lambda _seconds: None,
             )
 
 

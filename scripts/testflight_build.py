@@ -774,7 +774,6 @@ def poll_testflight(
                         "filter[app]": target.app_id,
                         "filter[name]": TESTFLIGHT_GROUP,
                         "filter[isInternalGroup]": "true",
-                        "filter[builds]": build_id,
                         "limit": 200,
                     }
                 )
@@ -803,11 +802,57 @@ def poll_testflight(
                         f"multiple internal TestFlight groups are named "
                         f"{TESTFLIGHT_GROUP!r}"
                     )
-                if len(exact_groups) == 1:
+                if not exact_groups:
+                    raise DeliveryError(
+                        f"internal TestFlight group {TESTFLIGHT_GROUP!r} "
+                        "is missing"
+                    )
+                group_id = exact_groups[0].get("id")
+                if not isinstance(group_id, str) or not group_id:
+                    raise DeliveryError(
+                        "App Store Connect returned an invalid TestFlight "
+                        "beta group"
+                    )
+                testers = _resource_list(
+                    _polling_get(
+                        client,
+                        f"/betaGroups/{group_id}/relationships/betaTesters?"
+                        "limit=200",
+                        deadline=deadline,
+                        timeout_message=timeout_message,
+                        sleep=sleep,
+                        poll_interval=poll_interval,
+                        monotonic=monotonic,
+                    ),
+                    "TestFlight beta testers",
+                )
+                if not testers:
+                    raise DeliveryError(
+                        f"internal TestFlight group {TESTFLIGHT_GROUP!r} has "
+                        "no eligible testers"
+                    )
+                linked_builds = _resource_list(
+                    _polling_get(
+                        client,
+                        f"/betaGroups/{group_id}/relationships/builds?"
+                        "limit=200",
+                        deadline=deadline,
+                        timeout_message=timeout_message,
+                        sleep=sleep,
+                        poll_interval=poll_interval,
+                        monotonic=monotonic,
+                    ),
+                    "TestFlight group builds",
+                )
+                if any(item.get("id") == build_id for item in linked_builds):
                     version = attributes.get("version") or build_id
+                    tester_label = (
+                        "tester" if len(testers) == 1 else "testers"
+                    )
                     print(
-                        f"TestFlight build {version} is VALID and attached to "
-                        f"internal group {TESTFLIGHT_GROUP}.",
+                        f"TestFlight build {version} is VALID, attached to "
+                        f"internal group {TESTFLIGHT_GROUP}, and available "
+                        f"to {len(testers)} eligible {tester_label}.",
                         file=output,
                     )
                     return build_id

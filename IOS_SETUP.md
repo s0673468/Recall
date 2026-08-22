@@ -44,53 +44,38 @@ flutter build ipa --release \
 
 ## Personal TestFlight delivery
 
-**Xcode Cloud is not configured for this standalone Recall repository yet.**
-The cached workflow named `Recall Internal TestFlight` belongs to the Track
-product from the old Health monorepo. It cannot ship this repository.
+The standalone Recall repository has a configured manual Xcode Cloud workflow
+named **Recall Internal TestFlight**. It archives the protected `main` branch
+for app `com.german.ankiReview` and delivers successful builds to the internal
+**German** group.
 
-Until the checklist below is complete, use the direct-install fallback:
+### Validated Apple setup
 
-```bash
-flutter build ios --release \
-  --dart-define-from-file=config/supabase.local.json
-xcrun devicectl device install app \
-  --device <id> build/ios/iphoneos/Runner.app
-```
-
-Use `xcrun devicectl list devices` to find the paired iPhone ID.
-The paid-team project includes the widget and App Group. A free Personal Team
-cannot sign that configuration directly. For that temporary fallback, work on a
-disposable copy under `/tmp` or `/private/tmp` and run
-`ruby ios/tool/prepare_personal_team_build.rb ios/Runner.xcodeproj` before the
-Flutter build; see `ios/RecallWidget/README.md`.
-
-### One-time Apple setup
-
-- [ ] Use the paid Apple Developer Program team. Register the main App ID
+- [x] Use the paid Apple Developer Program team. Register the main App ID
   `com.german.ankiReview` and the widget App ID
   `com.german.ankiReview.RecallWidget` if needed. Register the App Group
   `group.com.german.ankiReview` and attach it to both App IDs. Create the iOS
   app record named **Recall** for the main App ID.
-- [ ] Under TestFlight, create the internal group **German**. Add the Account
+- [x] Under TestFlight, create the internal group **German**. Add the Account
   Holder as its only tester.
-- [ ] Open `ios/Runner.xcworkspace` in Xcode. Choose Integrate > Create
+- [x] Open `ios/Runner.xcworkspace` in Xcode. Choose Integrate > Create
   Workflow. Select product `Runner` and the shared `Runner` scheme. Grant Xcode
   Cloud access to `github.com/s0673468/Recall`.
-- [ ] Name the workflow **Recall Internal TestFlight**. Keep its start
+- [x] Name the workflow **Recall Internal TestFlight**. Keep its start
   condition manual.
-- [ ] Add one iOS Archive action with deployment preparation **Internal
+- [x] Add one iOS Archive action with deployment preparation **Internal
   Testing Only**. Add a TestFlight Internal Testing post-action for the
   **German** group.
-- [ ] Add `RECALL_SUPABASE_CONFIG_B64` to the workflow environment and mark it
+- [x] Add `RECALL_SUPABASE_CONFIG_B64` to the workflow environment and mark it
   **Secret**. Its decoded JSON must contain only `SUPABASE_URL` and the public
   `SUPABASE_ANON_KEY`.
-- [ ] Keep `ITSAppUsesNonExemptEncryption` set to `false` in
+- [x] Keep `ITSAppUsesNonExemptEncryption` set to `false` in
   `ios/Runner/Info.plist`. This source-controlled declaration prevents each
   build from stopping at a manual export-compliance prompt.
-- [ ] In App Store Connect > Users and Access > Integrations, create a Team API
+- [x] In App Store Connect > Users and Access > Integrations, create a Team API
   key with Developer access. Download it once. Save it as
   `~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8`.
-- [ ] Set `ASC_KEY_ID` to that key's Key ID. Set `ASC_ISSUER_ID` to the Issuer
+- [x] Set `ASC_KEY_ID` to that key's Key ID. Set `ASC_ISSUER_ID` to the Issuer
   ID shown on the Integrations page. Keep both values out of the repository.
   Keep the private key owner-owned and mode `0600`.
 
@@ -109,8 +94,7 @@ with Xcode Cloud's unique `CI_BUILD_NUMBER`.
 the Xcode action. Xcode Cloud's environment is temporary, and the runtime
 config is compiled through Dart defines rather than bundled as an asset.
 
-After the checklist is complete, shipping and waiting for the cloud build is
-one command:
+Shipping and waiting for the cloud build is one command:
 
 ```bash
 python3 scripts/testflight_build.py
@@ -124,8 +108,8 @@ It rechecks the branch tip immediately before starting the build.
 Completion means more than a green Xcode Cloud archive. The script verifies the
 cloud run used the gated commit, waits for App Store Connect to mark the build
 `VALID`, confirms the non-exempt-encryption declaration, and proves that the
-build is attached to the internal **German** group. Use `--workflow <name>` or
-`--branch <name>` to override either default.
+build is attached to the internal **German** group with at least one eligible
+tester. Use `--workflow <name>` or `--branch <name>` to override either default.
 
 Before shipping, confirm setup without starting a build:
 
