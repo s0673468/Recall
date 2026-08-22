@@ -955,6 +955,29 @@ class TestFlightReadbackTests(unittest.TestCase):
             "build-55",
         )
 
+    def test_group_build_pagination_cannot_finish_after_the_deadline(self) -> None:
+        path = "/betaGroups/group-german/relationships/builds?limit=200"
+        client = FakeClient(
+            {
+                ("GET", path): [
+                    {"data": [{"type": "builds", "id": "build-late"}]}
+                ]
+            }
+        )
+        clock = iter([0.0, 2.0])
+
+        with self.assertRaisesRegex(delivery.DeliveryError, "delivery timeout"):
+            delivery._paged_resource_list(
+                client,
+                path,
+                resource_name="TestFlight group builds",
+                deadline=1,
+                timeout_message="delivery timeout",
+                sleep=lambda _seconds: None,
+                poll_interval=0.25,
+                monotonic=lambda: next(clock),
+            )
+
 
 class MissingPrerequisiteTests(unittest.TestCase):
     def assert_single_error(

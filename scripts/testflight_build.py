@@ -476,6 +476,8 @@ def _paged_resource_list(
     seen: set[str] = set()
     next_path: str | None = path
     while next_path is not None:
+        if monotonic() >= deadline:
+            raise DeliveryError(timeout_message)
         if next_path in seen:
             raise DeliveryError(
                 f"App Store Connect returned cyclic {resource_name} pagination"
@@ -490,6 +492,8 @@ def _paged_resource_list(
             poll_interval=poll_interval,
             monotonic=monotonic,
         )
+        if monotonic() >= deadline:
+            raise DeliveryError(timeout_message)
         resources.extend(_resource_list(payload, resource_name))
         links = payload.get("links")
         raw_next = links.get("next") if isinstance(links, Mapping) else None
