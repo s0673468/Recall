@@ -1,11 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
-    show scopedPanelColor;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../../../core/platform/recall_platform.dart';
 import '../../../../core/widgets/recall_motion.dart';
+import '../../../../core/widgets/recall_surfaces.dart';
 import '../../application/backlog_catch_up.dart';
 import '../../application/review_controller.dart';
 import '../../data/local_review_store.dart';
@@ -137,83 +136,101 @@ class StudyScreen extends StatelessWidget {
           fontWeight: FontWeight.w400,
         );
 
-        return RecallMotionSwap(
-          child: Column(
-            key: ValueKey('study_card_${card.id}'),
-            children: [
-              AnimatedSize(
-                duration: RecallMotion.duration(context),
-                curve: RecallMotion.curve,
-                alignment: Alignment.topCenter,
-                child: RecallMotionSwap(
-                  duration: RecallMotion.quick,
-                  child: s.catchUp.shouldOffer
-                      ? _CatchUpBanner(
-                          key: const ValueKey('study_catch_up_offer'),
-                          plan: s.catchUp,
-                          onStart: controller.startCatchUp,
-                          onShowAll: controller.showAll,
-                        )
-                      : s.catchUp.isActive
-                      ? _CatchUpProgress(
-                          key: const ValueKey('study_catch_up_progress'),
-                          plan: s.catchUp,
-                        )
-                      : const SizedBox(key: ValueKey('study_catch_up_hidden')),
-                ),
-              ),
-              _Header(
-                due: s.dueRemaining,
-                neu: s.newRemaining,
-                session: s.reviewedThisSession,
-                offline: s.offline,
-                pendingSync: s.pendingSync,
-                onUndo: undoable ? controller.undo : null,
-                // Flagging is independent of the review flow and of undo — it
-                // only reports the current card, so it's live whenever a card
-                // is on screen (the header only renders with a current card).
-                onFlag: () => _showFlagSheet(
-                  context,
-                  controller,
-                  nativeIos: nativeIos ?? recallRunsAsNativeIos(),
-                ),
-                onOpenSettings: onOpenSettings,
-              ),
-              const SizedBox(height: UiSpacing.sm),
-              Expanded(
-                child: _CardPanel(
-                  card: card,
-                  showBack: s.showBack,
-                  style: style,
-                ),
-              ),
-              const SizedBox(height: UiSpacing.md),
-              RecallMotionSwap(
-                duration: RecallMotion.quick,
-                travel: 0,
-                child: s.showBack
-                    ? RatingBar(
-                        key: const ValueKey('study_rating_bar'),
-                        preview: controller.previewCurrent(),
-                        previewAt: controller.previewCurrentAt,
-                        onRate: controller.rate,
-                      )
-                    : SizedBox(
-                        key: const ValueKey('study_show_answer'),
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: controller.flip,
-                          style: FilledButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: UiSpacing.md,
-                            ),
-                          ),
-                          child: const Text('Show answer'),
-                        ),
-                      ),
-              ),
-            ],
+        final catchUp = AnimatedSize(
+          duration: RecallMotion.duration(context),
+          curve: RecallMotion.curve,
+          alignment: Alignment.topCenter,
+          child: RecallMotionSwap(
+            duration: RecallMotion.quick,
+            child: s.catchUp.shouldOffer
+                ? _CatchUpBanner(
+                    key: const ValueKey('study_catch_up_offer'),
+                    plan: s.catchUp,
+                    onStart: controller.startCatchUp,
+                    onShowAll: controller.showAll,
+                  )
+                : s.catchUp.isActive
+                ? _CatchUpProgress(
+                    key: const ValueKey('study_catch_up_progress'),
+                    plan: s.catchUp,
+                  )
+                : const SizedBox(key: ValueKey('study_catch_up_hidden')),
           ),
+        );
+        final header = _Header(
+          due: s.dueRemaining,
+          neu: s.newRemaining,
+          session: s.reviewedThisSession,
+          offline: s.offline,
+          pendingSync: s.pendingSync,
+          onUndo: undoable ? controller.undo : null,
+          // Flagging is independent of the review flow and of undo — it only
+          // reports the current card, so it is live whenever a card is shown.
+          onFlag: () => _showFlagSheet(
+            context,
+            controller,
+            nativeIos: nativeIos ?? recallRunsAsNativeIos(),
+          ),
+          onOpenSettings: onOpenSettings,
+        );
+        final cardPanel = _CardPanel(
+          card: card,
+          showBack: s.showBack,
+          style: style,
+        );
+        final actions = RecallMotionSwap(
+          duration: RecallMotion.quick,
+          travel: 0,
+          child: s.showBack
+              ? RatingBar(
+                  key: const ValueKey('study_rating_bar'),
+                  preview: controller.previewCurrent(),
+                  previewAt: controller.previewCurrentAt,
+                  onRate: controller.rate,
+                )
+              : SizedBox(
+                  key: const ValueKey('study_show_answer'),
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: controller.flip,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: UiSpacing.md,
+                      ),
+                    ),
+                    child: const Text('Show answer'),
+                  ),
+                ),
+        );
+        final accessibleScroll =
+            MediaQuery.textScalerOf(context).scale(1) > 1.3;
+
+        return RecallMotionSwap(
+          child: accessibleScroll
+              ? ListView(
+                  key: ValueKey('study_card_${card.id}'),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [
+                    catchUp,
+                    header,
+                    const SizedBox(height: UiSpacing.sm),
+                    SizedBox(height: 260, child: cardPanel),
+                    const SizedBox(height: UiSpacing.md),
+                    actions,
+                    const SizedBox(height: UiSpacing.sm),
+                  ],
+                )
+              : Column(
+                  key: ValueKey('study_card_${card.id}'),
+                  children: [
+                    catchUp,
+                    header,
+                    const SizedBox(height: UiSpacing.sm),
+                    Expanded(child: cardPanel),
+                    const SizedBox(height: UiSpacing.md),
+                    actions,
+                  ],
+                ),
         );
       },
     );
@@ -234,50 +251,46 @@ class _CatchUpBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      key: const Key('recall_catch_up_banner'),
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: UiSpacing.sm),
-      padding: const EdgeInsets.all(UiSpacing.md),
-      decoration: BoxDecoration(
-        color: UiColors.panel,
-        borderRadius: BorderRadius.circular(UiRadii.group),
-        border: Border.all(color: UiColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Large due backlog',
-            style: TextStyle(
-              color: UiColors.textPrimary,
-              fontWeight: FontWeight.w700,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: UiSpacing.sm),
+      child: RecallSectionCard(
+        key: const Key('recall_catch_up_banner'),
+        padding: const EdgeInsets.all(UiSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Large due backlog',
+              style: TextStyle(
+                color: UiColors.textPrimary,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-          ),
-          const SizedBox(height: UiSpacing.xs),
-          Text(
-            '${plan.dueCount} due cards · ${plan.planLine}',
-            style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
-          ),
-          const SizedBox(height: UiSpacing.sm),
-          Row(
-            children: [
-              Expanded(
-                child: FilledButton(
-                  onPressed: onStart,
-                  child: const Text('Start catch-up'),
+            const SizedBox(height: UiSpacing.xs),
+            Text(
+              '${plan.dueCount} due cards · ${plan.planLine}',
+              style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+            ),
+            const SizedBox(height: UiSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: onStart,
+                    child: const Text('Start catch-up'),
+                  ),
                 ),
-              ),
-              const SizedBox(width: UiSpacing.sm),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: onShowAll,
-                  child: const Text('Show all'),
+                const SizedBox(width: UiSpacing.sm),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: onShowAll,
+                    child: const Text('Show all'),
+                  ),
                 ),
-              ),
-            ],
-          ),
-        ],
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -333,20 +346,19 @@ class _Header extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text(
-              'STUDY',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: UiColors.textMuted,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.4,
-              ),
+              'Study',
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontSize: 24),
             ),
             if (offline || pendingSync > 0) ...[
               const SizedBox(width: UiSpacing.sm),
-              Text(
-                offline ? 'offline' : '$pendingSync syncing',
-                style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+              RecallStatusPill(
+                label: offline ? 'Offline' : '$pendingSync syncing',
+                icon: offline ? Icons.cloud_off_outlined : Icons.sync,
               ),
             ],
             const Spacer(),
@@ -382,55 +394,25 @@ class _Header extends StatelessWidget {
               ),
           ],
         ),
-        Container(
+        RecallMetricStrip(
           key: const Key('recall_queue_strip'),
-          decoration: const BoxDecoration(
-            border: Border(
-              top: BorderSide(color: UiColors.borderSubtle),
-              bottom: BorderSide(color: UiColors.borderSubtle),
+          metrics: [
+            RecallMetric(
+              'Due',
+              '$due',
+              color: due > 0 ? UiColors.primary : null,
             ),
-          ),
-          child: Row(
-            children: [
-              Expanded(child: _readout('Due', '$due')),
-              const SizedBox(
-                height: 34,
-                child: VerticalDivider(width: 1, color: UiColors.borderSubtle),
-              ),
-              Expanded(child: _readout('New', '$neu')),
-              const SizedBox(
-                height: 34,
-                child: VerticalDivider(width: 1, color: UiColors.borderSubtle),
-              ),
-              Expanded(child: _readout('Done', '$session')),
-            ],
-          ),
+            RecallMetric(
+              'New',
+              '$neu',
+              color: neu > 0 ? UiColors.chartBlue : null,
+            ),
+            RecallMetric('Done', '$session'),
+          ],
         ),
       ],
     );
   }
-
-  Widget _readout(String label, String value) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            color: UiColors.textPrimary,
-            fontFamily: 'monospace',
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        Text(
-          label,
-          style: const TextStyle(color: UiColors.textMuted, fontSize: 11),
-        ),
-      ],
-    ),
-  );
 }
 
 class _CardPanel extends StatelessWidget {
@@ -449,17 +431,21 @@ class _CardPanel extends StatelessWidget {
       key: const Key('recall_study_card'),
       width: double.infinity,
       padding: const EdgeInsets.all(UiSpacing.lg),
-      decoration: BoxDecoration(
-        color: scopedPanelColor(context),
-        borderRadius: BorderRadius.circular(UiRadii.group),
-        border: Border.all(color: UiColors.border),
-      ),
+      decoration: buildHeroPanelDecoration(),
       child: SingleChildScrollView(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: UiSpacing.sm),
+            Text(
+              'Question',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: UiColors.primary,
+                fontSize: 10,
+                letterSpacing: 1.1,
+              ),
+            ),
+            const SizedBox(height: UiSpacing.md),
             CardFace(
               html: card.front,
               hasLatex: card.hasLatex,
@@ -489,6 +475,16 @@ class _CardPanel extends StatelessWidget {
                             ),
                             child: Divider(color: UiColors.border, height: 1),
                           ),
+                          Text(
+                            'Answer',
+                            style: Theme.of(context).textTheme.labelLarge
+                                ?.copyWith(
+                                  color: UiColors.textMuted,
+                                  fontSize: 10,
+                                  letterSpacing: 1.1,
+                                ),
+                          ),
+                          const SizedBox(height: UiSpacing.md),
                           CardFace(
                             html: card.back,
                             hasLatex: card.hasLatex,
@@ -676,33 +672,38 @@ class _Message extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(UiSpacing.lg),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 56, color: UiColors.primary),
-            const SizedBox(height: UiSpacing.md),
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: UiSpacing.sm),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: UiColors.textMuted),
-            ),
-            if (action != null) ...[
-              const SizedBox(height: UiSpacing.lg),
-              FilledButton(onPressed: onAction, child: Text(action!)),
-            ],
-            if (secondaryAction != null) ...[
-              const SizedBox(height: UiSpacing.sm),
-              TextButton(
-                onPressed: onSecondaryAction,
-                child: Text(
-                  secondaryAction!,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: RecallHeroPanel(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, size: 38, color: UiColors.primary),
+                const SizedBox(height: UiSpacing.md),
+                Text(title, style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: UiSpacing.sm),
+                Text(
+                  subtitle,
                   style: const TextStyle(color: UiColors.textMuted),
                 ),
-              ),
-            ],
-          ],
+                if (action != null) ...[
+                  const SizedBox(height: UiSpacing.lg),
+                  FilledButton(onPressed: onAction, child: Text(action!)),
+                ],
+                if (secondaryAction != null) ...[
+                  const SizedBox(height: UiSpacing.sm),
+                  TextButton(
+                    onPressed: onSecondaryAction,
+                    child: Text(
+                      secondaryAction!,
+                      style: const TextStyle(color: UiColors.textMuted),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );

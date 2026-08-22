@@ -5,6 +5,7 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
 
 import '../../../../core/widgets/recall_motion.dart';
 import '../../../../core/widgets/recall_page_header.dart';
+import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
 import '../../application/stats_service.dart';
@@ -105,64 +106,20 @@ class StatsScreenState extends State<StatsScreen> {
         ),
         children: [
           const RecallPageHeader(
+            eyebrow: 'Progress',
             title: 'Stats',
-            subtitle: 'Your workload, consistency, and retention at a glance.',
-          ),
-          const SizedBox(height: UiSpacing.md),
-
-          // Session tiles (live from the controller).
-          ListenableBuilder(
-            listenable: widget.controller,
-            builder: (context, _) {
-              final s = widget.controller.state;
-              return _metricStrip(const Key('recall_stats_session_strip'), [
-                ('This session', '${s.reviewedThisSession}'),
-                ('Due now', '${s.dueRemaining}'),
-                ('New left', '${s.newRemaining}'),
-              ]);
-            },
-          ),
-          const SizedBox(height: UiSpacing.sm),
-
-          // Recall / streak / count tiles (from the review log).
-          _asyncSection<List<ReviewLogEntry>>(
-            future: _reviewLog,
-            builder: (log) {
-              final t = StatsService.tileStats(log, today: today);
-              return _metricStrip(const Key('recall_stats_history_strip'), [
-                ('Recall · 30d', t.recall),
-                ('Streak', '${t.streak}${t.streak == 1 ? ' day' : ' days'}'),
-                ('Reviews · 30d', '${t.reviews}'),
-              ]);
-            },
+            subtitle: 'What is sticking, what is due, and where to focus next.',
           ),
           const SizedBox(height: UiSpacing.lg),
 
-          // Heatmap.
-          _asyncSection<List<ReviewLogEntry>>(
-            future: _reviewLog,
-            label: 'heatmap',
-            builder: (log) => ReviewHeatmap(
-              days: StatsService.buildHeatmap(log, today: today),
-            ),
-          ),
-          const SizedBox(height: UiSpacing.lg),
-
-          // Due forecast (independent query).
-          _asyncSection<List<DateTime>>(
-            future: _dueDates,
-            label: 'forecast',
-            builder: (due) => DueForecastChart(
-              days: StatsService.buildForecast(due, today: today),
-            ),
-          ),
-          const SizedBox(height: UiSpacing.lg),
-
-          // True retention (shares the review-log fetch, own window toggle).
+          // Retention is the one screen hero: the most meaningful learning
+          // outcome, ahead of workload and activity telemetry.
           _asyncSection<List<ReviewLogEntry>>(
             future: _reviewLog,
             label: 'retention',
             builder: (log) => RetentionPanel(
+              key: const Key('recall_retention_hero'),
+              hero: true,
               summary: StatsService.computeRetention(
                 log,
                 now: today,
@@ -172,7 +129,102 @@ class StatsScreenState extends State<StatsScreen> {
               onWindowChanged: (w) => setState(() => _retentionWindow = w),
             ),
           ),
-          const SizedBox(height: UiSpacing.lg),
+          const SizedBox(height: UiSpacing.xl),
+
+          const RecallSectionLabel(
+            title: 'Current session',
+            subtitle: 'The work immediately in front of you.',
+          ),
+          const SizedBox(height: UiSpacing.sm),
+
+          // Session tiles (live from the controller).
+          ListenableBuilder(
+            listenable: widget.controller,
+            builder: (context, _) {
+              final s = widget.controller.state;
+              return RecallMetricStrip(
+                key: const Key('recall_stats_session_strip'),
+                metrics: [
+                  RecallMetric('Reviewed', '${s.reviewedThisSession}'),
+                  RecallMetric(
+                    'Due now',
+                    '${s.dueRemaining}',
+                    color: s.dueRemaining > 0 ? UiColors.primary : null,
+                  ),
+                  RecallMetric(
+                    'New left',
+                    '${s.newRemaining}',
+                    color: s.newRemaining > 0 ? UiColors.chartBlue : null,
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: UiSpacing.xl),
+
+          const RecallSectionLabel(
+            title: 'Last 30 days',
+            subtitle: 'Recall quality and consistency over time.',
+          ),
+          const SizedBox(height: UiSpacing.sm),
+
+          // Recall / streak / count tiles (from the review log).
+          _asyncSection<List<ReviewLogEntry>>(
+            future: _reviewLog,
+            builder: (log) {
+              final t = StatsService.tileStats(log, today: today);
+              return RecallMetricStrip(
+                key: const Key('recall_stats_history_strip'),
+                metrics: [
+                  RecallMetric('Recall', t.recall),
+                  RecallMetric(
+                    'Streak',
+                    '${t.streak}${t.streak == 1 ? ' day' : ' days'}',
+                  ),
+                  RecallMetric('Reviews', '${t.reviews}'),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: UiSpacing.xl),
+
+          const RecallSectionLabel(
+            title: 'Activity',
+            subtitle: 'Your review rhythm across the last 26 weeks.',
+          ),
+          const SizedBox(height: UiSpacing.sm),
+
+          // Heatmap.
+          _asyncSection<List<ReviewLogEntry>>(
+            future: _reviewLog,
+            label: 'heatmap',
+            builder: (log) => ReviewHeatmap(
+              days: StatsService.buildHeatmap(log, today: today),
+            ),
+          ),
+          const SizedBox(height: UiSpacing.xl),
+
+          const RecallSectionLabel(
+            title: 'Work ahead',
+            subtitle: 'The review load scheduled over the next two weeks.',
+          ),
+          const SizedBox(height: UiSpacing.sm),
+
+          // Due forecast (independent query).
+          _asyncSection<List<DateTime>>(
+            future: _dueDates,
+            label: 'forecast',
+            builder: (due) => DueForecastChart(
+              days: StatsService.buildForecast(due, today: today),
+            ),
+          ),
+          const SizedBox(height: UiSpacing.xl),
+
+          const RecallSectionLabel(
+            title: 'Concepts to reinforce',
+            subtitle: 'Weak signals surfaced from your recent answers.',
+          ),
+          const SizedBox(height: UiSpacing.sm),
 
           // Concepts — METIS node retention (weakest-first Again-rate).
           _asyncSection<_ConceptInputs>(
@@ -247,61 +299,4 @@ class StatsScreenState extends State<StatsScreen> {
       },
     );
   }
-
-  Widget _metricStrip(Key key, List<(String, String)> metrics) => Container(
-    key: key,
-    decoration: const BoxDecoration(
-      border: Border(
-        top: BorderSide(color: UiColors.borderSubtle),
-        bottom: BorderSide(color: UiColors.borderSubtle),
-      ),
-    ),
-    child: IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < metrics.length; i++) ...[
-            if (i > 0)
-              const SizedBox(
-                width: 1,
-                child: ColoredBox(color: UiColors.borderSubtle),
-              ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: UiSpacing.md,
-                  horizontal: UiSpacing.xs,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    FittedBox(
-                      child: Text(
-                        metrics[i].$2,
-                        style: const TextStyle(
-                          color: UiColors.textPrimary,
-                          fontFamily: 'monospace',
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      metrics[i].$1,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: UiColors.textMuted,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    ),
-  );
 }

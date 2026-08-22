@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/platform/recall_platform.dart';
 import '../../../../core/widgets/recall_motion.dart';
 import '../../../../core/widgets/recall_page_header.dart';
+import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/remediation_service.dart';
@@ -124,14 +125,16 @@ class ReadScreenState extends State<ReadScreen> {
             padding: const EdgeInsets.all(UiSpacing.md),
             children: const [
               RecallPageHeader(
+                eyebrow: 'Learning',
                 title: 'Read',
                 subtitle:
                     'Revisit today’s concepts or browse the full library.',
               ),
               SizedBox(height: UiSpacing.xl),
-              Text(
-                'Could not load reading.',
-                style: TextStyle(color: UiColors.textMuted),
+              RecallStatePanel(
+                icon: Icons.cloud_off_outlined,
+                title: 'Could not load reading',
+                message: 'Pull down to try loading your primers again.',
               ),
             ],
           );
@@ -160,42 +163,86 @@ class ReadScreenState extends State<ReadScreen> {
             ),
             children: [
               const RecallPageHeader(
+                eyebrow: 'Learning',
                 title: 'Read',
                 subtitle:
                     'Revisit today’s concepts or browse the full library.',
               ),
               const SizedBox(height: UiSpacing.lg),
-              Text('Today', style: Theme.of(context).textTheme.titleMedium),
+              RecallHeroPanel(
+                key: const Key('recall_read_today_hero'),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 38,
+                          height: 38,
+                          decoration: BoxDecoration(
+                            color: UiColors.primaryMuted,
+                            borderRadius: BorderRadius.circular(UiRadius.md),
+                          ),
+                          child: const Icon(
+                            Icons.auto_stories_outlined,
+                            size: 20,
+                            color: UiColors.primary,
+                          ),
+                        ),
+                        const SizedBox(width: UiSpacing.md),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Today’s reading',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              Text(
+                                'Concepts connected to what you reviewed.',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: UiColors.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: UiSpacing.md),
+                    if (rereadPages.isNotEmpty)
+                      RemediationRows(
+                        pages: rereadPages,
+                        onTap: (page) => unawaited(
+                          _openPrimer(
+                            page,
+                            data.conceptNodes,
+                            remediation: true,
+                          ),
+                        ),
+                      ),
+                    if (rereadPages.isNotEmpty && todayPages.isNotEmpty)
+                      const SizedBox(height: UiSpacing.md),
+                    if (todayPages.isEmpty && rereadPages.isEmpty)
+                      const Text(
+                        'Nothing studied yet today. Your full library is ready below.',
+                        style: TextStyle(color: UiColors.textMuted),
+                      ),
+                    if (todayPages.isNotEmpty)
+                      for (final page in todayPages)
+                        PrimerRow(
+                          page: page,
+                          onTap: () =>
+                              unawaited(_openPrimer(page, data.conceptNodes)),
+                        ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: UiSpacing.xl),
+              const RecallSectionLabel(
+                title: 'Primer library',
+                subtitle: 'Browse the complete concept collection.',
+              ),
               const SizedBox(height: UiSpacing.xs),
-              if (rereadPages.isNotEmpty)
-                RemediationRows(
-                  pages: rereadPages,
-                  onTap: (page) => unawaited(
-                    _openPrimer(page, data.conceptNodes, remediation: true),
-                  ),
-                ),
-              if (rereadPages.isNotEmpty && todayPages.isNotEmpty)
-                const SizedBox(height: UiSpacing.md),
-              if (todayPages.isEmpty && rereadPages.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: UiSpacing.sm,
-                    vertical: UiSpacing.md,
-                  ),
-                  child: Text(
-                    'Nothing studied yet today — the library is below.',
-                    style: TextStyle(color: UiColors.textMuted),
-                  ),
-                ),
-              if (todayPages.isNotEmpty)
-                for (final page in todayPages)
-                  PrimerRow(
-                    page: page,
-                    onTap: () =>
-                        unawaited(_openPrimer(page, data.conceptNodes)),
-                  ),
-              const SizedBox(height: UiSpacing.lg),
-              Text('Library', style: Theme.of(context).textTheme.titleMedium),
               PrimerLibraryContent(
                 pages: data.conceptPages,
                 conceptNodes: data.conceptNodes,

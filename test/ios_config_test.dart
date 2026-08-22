@@ -11,6 +11,10 @@ void main() {
   final widgetSource = File('ios/RecallWidget/RecallWidget.swift');
   final widgetInfo = File('ios/RecallWidget/Info.plist');
   final widgetPlugin = File('ios/Runner/RecallWidgetPlugin.swift');
+  final launchStoryboard = File(
+    'ios/Runner/Base.lproj/LaunchScreen.storyboard',
+  );
+  final mainStoryboard = File('ios/Runner/Base.lproj/Main.storyboard');
   final icon = File(
     'ios/Runner/Assets.xcassets/AppIcon.appiconset/'
     'Icon-App-1024x1024@1x.png',
@@ -59,6 +63,15 @@ void main() {
     expect(data.getUint32(20, Endian.big), 1024);
     expect(bytes[24], 8, reason: 'The source icon should use 8-bit channels.');
     expect(bytes[25], 2, reason: 'PNG color type 2 is opaque RGB.');
+  });
+
+  test('iOS launch and Flutter root share the graphite canvas', () {
+    for (final storyboard in [launchStoryboard, mainStoryboard]) {
+      final xml = storyboard.readAsStringSync();
+      expect(xml, contains('red="0.06666666667"'));
+      expect(xml, contains('green="0.07450980392"'));
+      expect(xml, contains('blue="0.09803921569"'));
+    }
   });
 
   test('Recall ships an aggregate-only WidgetKit due-count extension', () {

@@ -5,6 +5,7 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
 
 import '../core/widgets/recall_widget_bridge.dart';
 import '../core/widgets/recall_motion.dart';
+import '../core/widgets/recall_surfaces.dart';
 import '../navigation/app_shell.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_dependencies.dart';
@@ -143,7 +144,29 @@ class _Loading extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
     body: Container(
       decoration: const BoxDecoration(gradient: scaffoldGradient),
-      child: const Center(child: CircularProgressIndicator()),
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_stories_rounded, color: UiColors.primary, size: 38),
+            SizedBox(height: UiSpacing.md),
+            Text(
+              'Recall',
+              style: TextStyle(
+                color: UiColors.textPrimary,
+                fontSize: 24,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            SizedBox(height: UiSpacing.lg),
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ],
+        ),
+      ),
     ),
   );
 }
@@ -161,27 +184,15 @@ class _StartupError extends StatelessWidget {
             padding: const EdgeInsets.all(UiSpacing.lg),
             child: Center(
               child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.error_outline,
-                      color: UiColors.danger,
-                      size: 48,
-                    ),
-                    const SizedBox(height: UiSpacing.md),
-                    Text(
-                      'Recall failed to start',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: UiSpacing.sm),
-                    const Text(
-                      'Check your connection and restart Recall. Your offline '
-                      'study data has not been cleared.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: UiColors.textMuted),
-                    ),
-                  ],
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: const RecallStatePanel(
+                    icon: Icons.error_outline,
+                    title: 'Recall failed to start',
+                    message:
+                        'Check your connection and restart Recall. Your offline '
+                        'study data has not been cleared.',
+                  ),
                 ),
               ),
             ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
 import '../widgets/card_face.dart';
@@ -36,7 +37,7 @@ class PrimerScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: UiColors.canvas,
       appBar: AppBar(
-        backgroundColor: UiColors.sidebar,
+        backgroundColor: UiColors.canvas,
         foregroundColor: UiColors.textPrimary,
         elevation: 0,
         title: const Text('Primer'),
@@ -44,71 +45,74 @@ class PrimerScreen extends StatelessWidget {
       body: ColoredBox(
         color: UiColors.canvas,
         child: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(UiSpacing.lg),
-            children: [
-              Text(
-                page.title,
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  color: UiColors.textPrimary,
-                ),
-              ),
-              if (module != null && module.isNotEmpty) ...[
-                const SizedBox(height: UiSpacing.sm),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: _ModuleChip(module: module),
-                ),
-              ],
-              const SizedBox(height: UiSpacing.lg),
-              Container(
-                width: double.infinity,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 760),
+              child: ListView(
                 padding: const EdgeInsets.all(UiSpacing.lg),
-                decoration: BoxDecoration(
-                  color: UiColors.panel,
-                  borderRadius: BorderRadius.circular(UiRadii.group),
-                  border: Border.all(color: UiColors.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (page.figureSvg case final figureSvg?)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: UiSpacing.lg),
-                        // The scroll view gives no height bound, and an
-                        // unbounded SvgPicture asserts in layout — pin the
-                        // figure to the spec's ~600x360 canvas ratio and let
-                        // BoxFit.contain letterbox any other aspect.
-                        child: AspectRatio(
-                          aspectRatio: 600 / 360,
-                          child: SvgPicture.string(
-                            figureSvg,
-                            key: ValueKey(
-                              'recall_primer_figure_${page.nodeId}',
-                            ),
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                          ),
-                        ),
-                      ),
-                    CardFace(
-                      html: page.bodyHtml,
-                      hasLatex: true,
-                      revealCloze: true,
-                      selectable: false,
-                      textAlign: TextAlign.start,
-                      // Unlike card faces, a primer body can change server-side
-                      // within a session (rows are updated in place), so the
-                      // memo key must vary with content, not just identity.
-                      cacheKey:
-                          'primer:${page.nodeId}:${page.bodyHtml.hashCode}',
-                      style: bodyStyle,
+                children: [
+                  if (module != null && module.isNotEmpty) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: _ModuleChip(module: module),
                     ),
+                    const SizedBox(height: UiSpacing.sm),
                   ],
-                ),
+                  Text(
+                    page.title,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: UiColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: UiSpacing.lg),
+                  RecallHeroPanel(
+                    key: const Key('recall_primer_hero'),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (page.figureSvg case final figureSvg?)
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              bottom: UiSpacing.lg,
+                            ),
+                            // The scroll view gives no height bound, and an
+                            // unbounded SvgPicture asserts in layout — pin the
+                            // figure to the spec's ~600x360 canvas ratio and let
+                            // BoxFit.contain letterbox any other aspect.
+                            child: AspectRatio(
+                              aspectRatio: 600 / 360,
+                              child: SvgPicture.string(
+                                figureSvg,
+                                key: ValueKey(
+                                  'recall_primer_figure_${page.nodeId}',
+                                ),
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, _, _) =>
+                                    const SizedBox.shrink(),
+                              ),
+                            ),
+                          ),
+                        CardFace(
+                          html: page.bodyHtml,
+                          hasLatex: true,
+                          revealCloze: true,
+                          selectable: false,
+                          textAlign: TextAlign.start,
+                          // Unlike card faces, a primer body can change server-side
+                          // within a session (rows are updated in place), so the
+                          // memo key must vary with content, not just identity.
+                          cacheKey:
+                              'primer:${page.nodeId}:${page.bodyHtml.hashCode}',
+                          style: bodyStyle,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: UiSpacing.xl),
+                ],
               ),
-              const SizedBox(height: UiSpacing.xl),
-            ],
+            ),
           ),
         ),
       ),
@@ -128,12 +132,16 @@ class _ModuleChip extends StatelessWidget {
       vertical: UiSpacing.xs,
     ),
     decoration: BoxDecoration(
-      color: UiColors.secondary,
+      color: UiColors.primaryMuted,
       borderRadius: BorderRadius.circular(UiRadii.pill),
     ),
     child: Text(
       module,
-      style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+      style: const TextStyle(
+        color: UiColors.primary,
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+      ),
     ),
   );
 }

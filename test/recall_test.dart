@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating, defaultParameters;
@@ -23,6 +25,7 @@ import 'package:health_anki_flutter/features/review/data/review_replay.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
 import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
+import 'package:health_anki_flutter/features/settings/presentation/screens/settings_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/decks_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/primer_library_screen.dart';
@@ -2682,6 +2685,12 @@ void main() {
 
       expect(find.byKey(const Key('recall_queue_strip')), findsOneWidget);
       expect(find.byKey(const Key('recall_study_card')), findsOneWidget);
+      final studyCard = tester.widget<Container>(
+        find.byKey(const Key('recall_study_card')),
+      );
+      final studyDecoration = studyCard.decoration! as BoxDecoration;
+      expect(studyDecoration.gradient, isNotNull);
+      expect(find.text('Question'), findsOneWidget);
       expect(find.text('Tap to reveal'), findsNothing);
       expect(find.text('Show answer'), findsOneWidget);
       expect(find.textContaining('eramos'), findsNothing);
@@ -2894,58 +2903,60 @@ void main() {
       );
     });
 
-    testWidgets('renders decks as flat ruled rows with explicit counts', (
-      tester,
-    ) async {
-      SharedPreferences.setMockInitialValues({});
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final api = _FakeRecallApi(
-        [_card()],
-        decks: const [DeckRow(deckId: 1, name: 'Portuguese')],
-      )..deckCounts = const {1: (due: 3, neu: 2)};
-      final controller = ReviewController(
-        api: api,
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-      );
-      addTearDown(controller.dispose);
-      await controller.load();
+    testWidgets(
+      'renders one review hero and separates core from opt-in decks',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final api = _FakeRecallApi(
+          [_card()],
+          decks: const [
+            DeckRow(deckId: 1, name: 'ML'),
+            DeckRow(deckId: 2, name: 'Portuguese'),
+          ],
+        )..deckCounts = const {1: (due: 4, neu: 1), 2: (due: 3, neu: 2)};
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+        await controller.load();
 
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildRecallTheme(),
-          home: Scaffold(
-            body: DecksScreen(
-              controller: controller,
-              api: api,
-              onStudyDeck: (_) {},
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildRecallTheme(),
+            home: Scaffold(
+              body: DecksScreen(
+                controller: controller,
+                api: api,
+                onStudyDeck: (_) {},
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const Key('recall_deck_row_Automatic review')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('recall_deck_row_Portuguese')),
-        findsOneWidget,
-      );
-      expect(find.text('3 due'), findsOneWidget);
-      expect(find.text('2 new'), findsOneWidget);
-      expect(find.text('Open manually'), findsOneWidget);
-      final row = tester.widget<Container>(
-        find.byKey(const Key('recall_deck_row_Portuguese')),
-      );
-      final decoration = row.decoration! as BoxDecoration;
-      expect(decoration.color, isNull);
-      expect(decoration.border, isA<Border>());
-    });
+        expect(
+          find.byKey(const Key('recall_deck_row_Automatic review')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const Key('recall_deck_hero')), findsOneWidget);
+        expect(find.text('Core decks'), findsOneWidget);
+        expect(find.text('Optional curricula'), findsOneWidget);
+        expect(
+          find.byKey(const Key('recall_deck_row_Portuguese')),
+          findsOneWidget,
+        );
+        expect(find.text('3 due'), findsOneWidget);
+        expect(find.text('2 new'), findsOneWidget);
+        expect(find.text('Open manually'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
     testWidgets('reload keeps the state update synchronous', (tester) async {
       SharedPreferences.setMockInitialValues({});
@@ -3011,11 +3022,37 @@ void main() {
         find.byKey(const Key('recall_stats_session_strip')),
         findsOneWidget,
       );
+      expect(find.byKey(const Key('recall_retention_hero')), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.byKey(const Key('recall_retention_hero'))).dy,
+        lessThan(
+          tester
+              .getTopLeft(find.byKey(const Key('recall_stats_session_strip')))
+              .dy,
+        ),
+      );
+
+      final scrollable = find.byType(Scrollable).first;
+      await tester.dragUntilVisible(
+        find.byKey(const Key('recall_stats_history_strip')),
+        scrollable,
+        const Offset(0, -260),
+      );
       expect(
         find.byKey(const Key('recall_stats_history_strip')),
         findsOneWidget,
       );
+      await tester.dragUntilVisible(
+        find.byType(ReviewHeatmap),
+        scrollable,
+        const Offset(0, -260),
+      );
       expect(find.byType(ReviewHeatmap), findsOneWidget);
+      await tester.dragUntilVisible(
+        find.text('Could not load forecast.'),
+        scrollable,
+        const Offset(0, -260),
+      );
       expect(find.text('Could not load forecast.'), findsOneWidget);
     });
   });
@@ -3131,12 +3168,14 @@ void main() {
       await pumpShell(tester, api);
 
       expect(find.byType(ReadScreen), findsOneWidget);
-      expect(find.text('Today'), findsOneWidget);
-      expect(find.text('Library'), findsOneWidget);
+      expect(find.text('Today’s reading'), findsOneWidget);
+      expect(find.text('Primer library'), findsOneWidget);
       expect(find.text('Vector geometry primer'), findsNWidgets(2));
       expect(find.text('M00'), findsOneWidget);
       expect(
-        find.text('Nothing studied yet today — the library is below.'),
+        find.text(
+          'Nothing studied yet today. Your full library is ready below.',
+        ),
         findsNothing,
       );
     });
@@ -3165,7 +3204,9 @@ void main() {
       await pumpShell(tester, api);
 
       expect(
-        find.text('Nothing studied yet today — the library is below.'),
+        find.text(
+          'Nothing studied yet today. Your full library is ready below.',
+        ),
         findsOneWidget,
       );
       expect(find.text('Vector geometry primer'), findsOneWidget);
@@ -4649,6 +4690,258 @@ void main() {
       expect(find.textContaining('20 cards/day'), findsOneWidget);
     });
   });
+
+  group('Visual benchmark surfaces', () {
+    testWidgets('core iOS and Android surfaces render without overflow', (
+      tester,
+    ) async {
+      await _loadVisualFonts();
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.now();
+      final page = ConceptPage(
+        nodeId: 'm00-vector-geometry',
+        title: 'Vector geometry primer',
+        bodyHtml:
+            r'Projection measures one vector along another: \(p = \frac{x \cdot v}{v \cdot v}v\).',
+        updatedAt: now,
+      );
+      final api =
+          _FakeRecallApi(
+              [
+                _card(
+                  id: 7001,
+                  deckId: 1,
+                  state: 2,
+                  front: r'Why does attention divide by \(\sqrt{d_k}\)?',
+                  back:
+                      r'It keeps dot-product variance stable as the key dimension grows.<br><br>Formula: \(\operatorname{softmax}(QK^T / \sqrt{d_k})V\).',
+                  hasLatex: true,
+                ),
+              ],
+              decks: const [
+                DeckRow(deckId: 1, name: 'ML'),
+                DeckRow(deckId: 2, name: 'Math'),
+                DeckRow(deckId: 3, name: 'Portuguese'),
+              ],
+            )
+            ..deckCounts = const {
+              1: (due: 18, neu: 3),
+              2: (due: 11, neu: 2),
+              3: (due: 7, neu: 5),
+            }
+            ..reviewLog = [
+              for (var day = 0; day < 24; day++)
+                ReviewLogEntry(
+                  guid: 'g$day',
+                  at: now.subtract(Duration(days: day)),
+                  rating: day % 5 == 0 ? 1 : 3,
+                ),
+            ]
+            ..dueDates = [
+              for (var day = 0; day < 14; day++)
+                for (var card = 0; card < (day % 5) + 1; card++)
+                  now.add(Duration(days: day)),
+            ]
+            ..noteTags = const {'g0': 'node::m00-vector-geometry'}
+            ..conceptNodes = const [
+              ConceptNodeInfo(
+                nodeId: 'm00-vector-geometry',
+                title: 'Vector geometry',
+                module: 'M00',
+              ),
+            ]
+            ..conceptPages = [page];
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      final prefs = RecallPrefsController(api: api);
+      addTearDown(controller.dispose);
+      addTearDown(prefs.dispose);
+      await controller.load();
+      await prefs.load();
+
+      Future<void> pumpShell({
+        required Size size,
+        required bool nativeIos,
+        required bool nativeAndroid,
+        required EdgeInsets padding,
+        TextScaler textScaler = TextScaler.noScaling,
+      }) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildRecallTheme(),
+            home: RepaintBoundary(
+              key: const Key('visual_benchmark_boundary'),
+              child: MediaQuery(
+                data: MediaQueryData(
+                  size: size,
+                  padding: padding,
+                  textScaler: textScaler,
+                ),
+                child: AppShell(
+                  key: ValueKey(
+                    'visual-shell-$size-$nativeIos-$nativeAndroid-$textScaler',
+                  ),
+                  controller: controller,
+                  api: api,
+                  prefs: prefs,
+                  linkSource: _SilentLinkSource(),
+                  nativeIos: nativeIos,
+                  nativeAndroid: nativeAndroid,
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await pumpShell(
+        size: const Size(411, 914),
+        nativeIos: false,
+        nativeAndroid: true,
+        padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
+      );
+      if (await _captureVisual(tester, 'android-study-question')) return;
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      if (await _captureVisual(tester, 'android-study-answer')) return;
+
+      await tester.tap(find.text('Decks').last);
+      await tester.pumpAndSettle();
+      if (await _captureVisual(tester, 'android-decks')) return;
+      await tester.tap(find.text('Stats').last);
+      await tester.pumpAndSettle();
+      if (await _captureVisual(tester, 'android-stats')) return;
+      await tester.tap(find.text('Read').last);
+      await tester.pumpAndSettle();
+      if (await _captureVisual(tester, 'android-read')) return;
+
+      await pumpShell(
+        size: const Size(402, 874),
+        nativeIos: true,
+        nativeAndroid: false,
+        padding: const EdgeInsets.fromLTRB(0, 59, 0, 34),
+      );
+      if (await _captureVisual(tester, 'ios-study-answer')) return;
+
+      await pumpShell(
+        size: const Size(900, 600),
+        nativeIos: false,
+        nativeAndroid: true,
+        padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
+      );
+      expect(find.byType(NavigationRail), findsOneWidget);
+      if (await _captureVisual(tester, 'android-wide-rail')) return;
+
+      await pumpShell(
+        size: const Size(320, 640),
+        nativeIos: false,
+        nativeAndroid: true,
+        padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
+        textScaler: const TextScaler.linear(2),
+      );
+      expect(tester.takeException(), isNull);
+      if (await _captureVisual(tester, 'android-large-text')) return;
+      await tester.ensureVisible(find.text('Good'));
+      await tester.pumpAndSettle();
+      expect(find.text('Good').hitTestable(), findsOneWidget);
+
+      tester.view.physicalSize = const Size(402, 874);
+      tester.view.devicePixelRatio = 1;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          home: RepaintBoundary(
+            key: const Key('visual_benchmark_boundary'),
+            child: MediaQuery(
+              data: const MediaQueryData(
+                size: Size(402, 874),
+                padding: EdgeInsets.fromLTRB(0, 59, 0, 34),
+              ),
+              child: SettingsScreen(
+                prefs: prefs,
+                controller: controller,
+                nativeIos: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await _captureVisual(tester, 'ios-settings');
+    });
+  });
+}
+
+Future<void> _loadVisualFonts() async {
+  final outfit = FontLoader('Outfit')
+    ..addFont(rootBundle.load('assets/fonts/Outfit-Regular.ttf'))
+    ..addFont(rootBundle.load('assets/fonts/Outfit-Medium.ttf'))
+    ..addFont(rootBundle.load('assets/fonts/Outfit-SemiBold.ttf'))
+    ..addFont(rootBundle.load('assets/fonts/Outfit-Bold.ttf'));
+  final dmSans = FontLoader('DM Sans')
+    ..addFont(rootBundle.load('assets/fonts/DMSans-Regular.ttf'))
+    ..addFont(rootBundle.load('assets/fonts/DMSans-Medium.ttf'))
+    ..addFont(rootBundle.load('assets/fonts/DMSans-SemiBold.ttf'))
+    ..addFont(rootBundle.load('assets/fonts/DMSans-Bold.ttf'));
+  final readingSerif = FontLoader('Georgia')
+    ..addFont(rootBundle.load('assets/fonts/DMSans-Regular.ttf'));
+  FontLoader katex(String family, List<String> files) {
+    final loader = FontLoader(family);
+    for (final file in files) {
+      loader.addFont(
+        rootBundle.load(
+          'packages/flutter_math_fork/lib/katex_fonts/fonts/$file',
+        ),
+      );
+    }
+    return loader;
+  }
+
+  final mathFonts = [
+    katex('KaTeX_Main', const [
+      'KaTeX_Main-Regular.ttf',
+      'KaTeX_Main-Italic.ttf',
+      'KaTeX_Main-Bold.ttf',
+      'KaTeX_Main-BoldItalic.ttf',
+    ]),
+    katex('KaTeX_Math', const [
+      'KaTeX_Math-Italic.ttf',
+      'KaTeX_Math-BoldItalic.ttf',
+    ]),
+    katex('KaTeX_AMS', const ['KaTeX_AMS-Regular.ttf']),
+    for (var size = 1; size <= 4; size++)
+      katex('KaTeX_Size$size', ['KaTeX_Size$size-Regular.ttf']),
+  ];
+  await Future.wait([
+    outfit.load(),
+    dmSans.load(),
+    readingSerif.load(),
+    for (final font in mathFonts) font.load(),
+  ]);
+}
+
+Future<bool> _captureVisual(WidgetTester tester, String name) async {
+  final output = Platform.environment['RECALL_VISUAL_OUTPUT'];
+  final scene = Platform.environment['RECALL_VISUAL_SCENE'];
+  if (output == null || output.isEmpty || scene != name) return false;
+  Directory(output).createSync(recursive: true);
+  await expectLater(
+    find.byKey(const Key('visual_benchmark_boundary')),
+    matchesGoldenFile(Uri.file('$output/$name.png')),
+  );
+  return true;
 }
 
 List<ReviewCard> _catchUpQueue(int count) {
