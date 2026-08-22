@@ -641,7 +641,6 @@ class TestFlightReadbackTests(unittest.TestCase):
                 "filter[app]": "app-recall",
                 "filter[name]": "German",
                 "filter[isInternalGroup]": "true",
-                "filter[builds]": "build-52",
                 "limit": 200,
             }
         )
@@ -681,6 +680,23 @@ class TestFlightReadbackTests(unittest.TestCase):
                         ]
                     }
                 ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [
+                    {
+                        "data": [
+                            {"type": "betaTesters", "id": "tester-german"}
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/builds?limit=200",
+                ): [
+                    {"data": [{"type": "builds", "id": "build-52"}]}
+                ],
             }
         )
         output = io.StringIO()
@@ -696,8 +712,12 @@ class TestFlightReadbackTests(unittest.TestCase):
             "build-52",
         )
         self.assertIn(
-            "VALID and attached to internal group German",
+            "VALID, attached to internal group German, and available to 1 "
+            "eligible tester",
             output.getvalue(),
+        )
+        self.assertFalse(
+            any("filter%5Bbuilds%5D" in path for _, path, _ in client.calls)
         )
 
     def test_times_out_when_german_group_is_not_attached(self) -> None:
@@ -706,7 +726,6 @@ class TestFlightReadbackTests(unittest.TestCase):
                 "filter[app]": "app-recall",
                 "filter[name]": "German",
                 "filter[isInternalGroup]": "true",
-                "filter[builds]": "build-53",
                 "limit": 200,
             }
         )
@@ -732,7 +751,35 @@ class TestFlightReadbackTests(unittest.TestCase):
                         ]
                     }
                 ],
-                ("GET", f"/betaGroups?{group_query}"): [{"data": []}],
+                ("GET", f"/betaGroups?{group_query}"): [
+                    {
+                        "data": [
+                            {
+                                "type": "betaGroups",
+                                "id": "group-german",
+                                "attributes": {
+                                    "name": "German",
+                                    "isInternalGroup": True,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [
+                    {
+                        "data": [
+                            {"type": "betaTesters", "id": "tester-german"}
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/builds?limit=200",
+                ): [{"data": []}],
             }
         )
         clock = iter([0.0, 2.0])
@@ -748,6 +795,186 @@ class TestFlightReadbackTests(unittest.TestCase):
                 output=io.StringIO(),
                 sleep=lambda _seconds: None,
                 timeout=1,
+                monotonic=lambda: next(clock),
+            )
+
+    def test_rejects_an_internal_group_without_an_eligible_tester(self) -> None:
+        group_query = urllib.parse.urlencode(
+            {
+                "filter[app]": "app-recall",
+                "filter[name]": "German",
+                "filter[isInternalGroup]": "true",
+                "limit": 200,
+            }
+        )
+        client = FakeClient(
+            {
+                (
+                    "GET",
+                    "/ciBuildRuns/run-54/builds?"
+                    "fields[builds]=version,processingState,"
+                    "usesNonExemptEncryption",
+                ): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": "build-54",
+                                "attributes": {
+                                    "version": "54",
+                                    "processingState": "VALID",
+                                    "usesNonExemptEncryption": False,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                ("GET", f"/betaGroups?{group_query}"): [
+                    {
+                        "data": [
+                            {
+                                "type": "betaGroups",
+                                "id": "group-german",
+                                "attributes": {
+                                    "name": "German",
+                                    "isInternalGroup": True,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [{"data": []}],
+            }
+        )
+
+        with self.assertRaisesRegex(
+            delivery.DeliveryError,
+            "has no eligible testers",
+        ):
+            delivery.poll_testflight(
+                client,
+                run_id="run-54",
+                target=self.target(),
+                output=io.StringIO(),
+                sleep=lambda _seconds: None,
+            )
+
+    def test_follows_group_build_pagination_to_find_the_current_build(self) -> None:
+        group_query = urllib.parse.urlencode(
+            {
+                "filter[app]": "app-recall",
+                "filter[name]": "German",
+                "filter[isInternalGroup]": "true",
+                "limit": 200,
+            }
+        )
+        next_page = (
+            "https://api.appstoreconnect.apple.com/v1/betaGroups/"
+            "group-german/relationships/builds?cursor=next-page"
+        )
+        builds_path = (
+            "/ciBuildRuns/run-55/builds?"
+            "fields[builds]=version,processingState,"
+            "usesNonExemptEncryption"
+        )
+        client = FakeClient(
+            {
+                ("GET", builds_path): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": "build-55",
+                                "attributes": {
+                                    "version": "55",
+                                    "processingState": "VALID",
+                                    "usesNonExemptEncryption": False,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                ("GET", f"/betaGroups?{group_query}"): [
+                    {
+                        "data": [
+                            {
+                                "type": "betaGroups",
+                                "id": "group-german",
+                                "attributes": {
+                                    "name": "German",
+                                    "isInternalGroup": True,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [
+                    {
+                        "data": [
+                            {"type": "betaTesters", "id": "tester-german"}
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/builds?limit=200",
+                ): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": f"historical-{number}",
+                            }
+                            for number in range(200)
+                        ],
+                        "links": {"next": next_page},
+                    }
+                ],
+                ("GET", next_page): [
+                    {"data": [{"type": "builds", "id": "build-55"}]}
+                ],
+            }
+        )
+
+        self.assertEqual(
+            delivery.poll_testflight(
+                client,
+                run_id="run-55",
+                target=self.target(),
+                output=io.StringIO(),
+                sleep=lambda _seconds: None,
+            ),
+            "build-55",
+        )
+
+    def test_group_build_pagination_cannot_finish_after_the_deadline(self) -> None:
+        path = "/betaGroups/group-german/relationships/builds?limit=200"
+        client = FakeClient(
+            {
+                ("GET", path): [
+                    {"data": [{"type": "builds", "id": "build-late"}]}
+                ]
+            }
+        )
+        clock = iter([0.0, 2.0])
+
+        with self.assertRaisesRegex(delivery.DeliveryError, "delivery timeout"):
+            delivery._paged_resource_list(
+                client,
+                path,
+                resource_name="TestFlight group builds",
+                deadline=1,
+                timeout_message="delivery timeout",
+                sleep=lambda _seconds: None,
+                poll_interval=0.25,
                 monotonic=lambda: next(clock),
             )
 
