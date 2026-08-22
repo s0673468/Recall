@@ -863,6 +863,98 @@ class TestFlightReadbackTests(unittest.TestCase):
                 sleep=lambda _seconds: None,
             )
 
+    def test_follows_group_build_pagination_to_find_the_current_build(self) -> None:
+        group_query = urllib.parse.urlencode(
+            {
+                "filter[app]": "app-recall",
+                "filter[name]": "German",
+                "filter[isInternalGroup]": "true",
+                "limit": 200,
+            }
+        )
+        next_page = (
+            "https://api.appstoreconnect.apple.com/v1/betaGroups/"
+            "group-german/relationships/builds?cursor=next-page"
+        )
+        builds_path = (
+            "/ciBuildRuns/run-55/builds?"
+            "fields[builds]=version,processingState,"
+            "usesNonExemptEncryption"
+        )
+        client = FakeClient(
+            {
+                ("GET", builds_path): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": "build-55",
+                                "attributes": {
+                                    "version": "55",
+                                    "processingState": "VALID",
+                                    "usesNonExemptEncryption": False,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                ("GET", f"/betaGroups?{group_query}"): [
+                    {
+                        "data": [
+                            {
+                                "type": "betaGroups",
+                                "id": "group-german",
+                                "attributes": {
+                                    "name": "German",
+                                    "isInternalGroup": True,
+                                },
+                            }
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/betaTesters?"
+                    "limit=200",
+                ): [
+                    {
+                        "data": [
+                            {"type": "betaTesters", "id": "tester-german"}
+                        ]
+                    }
+                ],
+                (
+                    "GET",
+                    "/betaGroups/group-german/relationships/builds?limit=200",
+                ): [
+                    {
+                        "data": [
+                            {
+                                "type": "builds",
+                                "id": f"historical-{number}",
+                            }
+                            for number in range(200)
+                        ],
+                        "links": {"next": next_page},
+                    }
+                ],
+                ("GET", next_page): [
+                    {"data": [{"type": "builds", "id": "build-55"}]}
+                ],
+            }
+        )
+
+        self.assertEqual(
+            delivery.poll_testflight(
+                client,
+                run_id="run-55",
+                target=self.target(),
+                output=io.StringIO(),
+                sleep=lambda _seconds: None,
+            ),
+            "build-55",
+        )
+
 
 class MissingPrerequisiteTests(unittest.TestCase):
     def assert_single_error(

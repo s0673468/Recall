@@ -460,6 +460,49 @@ def _resource_list(
     return [item for item in data if isinstance(item, Mapping)]
 
 
+def _paged_resource_list(
+    client: Any,
+    path: str,
+    *,
+    resource_name: str,
+    deadline: float,
+    timeout_message: str,
+    sleep: Callable[[float], None],
+    poll_interval: float,
+    monotonic: Callable[[], float],
+) -> list[Mapping[str, Any]]:
+    """Read every page of a relationship without retrying a write."""
+    resources: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    next_path: str | None = path
+    while next_path is not None:
+        if next_path in seen:
+            raise DeliveryError(
+                f"App Store Connect returned cyclic {resource_name} pagination"
+            )
+        seen.add(next_path)
+        payload = _polling_get(
+            client,
+            next_path,
+            deadline=deadline,
+            timeout_message=timeout_message,
+            sleep=sleep,
+            poll_interval=poll_interval,
+            monotonic=monotonic,
+        )
+        resources.extend(_resource_list(payload, resource_name))
+        links = payload.get("links")
+        raw_next = links.get("next") if isinstance(links, Mapping) else None
+        if raw_next is not None and (
+            not isinstance(raw_next, str) or not raw_next
+        ):
+            raise DeliveryError(
+                f"App Store Connect returned invalid {resource_name} pagination"
+            )
+        next_path = raw_next
+    return resources
+
+
 def resolve_product(
     client: Any, *, bundle_id: str = BUNDLE_ID
 ) -> tuple[str, str]:
@@ -831,18 +874,15 @@ def poll_testflight(
                         f"internal TestFlight group {TESTFLIGHT_GROUP!r} has "
                         "no eligible testers"
                     )
-                linked_builds = _resource_list(
-                    _polling_get(
-                        client,
-                        f"/betaGroups/{group_id}/relationships/builds?"
-                        "limit=200",
-                        deadline=deadline,
-                        timeout_message=timeout_message,
-                        sleep=sleep,
-                        poll_interval=poll_interval,
-                        monotonic=monotonic,
-                    ),
-                    "TestFlight group builds",
+                linked_builds = _paged_resource_list(
+                    client,
+                    f"/betaGroups/{group_id}/relationships/builds?limit=200",
+                    resource_name="TestFlight group builds",
+                    deadline=deadline,
+                    timeout_message=timeout_message,
+                    sleep=sleep,
+                    poll_interval=poll_interval,
+                    monotonic=monotonic,
                 )
                 if any(item.get("id") == build_id for item in linked_builds):
                     version = attributes.get("version") or build_id
