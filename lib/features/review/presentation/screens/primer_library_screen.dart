@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/platform/recall_platform.dart';
+import '../../../../core/widgets/recall_page_header.dart';
+import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
@@ -21,7 +23,7 @@ class PrimerLibraryScreen extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: UiColors.canvas,
     appBar: AppBar(
-      backgroundColor: UiColors.sidebar,
+      backgroundColor: UiColors.canvas,
       foregroundColor: UiColors.textPrimary,
       elevation: 0,
       title: const Text('Concept primers'),
@@ -37,6 +39,13 @@ class PrimerLibraryScreen extends StatelessWidget {
             UiSpacing.xl,
           ),
           children: [
+            const RecallPageHeader(
+              eyebrow: 'Learning',
+              title: 'Concept primers',
+              subtitle:
+                  'Readable explanations for the ideas behind your cards.',
+            ),
+            const SizedBox(height: UiSpacing.lg),
             PrimerLibraryContent(pages: pages, conceptNodes: conceptNodes),
           ],
         ),
@@ -163,19 +172,23 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
               ),
             ),
           ),
-          for (final page in grouped[module]!)
-            PrimerRow(
-              page: page,
-              onTap: () => Navigator.of(context).push(
-                buildRecallPageRoute<void>(
-                  nativeIos: recallRunsAsNativeIos(),
-                  builder: (_) => PrimerScreen(
-                    page: page,
-                    conceptNodes: widget.conceptNodes,
+          RecallListGroup(
+            children: [
+              for (final page in grouped[module]!)
+                PrimerRow(
+                  page: page,
+                  onTap: () => Navigator.of(context).push(
+                    buildRecallPageRoute<void>(
+                      nativeIos: recallRunsAsNativeIos(),
+                      builder: (_) => PrimerScreen(
+                        page: page,
+                        conceptNodes: widget.conceptNodes,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
+            ],
+          ),
         ],
       ],
     );
@@ -189,43 +202,12 @@ class PrimerRow extends StatelessWidget {
   const PrimerRow({super.key, required this.page, required this.onTap});
 
   @override
-  Widget build(BuildContext context) => Material(
-    color: Colors.transparent,
-    child: InkWell(
+  Widget build(BuildContext context) => KeyedSubtree(
+    key: ValueKey('recall_primer_row_${page.nodeId}'),
+    child: RecallListRow(
+      icon: Icons.menu_book_outlined,
+      title: page.title,
       onTap: onTap,
-      child: Container(
-        key: ValueKey('recall_primer_row_${page.nodeId}'),
-        constraints: const BoxConstraints(minHeight: 52),
-        padding: const EdgeInsets.symmetric(horizontal: UiSpacing.sm),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: UiColors.borderSubtle)),
-        ),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.menu_book_outlined,
-              color: UiColors.textMuted,
-              size: 18,
-            ),
-            const SizedBox(width: UiSpacing.md),
-            Expanded(
-              child: Text(
-                page.title,
-                style: const TextStyle(
-                  color: UiColors.textPrimary,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const Icon(
-              Icons.chevron_right,
-              color: UiColors.textMuted,
-              size: 20,
-            ),
-          ],
-        ),
-      ),
     ),
   );
 }

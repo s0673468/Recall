@@ -6,10 +6,10 @@ import 'package:flutter/material.dart';
 /// clarifies state changes without competing with the content. System reduced-
 /// motion preferences collapse every transition to an immediate swap.
 abstract final class RecallMotion {
-  static const quick = Duration(milliseconds: 180);
-  static const standard = Duration(milliseconds: 260);
-  static const curve = Curves.easeOutCubic;
-  static const reverseCurve = Curves.easeInCubic;
+  static const quick = Duration(milliseconds: 160);
+  static const standard = Duration(milliseconds: 220);
+  static const curve = Cubic(0.2, 0, 0, 1);
+  static const reverseCurve = Cubic(0.4, 0, 1, 1);
 
   static Duration duration(BuildContext context, [Duration value = standard]) =>
       MediaQuery.maybeOf(context)?.disableAnimations ?? false

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:health_anki_flutter/vendored/health_flutter_shared.dart' show UiScore;
+import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
+    show UiScore;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
@@ -10,23 +11,21 @@ class RetentionPanel extends StatelessWidget {
   final RetentionSummary summary;
   final int windowDays;
   final ValueChanged<int> onWindowChanged;
+  final bool hero;
 
   const RetentionPanel({
     super.key,
     required this.summary,
     required this.windowDays,
     required this.onWindowChanged,
+    this.hero = false,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(UiSpacing.md),
-      decoration: BoxDecoration(
-        color: UiColors.panel,
-        borderRadius: BorderRadius.circular(UiRadii.group),
-        border: Border.all(color: UiColors.border),
-      ),
+      padding: EdgeInsets.all(hero ? UiSpacing.lg : UiSpacing.md),
+      decoration: hero ? buildHeroPanelDecoration() : buildPanelDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -119,8 +118,7 @@ class RetentionPanel extends StatelessWidget {
               '${(rate * 100).round()}%',
               style: TextStyle(
                 color: color,
-                fontFamily: 'monospace',
-                fontSize: 34,
+                fontSize: hero ? 44 : 34,
                 fontWeight: FontWeight.w700,
               ),
             ),

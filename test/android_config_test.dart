@@ -49,6 +49,7 @@ void main() {
     'ValidatedNetworkTransition.kt',
   );
   final strings = File('android/app/src/main/res/values/strings.xml');
+  final colors = File('android/app/src/main/res/values/colors.xml');
   final shortcuts = File('android/app/src/main/res/xml/shortcuts.xml');
   final widgetInfo = File(
     'android/app/src/main/res/xml/recall_widget_info.xml',
@@ -107,6 +108,17 @@ void main() {
     expect(build, contains('compileSdk = flutter.compileSdkVersion'));
     expect(build, contains('targetSdk = flutter.targetSdkVersion'));
     expect(build, contains('minSdk = 24'));
+  });
+
+  test('Android launch and Flutter window share the graphite canvas', () {
+    expect(colors.readAsStringSync(), contains('#111319'));
+    for (final path in [
+      'android/app/src/main/res/values/styles.xml',
+      'android/app/src/main/res/values-night/styles.xml',
+      'android/app/src/main/res/values-v31/styles.xml',
+    ]) {
+      expect(File(path).readAsStringSync(), contains('@color/recall_canvas'));
+    }
   });
 
   test(

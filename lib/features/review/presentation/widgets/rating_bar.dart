@@ -65,6 +65,7 @@ class RatingBar extends StatelessWidget {
         ? ''
         : humanizeRatingInterval(due.difference(now));
     final semanticsLabel = interval.isEmpty ? label : '$label, $interval';
+    final primary = rating == Rating.good;
     return Semantics(
       label: semanticsLabel,
       button: true,
@@ -73,12 +74,16 @@ class RatingBar extends StatelessWidget {
         onPressed: () => onRate(rating),
         style: FilledButton.styleFrom(
           minimumSize: const Size(0, 48),
-          backgroundColor: color.withValues(alpha: 0.18),
-          foregroundColor: color,
+          backgroundColor: primary
+              ? UiColors.primary
+              : color.withValues(alpha: 0.14),
+          foregroundColor: primary ? UiColors.canvas : color,
           padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(UiRadius.md),
-            side: BorderSide(color: color.withValues(alpha: 0.35)),
+            side: BorderSide(
+              color: primary ? UiColors.primary : color.withValues(alpha: 0.3),
+            ),
           ),
         ),
         child: Column(
@@ -92,7 +97,9 @@ class RatingBar extends StatelessWidget {
                   interval,
                   style: TextStyle(
                     fontSize: 11,
-                    color: color.withValues(alpha: 0.85),
+                    color: primary
+                        ? UiColors.canvas.withValues(alpha: 0.78)
+                        : color.withValues(alpha: 0.85),
                   ),
                 ),
               ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_anki_flutter/core/platform/recall_platform.dart';
 import 'package:health_anki_flutter/navigation/app_shell.dart';
+import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
 void main() {
   test('native iOS detection excludes the web build', () {
@@ -61,7 +62,9 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
   });
 
-  testWidgets('web keeps the existing Material navigation bar', (tester) async {
+  testWidgets('Material navigation uses the shared active destination wash', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -78,6 +81,13 @@ void main() {
     expect(bar.destinations, hasLength(4));
     expect(find.text('Read'), findsOneWidget);
     expect(find.byType(CupertinoTabBar), findsNothing);
+    final theme = tester.widget<NavigationBarTheme>(
+      find.ancestor(
+        of: find.byType(NavigationBar),
+        matching: find.byType(NavigationBarTheme),
+      ),
+    );
+    expect(theme.data.indicatorColor, UiColors.primaryMuted);
   });
 
   testWidgets('wide Android surfaces use an adaptive navigation rail', (
@@ -103,6 +113,7 @@ void main() {
     expect(rail.destinations, hasLength(4));
     expect(find.text('Study'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
+    expect(rail.indicatorColor, UiColors.primaryMuted);
   });
 
   test('settings navigation uses the platform-appropriate transition', () {

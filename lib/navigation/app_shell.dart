@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
 import '../core/diagnostics/operational_diagnostics.dart';
 import '../core/platform/recall_platform.dart';
@@ -182,65 +183,101 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           _selectIndex(0);
         }
       },
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final useRail = _nativeAndroid && constraints.maxWidth >= 840;
-          return Scaffold(
-            backgroundColor: UiColors.canvas,
-            body: ColoredBox(
-              key: const Key('recall_flat_canvas'),
-              color: UiColors.canvas,
-              child: SafeArea(
-                child: Row(
-                  children: [
-                    if (useRail)
-                      RecallNavigationRail(
-                        selectedIndex: _index,
-                        onDestinationSelected: _selectIndex,
+      child: AnnotatedRegion<SystemUiOverlayStyle>(
+        key: const Key('recall_system_bars'),
+        value: SystemUiOverlayStyle.light.copyWith(
+          statusBarColor: Colors.transparent,
+          systemNavigationBarColor: Colors.transparent,
+          systemNavigationBarContrastEnforced: false,
+          systemNavigationBarIconBrightness: Brightness.light,
+        ),
+        child: ListenableBuilder(
+          listenable: widget.controller,
+          builder: (context, _) => LayoutBuilder(
+            builder: (context, constraints) {
+              final useRail = _nativeAndroid && constraints.maxWidth >= 600;
+              final state = widget.controller.state;
+              final busy = state.loading || state.authSubmitting;
+              final content = Column(
+                children: [
+                  SizedBox(
+                    height: 2,
+                    child: AnimatedSwitcher(
+                      duration: RecallMotion.duration(
+                        context,
+                        RecallMotion.quick,
                       ),
-                    if (useRail)
-                      const VerticalDivider(
-                        width: 1,
-                        color: UiColors.borderSubtle,
-                      ),
-                    Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          UiSpacing.sm,
-                          UiSpacing.sm,
-                          UiSpacing.sm,
-                          _nativeIos || useRail ? UiSpacing.sm : 0,
-                        ),
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxWidth: UiLayout.maxContent,
+                      child: busy
+                          ? const LinearProgressIndicator(
+                              key: ValueKey('recall_shell_busy'),
+                              minHeight: 2,
+                            )
+                          : const SizedBox.shrink(
+                              key: ValueKey('recall_shell_idle'),
                             ),
-                            child: SizedBox.expand(
-                              child: RecallAnimatedIndexedStack(
-                                index: _index,
-                                children: _pages,
-                              ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        UiSpacing.sm,
+                        UiSpacing.sm,
+                        UiSpacing.sm,
+                        _nativeIos || useRail ? UiSpacing.sm : 0,
+                      ),
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: UiLayout.maxContent,
+                          ),
+                          child: SizedBox.expand(
+                            child: RecallAnimatedIndexedStack(
+                              index: _index,
+                              children: _pages,
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-            extendBody: _nativeIos,
-            bottomNavigationBar: useRail
-                ? null
-                : RecallBottomNavigation(
-                    selectedIndex: _index,
-                    onDestinationSelected: _selectIndex,
-                    nativeIos: _nativeIos,
                   ),
-          );
-        },
+                ],
+              );
+              return Scaffold(
+                backgroundColor: UiColors.canvas,
+                body: ColoredBox(
+                  key: const Key('recall_flat_canvas'),
+                  color: UiColors.canvas,
+                  child: SafeArea(
+                    child: useRail
+                        ? Row(
+                            children: [
+                              RecallNavigationRail(
+                                selectedIndex: _index,
+                                onDestinationSelected: _selectIndex,
+                              ),
+                              const VerticalDivider(
+                                width: 1,
+                                color: UiColors.borderSubtle,
+                              ),
+                              Expanded(child: content),
+                            ],
+                          )
+                        : content,
+                  ),
+                ),
+                extendBody: _nativeIos,
+                bottomNavigationBar: useRail
+                    ? null
+                    : RecallBottomNavigation(
+                        selectedIndex: _index,
+                        onDestinationSelected: _selectIndex,
+                        nativeIos: _nativeIos,
+                      ),
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -329,7 +366,7 @@ class RecallBottomNavigation extends StatelessWidget {
       child: NavigationBarTheme(
         data: NavigationBarThemeData(
           backgroundColor: Colors.transparent,
-          indicatorColor: Colors.transparent,
+          indicatorColor: UiColors.primaryMuted,
           iconTheme: WidgetStateProperty.resolveWith((states) {
             return IconThemeData(
               color: states.contains(WidgetState.selected)
@@ -349,6 +386,7 @@ class RecallBottomNavigation extends StatelessWidget {
           }),
         ),
         child: NavigationBar(
+          animationDuration: RecallMotion.duration(context),
           selectedIndex: selectedIndex,
           onDestinationSelected: onDestinationSelected,
           destinations: const [
@@ -398,7 +436,7 @@ class RecallNavigationRail extends StatelessWidget {
       onDestinationSelected: onDestinationSelected,
       labelType: NavigationRailLabelType.all,
       backgroundColor: UiColors.sidebar,
-      indicatorColor: Colors.transparent,
+      indicatorColor: UiColors.primaryMuted,
       selectedIconTheme: IconThemeData(color: accent),
       unselectedIconTheme: const IconThemeData(color: UiColors.textMuted),
       selectedLabelTextStyle: TextStyle(

@@ -36,6 +36,10 @@ not removing that data source.
 - runs as the Recall browser/PWA surface and as installable Android and iPhone
   apps from the same tested Flutter codebase
 
+Recall is also the reference implementation for the shared app-family visual
+language. See [`docs/design-language.md`](docs/design-language.md) for the
+surface hierarchy, product-accent rules, and cross-platform contract.
+
 ## Data ownership
 
 **Recall's Supabase project is the source of truth for all review and
