@@ -80,6 +80,7 @@ class _PrefsRecallApi extends RecallApi {
   @override
   Future<List<ReviewCard>> fetchQueue({
     int? deckId,
+    Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
   }) async {

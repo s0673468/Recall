@@ -272,12 +272,21 @@ class RecallApi implements ReviewReplayGateway {
   /// truncated before a presentation-only catch-up sort.
   Future<List<ReviewCard>> fetchQueue({
     int? deckId,
+    Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
   }) async {
-    final revalidationsFuture = _fetchContentRevalidationQueueOrEmpty(deckId);
+    final included = deckId == null ? includedDeckIds : null;
+    if (included != null && included.isEmpty) return const [];
+    final revalidationsFuture = _fetchContentRevalidationQueueOrEmpty(
+      deckId,
+      included,
+    );
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    final introducedToday = await _newCardsIntroducedToday(deckId: deckId);
+    final introducedToday = await _newCardsIntroducedToday(
+      deckId: deckId,
+      includedDeckIds: included,
+    );
     final remainingNewLimit = (newLimit - introducedToday).clamp(0, newLimit);
 
     // Suspended cards (cards.suspended = true, set one-way by the desktop
@@ -300,6 +309,10 @@ class RecallApi implements ReviewReplayGateway {
     if (deckId != null) {
       dueQ = dueQ.eq('notes.deck_id', deckId);
       newQ = newQ.eq('notes.deck_id', deckId);
+    } else if (included != null) {
+      final ids = included.toList()..sort();
+      dueQ = dueQ.inFilter('notes.deck_id', ids);
+      newQ = newQ.inFilter('notes.deck_id', ids);
     }
 
     // newest_first inverts the id order; random still fetches a stable page
@@ -340,9 +353,13 @@ class RecallApi implements ReviewReplayGateway {
 
   Future<List<ReviewCard>> _fetchContentRevalidationQueueOrEmpty(
     int? deckId,
+    Set<int>? includedDeckIds,
   ) async {
     try {
-      return await fetchContentRevalidationQueue(deckId: deckId);
+      return await fetchContentRevalidationQueue(
+        deckId: deckId,
+        includedDeckIds: includedDeckIds,
+      );
     } catch (_) {
       // The review-log read is an optional priority lane. Its outage must not
       // take down the ordinary due/new queue.
@@ -362,8 +379,11 @@ class RecallApi implements ReviewReplayGateway {
   /// read.
   Future<List<ReviewCard>> fetchContentRevalidationQueue({
     int? deckId,
+    Set<int>? includedDeckIds,
     int limit = contentRevalidationBatchSize,
   }) async {
+    final included = deckId == null ? includedDeckIds : null;
+    if (included != null && included.isEmpty) return const [];
     final wanted = limit.clamp(0, contentRevalidationBatchSize).toInt();
     if (wanted == 0) return const [];
 
@@ -381,6 +401,10 @@ class RecallApi implements ReviewReplayGateway {
           .gt('reps', 0)
           .like('notes.tags', '%$contentRevalidationTagPrefix%');
       if (deckId != null) query = query.eq('notes.deck_id', deckId);
+      if (included != null) {
+        final ids = included.toList()..sort();
+        query = query.inFilter('notes.deck_id', ids);
+      }
       final rows = await query
           .order('id', ascending: true)
           .range(offset, offset + _contentRevalidationPageSize - 1);
@@ -451,7 +475,12 @@ class RecallApi implements ReviewReplayGateway {
   /// current local day. The setting is a daily introduction budget, not a
   /// per-fetch page size. Repeated reviews of a card already present in the
   /// pre-day history do not consume another new-card slot.
-  Future<int> _newCardsIntroducedToday({int? deckId}) async {
+  Future<int> _newCardsIntroducedToday({
+    int? deckId,
+    Set<int>? includedDeckIds,
+  }) async {
+    final included = deckId == null ? includedDeckIds : null;
+    if (included != null && included.isEmpty) return 0;
     final localNow = DateTime.now();
     final localStart = DateTime(localNow.year, localNow.month, localNow.day);
     final startIso = localStart.toUtc().toIso8601String();
@@ -460,7 +489,7 @@ class RecallApi implements ReviewReplayGateway {
         .toUtc()
         .toIso8601String();
 
-    final logSelect = deckId == null
+    final logSelect = deckId == null && included == null
         ? 'card_id'
         : 'card_id,cards!inner(notes!inner(deck_id))';
     var todayQ = client
@@ -470,6 +499,9 @@ class RecallApi implements ReviewReplayGateway {
         .lt('rating_at', endIso);
     if (deckId != null) {
       todayQ = todayQ.eq('cards.notes.deck_id', deckId);
+    } else if (included != null) {
+      final ids = included.toList()..sort();
+      todayQ = todayQ.inFilter('cards.notes.deck_id', ids);
     }
     final todayRows = await todayQ;
     final todayCardIds = {
@@ -485,6 +517,9 @@ class RecallApi implements ReviewReplayGateway {
         .lt('rating_at', startIso);
     if (deckId != null) {
       priorQ = priorQ.eq('cards.notes.deck_id', deckId);
+    } else if (included != null) {
+      final ids = included.toList()..sort();
+      priorQ = priorQ.inFilter('cards.notes.deck_id', ids);
     }
     final priorRows = await priorQ;
     final seenBefore = {
@@ -500,10 +535,13 @@ class RecallApi implements ReviewReplayGateway {
   /// beyond the day's batch. Returns empty when there is truly nothing more.
   Future<List<ReviewCard>> fetchAheadQueue({
     int? deckId,
+    Set<int>? includedDeckIds,
     Duration horizon = const Duration(hours: 24),
     int limit = 20,
     NewOrder order = NewOrder.oldestFirst,
   }) async {
+    final included = deckId == null ? includedDeckIds : null;
+    if (included != null && included.isEmpty) return const [];
     final now = DateTime.now().toUtc();
     final horizonIso = now.add(horizon).toIso8601String();
 
@@ -516,6 +554,9 @@ class RecallApi implements ReviewReplayGateway {
         .lte('due', horizonIso);
     if (deckId != null) {
       aheadQ = aheadQ.eq('notes.deck_id', deckId);
+    } else if (included != null) {
+      final ids = included.toList()..sort();
+      aheadQ = aheadQ.inFilter('notes.deck_id', ids);
     }
     final aheadRows = await aheadQ.order('due', ascending: true).limit(limit);
     final ahead = [
@@ -534,6 +575,9 @@ class RecallApi implements ReviewReplayGateway {
         .eq('state', 0);
     if (deckId != null) {
       newQ = newQ.eq('notes.deck_id', deckId);
+    } else if (included != null) {
+      final ids = included.toList()..sort();
+      newQ = newQ.inFilter('notes.deck_id', ids);
     }
     final newAscending = order != NewOrder.newestFirst;
     final newRows = await newQ

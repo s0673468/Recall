@@ -4,10 +4,11 @@ import '../../../../core/widgets/recall_motion.dart';
 import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
+import '../../data/models.dart';
 import '../../data/recall_api.dart';
 
-/// Pick a deck (or all decks) to study, with per-deck due/new counts. Tapping
-/// starts a session on that deck and jumps to the Study tab.
+/// Open the automatic stream or one explicit deck, with per-deck due/new
+/// counts. Tapping starts that session and jumps to the Study tab.
 class DecksScreen extends StatefulWidget {
   final ReviewController controller;
   final RecallApi api;
@@ -46,14 +47,29 @@ class DecksScreenState extends State<DecksScreen> {
       listenable: widget.controller,
       builder: (context, _) {
         final decks = widget.controller.state.decks;
+        final automaticDeckIds = automaticReviewDeckIds(decks);
         return RefreshIndicator(
           onRefresh: reload,
           child: FutureBuilder<Map<int, ({int due, int neu})>>(
             future: _counts,
             builder: (context, snap) {
               final counts = snap.data;
-              final totalDue = counts?.values.fold(0, (a, b) => a + b.due);
-              final totalNew = counts?.values.fold(0, (a, b) => a + b.neu);
+              final totalDue = counts?.entries.fold(
+                0,
+                (total, entry) =>
+                    total +
+                    (automaticDeckIds.contains(entry.key)
+                        ? entry.value.due
+                        : 0),
+              );
+              final totalNew = counts?.entries.fold(
+                0,
+                (total, entry) =>
+                    total +
+                    (automaticDeckIds.contains(entry.key)
+                        ? entry.value.neu
+                        : 0),
+              );
               return ListView(
                 padding: const EdgeInsets.fromLTRB(
                   UiSpacing.sm,
@@ -69,7 +85,9 @@ class DecksScreenState extends State<DecksScreen> {
                     ),
                     child: RecallPageHeader(
                       title: 'Decks',
-                      subtitle: 'Due and new cards by collection.',
+                      subtitle:
+                          'Core decks review automatically. Optional '
+                          'curricula open only from here.',
                     ),
                   ),
                   RecallMotionSwap(
@@ -89,7 +107,7 @@ class DecksScreenState extends State<DecksScreen> {
                           ),
                   ),
                   _tile(
-                    label: 'All decks',
+                    label: 'Automatic review',
                     icon: Icons.all_inclusive,
                     due: totalDue,
                     neu: totalNew,
@@ -98,9 +116,12 @@ class DecksScreenState extends State<DecksScreen> {
                   for (final d in decks)
                     _tile(
                       label: d.name.replaceAll('::', '  ›  '),
-                      icon: Icons.folder_outlined,
+                      icon: automaticDeckIds.contains(d.deckId)
+                          ? Icons.folder_outlined
+                          : Icons.touch_app_outlined,
                       due: counts?[d.deckId]?.due,
                       neu: counts?[d.deckId]?.neu,
+                      manualOnly: !automaticDeckIds.contains(d.deckId),
                       onTap: () => widget.onStudyDeck(d.deckId),
                     ),
                 ],
@@ -117,6 +138,7 @@ class DecksScreenState extends State<DecksScreen> {
     required IconData icon,
     required int? due,
     required int? neu,
+    bool manualOnly = false,
     required VoidCallback onTap,
   }) {
     return Material(
@@ -135,13 +157,28 @@ class DecksScreenState extends State<DecksScreen> {
               Icon(icon, color: UiColors.textMuted, size: 20),
               const SizedBox(width: UiSpacing.md),
               Expanded(
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    color: UiColors.textPrimary,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w500,
-                  ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: UiColors.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (manualOnly)
+                      const Text(
+                        'Open manually',
+                        style: TextStyle(
+                          color: UiColors.textMuted,
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               if (due != null && due > 0) _count('$due due', UiColors.primary),

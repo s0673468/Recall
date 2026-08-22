@@ -27,6 +27,8 @@ not removing that data source.
 
 - reads decks, due cards, new cards, recent reviews, and per-deck counts from
   its own Supabase project
+- keeps core decks in the automatic review stream while `Opt-in::` curricula
+  remain available only through explicit deck selection
 - schedules ratings with FSRS
 - stores a local snapshot and durable review outbox so offline reviews are not
   lost

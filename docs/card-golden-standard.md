@@ -1,6 +1,6 @@
 # Recall learning-material golden standard
 
-Version: 2026-08-19. Applies to every flashcard and concept primer in Recall.
+Version: 2026-08-22. Applies to every flashcard and concept primer in Recall.
 
 ## What belongs in Recall
 
@@ -11,6 +11,15 @@ otherwise turn it into the stable principle behind the fact.
 
 Understand before memorizing. A card must make sense from its answer and its concept primer. Do
 not preserve a polished sentence whose meaning is unclear, false, or unsupported.
+
+## Review streams
+
+Machine learning, mathematics, and the other core technical decks belong to the normal automatic
+review stream. Optional curricula belong under the `Opt-in::` deck root and enter a session only
+when the learner opens that deck explicitly. Use names such as `Opt-in::Portuguese` and
+`Opt-in::Russian Revolution`; do not suspend these cards or alter their FSRS history. The existing
+top-level `Portuguese` and `Experimental::` decks are treated as opt-in for compatibility until
+they are renamed.
 
 ## Flashcard rules
 
@@ -28,33 +37,38 @@ not preserve a polished sentence whose meaning is unclear, false, or unsupported
    make the learner unpack compressed academic prose or defensive caveat stacks. A strong default
    is: direct answer, one plain-language mechanism or example, then one short boundary only when it
    changes what counts as correct. Move further nuance to the primer or another card.
-5. **Successful effort.** Require genuine recall, derivation, completion, discrimination, or
+5. **Show the mathematical source.** When a useful formula governs the mechanism being described,
+   include it on the card back after the plain-language explanation as an ungraded extra. Define
+   non-obvious symbols and keep assumptions, signs, units, and domains that control correctness.
+   The formula should reveal where the intuition comes from, not become a second retrieval target;
+   split the card if both explanation and derivation need to be graded.
+6. **Successful effort.** Require genuine recall, derivation, completion, discrimination, or
    sentence production. Difficulty is useful only when the target is understandable and the cue
    makes successful retrieval plausible; obscurity is not a virtue.
-6. **Truth with scope.** Label definitions, theorems, heuristics, empirical findings, and design
+7. **Truth with scope.** Label definitions, theorems, heuristics, empirical findings, and design
    conventions accurately. Preserve qualifications. Mathematical cards state dimensions,
    assumptions, signs, and domains whenever omitting them changes the result.
-7. **Currentness and provenance.** Classify each claim as durable, time-bound, or disputed.
+8. **Currentness and provenance.** Classify each claim as durable, time-bound, or disputed.
    Fact-check time-bound and disputed claims against current primary sources. Keep source URLs and
    access dates in the review manifest. Put a source/date on the study face only when the answer
    depends on that source or date. Add `volatile` to claims requiring later re-checks.
-8. **Transfer, not paraphrase count.** A useful cluster may contain a definition, mechanism,
+9. **Transfer, not paraphrase count.** A useful cluster may contain a definition, mechanism,
    calculation/application, contrast, failure mode, and decision rule. Each must require a
    distinct retrieval. More than about eight cards is a review trigger, not an automatic deletion
    rule.
-9. **Control interference.** For confusable ideas, make the cues distinguish them and add one
+10. **Control interference.** For confusable ideas, make the cues distinguish them and add one
    contrast card when that contrast is useful. Avoid several fronts that can all be answered with
    the same vague paragraph.
-10. **Preserve learning continuity.** Keep a good card unchanged. Edit before deleting. Delete only
+11. **Preserve learning continuity.** Keep a good card unchanged. Edit before deleting. Delete only
    an exact semantic duplicate, a false/obsolete low-value claim, or an orphaned fragment whose
    useful target is covered elsewhere. Record the reason and replacement coverage.
-11. **Language rule.** Use English except for the Portuguese language being produced or analyzed.
+12. **Language rule.** Use English except for the Portuguese language being produced or analyzed.
     Portuguese cards should elicit a sentence or contextual choice in Brazilian Portuguese, name
     material accepted alternatives, and avoid bare conjugation-table recitation.
-12. **Formatting.** Use `<br>` for breaks and sparing `<b>` emphasis. Use MathJax delimiters
+13. **Formatting.** Use `<br>` for breaks and sparing `<b>` emphasis. Use MathJax delimiters
     `\( ... \)` and `\[ ... \]` for formulas. No inline styles, emoji, nested wrappers, or
     decorative prose.
-13. **Self-contained grading.** The back must let the learner decide whether the attempted answer
+14. **Self-contained grading.** The back must let the learner decide whether the attempted answer
     was correct. Do not rely on an unstated external diagram, prior card order, or an answer such as
     “it depends” without the controlling condition.
 
