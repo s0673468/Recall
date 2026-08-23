@@ -199,19 +199,20 @@ String _short(String s) => s.length <= 24 ? s : '${s.substring(0, 24)}…';
 // ── Small LRU memo (mirrors parseInlineHtmlCached) ─────────────────────────
 
 const int _cacheCap = 50;
-final Map<String, List<ClozeNode>> _cache = {};
+final Map<String, ({String source, List<ClozeNode> nodes})> _cache = {};
 
-/// Parse with a tiny LRU keyed by (cardId, face). Null [cacheKey] parses
-/// uncached (tests / one-off renders).
+/// Parse with a tiny LRU keyed by (cardId, face). The source text is retained
+/// with each entry so a refreshed card cannot reuse an older parsed deletion.
+/// Null [cacheKey] parses uncached (tests / one-off renders).
 List<ClozeNode> parseClozeCached(String s, {String? cacheKey}) {
   if (cacheKey == null) return parseCloze(s);
   final hit = _cache.remove(cacheKey);
-  if (hit != null) {
+  if (hit != null && hit.source == s) {
     _cache[cacheKey] = hit;
-    return hit;
+    return hit.nodes;
   }
   final parsed = parseCloze(s);
-  _cache[cacheKey] = parsed;
+  _cache[cacheKey] = (source: s, nodes: parsed);
   if (_cache.length > _cacheCap) {
     _cache.remove(_cache.keys.first);
   }

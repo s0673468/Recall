@@ -2857,9 +2857,6 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       // Real-data shape: the answer lives ONLY in the front's {{cN::}} markup;
       // the back is a separate plain summary with no deletion.
-      // Distinct card id: the parse memo is a global static keyed by
-      // "$cardId:$face", so reusing the default id=1 would collide with the
-      // previous StudyScreen test's cached back.
       final controller = ReviewController(
         api: _FakeRecallApi([
           _card(
