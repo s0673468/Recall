@@ -78,7 +78,11 @@ async function cacheFirst(request) {
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok && response.type === 'basic') {
-    await cache.put(request, response.clone());
+    try {
+      await cache.put(request, response.clone());
+    } catch (_) {
+      // A full or unavailable cache must not discard a valid network response.
+    }
   }
   return response;
 }

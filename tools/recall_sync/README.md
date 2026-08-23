@@ -45,4 +45,7 @@ timestamped legacy file instead of deleting it.
 The persistent log is `~/Library/Logs/recall-autosync.jsonl`. It contains only
 closed `operational-event/v2` envelopes, never subprocess output. Same-directory
 atomic replacement keeps at most 100 events and 64 KiB. Import failure does not
-advance the collection stamp; concept sync remains additive and non-fatal.
+advance the source stamp. Concept sync remains additive; either child failure
+keeps the source revision pending for the LaunchAgent's bounded 15-minute retry.
+Each child process has a 20-minute timeout, and both the Anki collection and
+METIS concept graph use nanosecond change tokens.

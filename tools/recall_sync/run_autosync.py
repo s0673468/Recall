@@ -25,6 +25,7 @@ from typing import Callable, Mapping, Sequence
 SCHEMA = "operational-event/v2"
 MAX_EVENTS = 100
 MAX_LOG_BYTES = 64 * 1024
+COMMAND_TIMEOUT_SECONDS = 20 * 60
 REQUIRED_ENV = ("SUPABASE_URL", "SUPABASE_SERVICE_KEY")
 
 
@@ -129,7 +130,7 @@ def load_runtime_env(path: Path) -> dict[str, str]:
     }
 
 
-def _write_stamp(path: Path, value: int) -> None:
+def _write_stamp(path: Path, value: str) -> None:
     fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(temporary_name)
     try:
@@ -145,11 +146,11 @@ def _write_stamp(path: Path, value: int) -> None:
             temporary.unlink()
 
 
-def _read_stamp(path: Path) -> int:
+def _read_stamp(path: Path) -> str:
     try:
-        return int(path.read_text(encoding="utf-8").strip())
-    except (FileNotFoundError, OSError, UnicodeError, ValueError):
-        return 0
+        return path.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError, UnicodeError):
+        return ""
 
 
 def run_once(
@@ -157,6 +158,7 @@ def run_once(
     repo_root: Path,
     runtime_dir: Path,
     collection: Path,
+    concepts: Path,
     log_path: Path,
     settle_seconds: float = 8,
     command_runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
@@ -176,14 +178,17 @@ def run_once(
             time.sleep(settle_seconds)
         run_id = str(uuid.uuid4())
         try:
-            collection_mtime = int(collection.stat().st_mtime)
+            source_revision = (
+                f"{collection.stat().st_mtime_ns}:"
+                f"{concepts.stat().st_mtime_ns}"
+            )
         except OSError:
             append_event(
                 log_path,
                 _event(
-                    operation="read_collection",
+                    operation="read_sources",
                     outcome="failed",
-                    cause_code="collection_unavailable",
+                    cause_code="sync_source_unavailable",
                     retryable=True,
                     run_id=run_id,
                 ),
@@ -191,7 +196,7 @@ def run_once(
             return 1
 
         stamp_path = runtime_dir / ".last_sync_mtime"
-        if _read_stamp(stamp_path) == collection_mtime:
+        if _read_stamp(stamp_path) == source_revision:
             return 0
 
         try:
@@ -223,6 +228,7 @@ def run_once(
 
         child_env = dict(os.environ)
         child_env.update(runtime_values)
+        child_env["METIS_CONCEPTS_YAML"] = str(concepts)
         commands: Sequence[tuple[str, Path]] = (
             ("import_collection", repo_root / "tools/anki_revision/import_to_supabase.py"),
             ("sync_concepts", repo_root / "tools/recall_sync/sync_concept_nodes.py"),
@@ -240,8 +246,11 @@ def run_once(
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         check=False,
+                        timeout=COMMAND_TIMEOUT_SECONDS,
                     )
                     return_code = completed.returncode
+                except subprocess.TimeoutExpired:
+                    return_code = 124
                 except OSError:
                     return_code = 127
             results[operation] = return_code
@@ -256,9 +265,10 @@ def run_once(
                 ),
             )
 
-        if results["import_collection"] == 0:
-            _write_stamp(stamp_path, collection_mtime)
-        return 0 if results["import_collection"] == 0 else 1
+        succeeded = all(return_code == 0 for return_code in results.values())
+        if succeeded:
+            _write_stamp(stamp_path, source_revision)
+        return 0 if succeeded else 1
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -274,6 +284,11 @@ def _parser() -> argparse.ArgumentParser:
         default=home / "Library/Application Support/Anki2/User 1/collection.anki2",
     )
     parser.add_argument(
+        "--concepts",
+        type=Path,
+        default=home / "Code/METIS/graph/concepts.yaml",
+    )
+    parser.add_argument(
         "--log", type=Path, default=home / "Library/Logs/recall-autosync.jsonl"
     )
     parser.add_argument("--settle-seconds", type=float, default=8)
@@ -286,6 +301,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         repo_root=args.repo_root.resolve(),
         runtime_dir=args.runtime_dir.expanduser().resolve(),
         collection=args.collection.expanduser().resolve(),
+        concepts=args.concepts.expanduser().resolve(),
         log_path=args.log.expanduser().resolve(),
         settle_seconds=args.settle_seconds,
     )

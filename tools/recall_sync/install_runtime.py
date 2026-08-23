@@ -23,6 +23,7 @@ def build_plist(
     repo_root: Path,
     runtime_dir: Path,
     collection: Path,
+    concepts: Path,
     log_path: Path,
 ) -> dict[str, object]:
     return {
@@ -36,13 +37,16 @@ def build_plist(
             str(runtime_dir),
             "--collection",
             str(collection),
+            "--concepts",
+            str(concepts),
             "--log",
             str(log_path),
         ],
         "StandardOutPath": "/dev/null",
         "StandardErrorPath": "/dev/null",
         "ThrottleInterval": 30,
-        "WatchPaths": [str(collection)],
+        "StartInterval": 15 * 60,
+        "WatchPaths": [str(collection), str(concepts)],
     }
 
 
@@ -68,6 +72,7 @@ def install(
     repo_root: Path,
     runtime_dir: Path,
     collection: Path,
+    concepts: Path,
     log_path: Path,
     launch_agent: Path,
 ) -> Path | None:
@@ -79,6 +84,7 @@ def install(
         (python, "runtime Python"),
         (runner, "reviewed autosync runner"),
         (collection, "Anki collection"),
+        (concepts, "METIS concepts"),
     ):
         if not path.exists():
             raise FileNotFoundError(f"{description} is missing: {path}")
@@ -106,6 +112,7 @@ def install(
         repo_root=repo_root,
         runtime_dir=runtime_dir,
         collection=collection,
+        concepts=concepts,
         log_path=log_path,
     )
     _atomic_plist(launch_agent, payload)
@@ -124,6 +131,11 @@ def _parser() -> argparse.ArgumentParser:
         "--collection",
         type=Path,
         default=home / "Library/Application Support/Anki2/User 1/collection.anki2",
+    )
+    parser.add_argument(
+        "--concepts",
+        type=Path,
+        default=home / "Code/METIS/graph/concepts.yaml",
     )
     parser.add_argument(
         "--log", type=Path, default=home / "Library/Logs/recall-autosync.jsonl"
@@ -145,6 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         repo_root=repo_root,
         runtime_dir=args.runtime_dir.expanduser().resolve(),
         collection=args.collection.expanduser().resolve(),
+        concepts=args.concepts.expanduser().resolve(),
         log_path=args.log.expanduser().resolve(),
     )
     if not args.apply:
@@ -154,6 +167,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         repo_root=repo_root,
         runtime_dir=args.runtime_dir.expanduser().resolve(),
         collection=args.collection.expanduser().resolve(),
+        concepts=args.concepts.expanduser().resolve(),
         log_path=args.log.expanduser().resolve(),
         launch_agent=args.launch_agent.expanduser().resolve(),
     )

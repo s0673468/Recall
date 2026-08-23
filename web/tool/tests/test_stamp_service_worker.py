@@ -22,6 +22,16 @@ class StampServiceWorkerTests(unittest.TestCase):
             worker.read_text(encoding="utf-8"),
         )
 
+    def test_cache_write_failure_keeps_the_network_response(self) -> None:
+        worker = SCRIPT.parents[1] / "sw.js"
+        contents = worker.read_text(encoding="utf-8")
+
+        cache_write = contents.index("await cache.put(request, response.clone())")
+        cache_failure = contents.index("} catch (_)", cache_write)
+        network_return = contents.index("return response;", cache_failure)
+        self.assertLess(cache_write, cache_failure)
+        self.assertLess(cache_failure, network_return)
+
     def test_stamps_exactly_one_version_and_removes_flutter_tombstone(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
