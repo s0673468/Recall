@@ -84,7 +84,9 @@ jobs:
       - uses: ./.github/actions/setup-flutter
 
       - name: Install Android SDK 37
-        run: sdkmanager "platforms;android-37.0"
+        run: >-
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          "platforms;android-37.0"
 
       - name: flutter pub get
         run: flutter pub get

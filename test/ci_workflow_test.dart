@@ -55,6 +55,11 @@ void main() {
       workflow,
       contains('pip install -r tools/fsrs_optimize/requirements.txt'),
     );
+    expect(
+      workflow,
+      contains(r'$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager'),
+    );
+    expect(workflow, isNot(contains('run: sdkmanager')));
   });
 
   test('public workflows stay on GitHub-hosted runners', () {
