@@ -44,6 +44,16 @@ class LocalReviewStore {
   bool _ownerAware = false;
 
   String? get activeOwnerScope => _activeOwnerScope;
+  bool get ownerAware => _ownerAware;
+
+  /// Whether [ownerId] is the account whose local namespace is active.
+  ///
+  /// The raw account id is never persisted. Callers use this check to bind
+  /// asynchronous work to both the authenticated session and its hashed local
+  /// namespace, so a delayed owner hand-off cannot send one account's outbox
+  /// through another account's API session.
+  bool isActiveOwner(String ownerId) =>
+      _activeOwnerScope == _scopeForOwner(ownerId);
 
   Future<SharedPreferences> get _prefs =>
       _prefsFuture ??= SharedPreferences.getInstance();
@@ -123,10 +133,7 @@ class LocalReviewStore {
     if (ownerId.trim().isEmpty) {
       return Future.error(ArgumentError.value(ownerId, 'ownerId'));
     }
-    final scope = sha256
-        .convert(utf8.encode(ownerId))
-        .toString()
-        .substring(0, 24);
+    final scope = _scopeForOwner(ownerId);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       final claimed = prefs.getString(_legacyOwnerClaimKey);
@@ -177,6 +184,9 @@ class LocalReviewStore {
   }
 
   static String _scopedKey(String base, String scope) => '$base:owner:$scope';
+
+  static String _scopeForOwner(String ownerId) =>
+      sha256.convert(utf8.encode(ownerId)).toString().substring(0, 24);
 
   Future<void> saveSnapshot({
     required List<DeckRow> decks,

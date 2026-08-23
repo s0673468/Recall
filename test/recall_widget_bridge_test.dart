@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -104,6 +106,60 @@ void main() {
     },
   );
 
+  test(
+    'a new account republishes after the previous update and clear finish',
+    () async {
+      final now = DateTime.utc(2026, 7, 13, 12, 30);
+      final ready = ReviewState(
+        loading: false,
+        globalDueCount: 9,
+        globalDueUpdatedAt: now,
+      );
+      final firstUpdateStarted = Completer<void>();
+      final releaseFirstUpdate = Completer<void>();
+      store
+        ..nextUpdateStarted = firstUpdateStarted
+        ..nextUpdateGate = releaseFirstUpdate;
+
+      final accountA = publisher.publish(
+        signedIn: true,
+        ownerId: 'account-a',
+        state: ready,
+      );
+      await firstUpdateStarted.future;
+      final signOut = publisher.publish(signedIn: false, state: ready);
+      final accountB = publisher.publish(
+        signedIn: true,
+        ownerId: 'account-b',
+        state: ready,
+      );
+
+      releaseFirstUpdate.complete();
+      await Future.wait([accountA, signOut, accountB]);
+
+      expect(store.updates, [
+        RecallWidgetSnapshot(dueCount: 9, updatedAt: now),
+        RecallWidgetSnapshot(dueCount: 9, updatedAt: now),
+      ]);
+      expect(store.clearCount, 1);
+      expect(store.operations, ['update:9', 'clear', 'update:9']);
+    },
+  );
+
+  test('a direct account replacement starts a new dedupe session', () async {
+    final now = DateTime.utc(2026, 7, 13, 12, 30);
+    final ready = ReviewState(
+      loading: false,
+      globalDueCount: 4,
+      globalDueUpdatedAt: now,
+    );
+
+    await publisher.publish(signedIn: true, ownerId: 'account-a', state: ready);
+    await publisher.publish(signedIn: true, ownerId: 'account-b', state: ready);
+
+    expect(store.updateAttempts, 2);
+  });
+
   test('native channel receives only count and timestamp', () async {
     final now = DateTime.utc(2026, 7, 13, 12, 30);
     final calls = <MethodCall>[];
@@ -186,14 +242,18 @@ ReviewCard _card(int id, {int state = 0}) => ReviewCard(
 
 class _RecordingWidgetStore implements RecallWidgetStore {
   final updates = <RecallWidgetSnapshot>[];
+  final operations = <String>[];
   int clearCount = 0;
   int updateAttempts = 0;
   bool failNextClear = false;
   bool failNextUpdate = false;
+  Completer<void>? nextUpdateStarted;
+  Completer<void>? nextUpdateGate;
 
   @override
   Future<void> clear() async {
     clearCount++;
+    operations.add('clear');
     if (failNextClear) {
       failNextClear = false;
       throw StateError('transient App Group failure');
@@ -203,10 +263,16 @@ class _RecordingWidgetStore implements RecallWidgetStore {
   @override
   Future<void> update(RecallWidgetSnapshot snapshot) async {
     updateAttempts++;
+    nextUpdateStarted?.complete();
+    nextUpdateStarted = null;
+    final gate = nextUpdateGate;
+    nextUpdateGate = null;
+    await gate?.future;
     if (failNextUpdate) {
       failNextUpdate = false;
       throw StateError('transient App Group failure');
     }
     updates.add(snapshot);
+    operations.add('update:${snapshot.dueCount}');
   }
 }

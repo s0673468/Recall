@@ -1447,12 +1447,14 @@ class ReviewController extends ChangeNotifier {
   /// are never clobbered.
   Future<void> _flushOnce() async {
     final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
     final pending = await store.outbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
     var sent = 0;
     for (final entry in pending) {
-      if (store.activeOwnerScope != ownerScope) break;
+      if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       try {
         final logId = await api.applyReview(entry);
         sent++;
@@ -1470,9 +1472,21 @@ class ReviewController extends ChangeNotifier {
       }
     }
     final remaining = await store.removeFirst(sent, ownerScope: ownerScope);
-    if (_state.pendingSync != remaining) {
+    if (_flushStillOwnsSession(ownerId, ownerScope) &&
+        _state.pendingSync != remaining) {
       _set(_state.copyWith(pendingSync: remaining));
     }
+  }
+
+  /// Production local state is owner-aware, so both the API session and the
+  /// hashed storage namespace must still name the account that began a flush.
+  /// The unscoped branch preserves the deliberately session-free unit harness.
+  bool _flushStillOwnsSession(String? ownerId, String? ownerScope) {
+    if (ownerScope == null) return !store.ownerAware;
+    return ownerId != null &&
+        api.currentUser?.id == ownerId &&
+        store.activeOwnerScope == ownerScope &&
+        store.isActiveOwner(ownerId);
   }
 
   /// Single-flight flag flush, structurally identical to [_flushOutbox] but on
@@ -1507,12 +1521,14 @@ class ReviewController extends ChangeNotifier {
   /// this makes no state change — it stays silent and out of the review path.
   Future<void> _flushFlagsOnce() async {
     final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
     final pending = await store.flagOutbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
     var sent = 0;
     for (final entry in pending) {
-      if (store.activeOwnerScope != ownerScope) break;
+      if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       try {
         await api.applyFlag(entry);
         sent++;

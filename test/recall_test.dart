@@ -638,6 +638,14 @@ Future<void> _enqueuePendingReview({
   await store.enqueueReview(entry);
 }
 
+User _testUser(String id) => User(
+  id: id,
+  appMetadata: const {},
+  userMetadata: const {},
+  aud: 'authenticated',
+  createdAt: DateTime.utc(2026, 8, 23).toIso8601String(),
+);
+
 void main() {
   test('review events identify the native iOS client', () {
     expect(
@@ -1979,6 +1987,49 @@ void main() {
         expect(api.applied.length, 2);
         expect(controller.state.pendingSync, 0);
         expect(controller.state.index, 2);
+      },
+    );
+
+    test(
+      'an account switch stops the old review outbox after its in-flight item',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final cards = [_card(id: 1), _card(id: 2)];
+        final api = _FakeRecallApi(cards)..user = _testUser('account-a');
+        final store = LocalReviewStore();
+        await store.activateOwner('account-a');
+        await _enqueuePendingReview(store: store, api: api, card: cards[0]);
+        await _enqueuePendingReview(store: store, api: api, card: cards[1]);
+        final firstDeliveryStarted = Completer<void>();
+        final releaseFirstDelivery = Completer<void>();
+        var deliveryCount = 0;
+        api.beforeApplyReview = () {
+          deliveryCount++;
+          if (deliveryCount == 1) {
+            firstDeliveryStarted.complete();
+            return releaseFirstDelivery.future;
+          }
+          return Future<void>.value();
+        };
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        final sync = controller.syncPending();
+        await firstDeliveryStarted.future;
+        // Supabase has replaced its session, but the serialized local cleanup
+        // has not yet released account A's namespace.
+        api.user = _testUser('account-b');
+        releaseFirstDelivery.complete();
+        await sync;
+
+        expect(api.applied.map((entry) => entry['card_id']), [1]);
+        final accountARemaining = await store.outbox();
+        expect(accountARemaining, hasLength(1));
+        expect(accountARemaining.single['card_id'], 2);
       },
     );
   });
@@ -4393,6 +4444,45 @@ void main() {
       expect(api.flagged.single['card_id'], 1);
       expect(await store.flagOutbox(), isEmpty);
     });
+
+    test(
+      'an account switch stops the old flag outbox after its in-flight item',
+      () async {
+        final api = _FakeRecallApi(const [])..user = _testUser('account-a');
+        final store = LocalReviewStore();
+        await store.activateOwner('account-a');
+        await store.enqueueFlag({'card_id': 1, 'client_id': 'flag-a-1'});
+        await store.enqueueFlag({'card_id': 2, 'client_id': 'flag-a-2'});
+        final firstDeliveryStarted = Completer<void>();
+        final releaseFirstDelivery = Completer<void>();
+        var deliveryCount = 0;
+        api.beforeApplyFlag = () {
+          deliveryCount++;
+          if (deliveryCount == 1) {
+            firstDeliveryStarted.complete();
+            return releaseFirstDelivery.future;
+          }
+          return Future<void>.value();
+        };
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        final sync = controller.syncPending();
+        await firstDeliveryStarted.future;
+        api.user = _testUser('account-b');
+        releaseFirstDelivery.complete();
+        await sync;
+
+        expect(api.flagged.map((entry) => entry['card_id']), [1]);
+        final accountARemaining = await store.flagOutbox();
+        expect(accountARemaining, hasLength(1));
+        expect(accountARemaining.single['card_id'], 2);
+      },
+    );
 
     test('queued flags survive a store reload (simulated restart)', () async {
       final api1 = _FakeRecallApi([_card(id: 3)]);

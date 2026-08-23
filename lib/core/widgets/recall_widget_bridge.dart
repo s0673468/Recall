@@ -69,6 +69,9 @@ class RecallWidgetPublisher {
   int? _lastDueCount;
   DateTime? _lastUpdatedAt;
   RecallWidgetSnapshot? _queuedSnapshot;
+  int? _queuedGeneration;
+  String? _ownerId;
+  int _sessionGeneration = 0;
   bool _cleared = false;
   bool _clearQueued = false;
   bool _signedIn = false;
@@ -76,8 +79,21 @@ class RecallWidgetPublisher {
 
   RecallWidgetPublisher({required this.store});
 
-  Future<void> publish({required bool signedIn, required ReviewState state}) {
+  Future<void> publish({
+    required bool signedIn,
+    String? ownerId,
+    required ReviewState state,
+  }) {
+    final sessionChanged =
+        signedIn != _signedIn ||
+        (signedIn && ownerId != null && ownerId != _ownerId);
+    if (sessionChanged) {
+      _sessionGeneration++;
+      _lastDueCount = null;
+      _lastUpdatedAt = null;
+    }
     _signedIn = signedIn;
+    _ownerId = signedIn ? ownerId : null;
     if (!signedIn) {
       if (_cleared || _clearQueued) return _pending;
       _lastDueCount = null;
@@ -96,20 +112,30 @@ class RecallWidgetPublisher {
       dueCount: dueCount,
       updatedAt: updatedAt.toUtc(),
     );
-    if (_queuedSnapshot == snapshot) return _pending;
+    final generation = _sessionGeneration;
+    if (_queuedSnapshot == snapshot && _queuedGeneration == generation) {
+      return _pending;
+    }
     _queuedSnapshot = snapshot;
-    return _publishSnapshot(snapshot);
+    _queuedGeneration = generation;
+    return _publishSnapshot(snapshot, generation);
   }
 
-  Future<void> _publishSnapshot(RecallWidgetSnapshot snapshot) async {
+  Future<void> _publishSnapshot(
+    RecallWidgetSnapshot snapshot,
+    int generation,
+  ) async {
     try {
       await _enqueue(() => store.update(snapshot));
-      if (_signedIn) {
+      if (_signedIn && _sessionGeneration == generation) {
         _lastDueCount = snapshot.dueCount;
         _lastUpdatedAt = snapshot.updatedAt;
       }
     } finally {
-      if (_queuedSnapshot == snapshot) _queuedSnapshot = null;
+      if (_queuedSnapshot == snapshot && _queuedGeneration == generation) {
+        _queuedSnapshot = null;
+        _queuedGeneration = null;
+      }
     }
   }
 
@@ -180,10 +206,12 @@ class _RecallWidgetBridgeState extends State<RecallWidgetBridge> {
   }
 
   void _publish() {
+    final owner = widget.controller.currentUser;
     unawaited(
       _publisher
           .publish(
-            signedIn: widget.controller.currentUser != null,
+            signedIn: owner != null,
+            ownerId: owner?.id,
             state: widget.controller.state,
           )
           .catchError((Object error, StackTrace stackTrace) {
