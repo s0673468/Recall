@@ -29,10 +29,12 @@ the existing private virtual environment, then writes an owner-only LaunchAgent
 that executes the reviewed repository source directly:
 
 ```bash
-python3 tools/recall_sync/install_runtime.py
+~/Code/_runtime/recall-anki-sync/.venv/bin/python \
+  tools/recall_sync/install_runtime.py
 launchctl bootout "gui/$(id -u)" \
   ~/Library/LaunchAgents/com.german.recall-autosync.plist 2>/dev/null || true
-python3 tools/recall_sync/install_runtime.py --apply
+~/Code/_runtime/recall-anki-sync/.venv/bin/python \
+  tools/recall_sync/install_runtime.py --apply
 launchctl bootstrap "gui/$(id -u)" \
   ~/Library/LaunchAgents/com.german.recall-autosync.plist
 ```
@@ -48,4 +50,6 @@ atomic replacement keeps at most 100 events and 64 KiB. Import failure does not
 advance the source stamp. Concept sync remains additive; either child failure
 keeps the source revision pending for the LaunchAgent's bounded 15-minute retry.
 Each child process has a 20-minute timeout, and both the Anki collection and
-METIS concept graph use nanosecond change tokens.
+METIS concept graph use nanosecond change tokens. A private
+`METIS_CONCEPTS_YAML` override controls the runner, its change token, and the
+LaunchAgent watch path.

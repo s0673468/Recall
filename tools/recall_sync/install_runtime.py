@@ -16,6 +16,21 @@ from typing import Sequence
 LABEL = "com.german.recall-autosync"
 
 
+def effective_concepts_path(*, runtime_dir: Path, configured: Path) -> Path:
+    """Resolve the documented private-env override used by the runner."""
+    env_path = runtime_dir / ".env"
+    if not env_path.exists():
+        return configured.expanduser().resolve()
+    try:
+        from dotenv import dotenv_values
+    except ImportError as exc:
+        raise RuntimeError(
+            "python-dotenv is missing; run the installer with the runtime Python"
+        ) from exc
+    value = dotenv_values(env_path).get("METIS_CONCEPTS_YAML")
+    return Path(value or configured).expanduser().resolve()
+
+
 def build_plist(
     *,
     python: Path,
@@ -151,13 +166,18 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     repo_root = args.repo_root.expanduser().resolve()
+    runtime_dir = args.runtime_dir.expanduser().resolve()
+    concepts = effective_concepts_path(
+        runtime_dir=runtime_dir,
+        configured=args.concepts,
+    )
     payload = build_plist(
-        python=(args.runtime_dir / ".venv/bin/python").expanduser().resolve(),
+        python=runtime_dir / ".venv/bin/python",
         runner=repo_root / "tools/recall_sync/run_autosync.py",
         repo_root=repo_root,
-        runtime_dir=args.runtime_dir.expanduser().resolve(),
+        runtime_dir=runtime_dir,
         collection=args.collection.expanduser().resolve(),
-        concepts=args.concepts.expanduser().resolve(),
+        concepts=concepts,
         log_path=args.log.expanduser().resolve(),
     )
     if not args.apply:
@@ -165,9 +185,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     backup = install(
         repo_root=repo_root,
-        runtime_dir=args.runtime_dir.expanduser().resolve(),
+        runtime_dir=runtime_dir,
         collection=args.collection.expanduser().resolve(),
-        concepts=args.concepts.expanduser().resolve(),
+        concepts=concepts,
         log_path=args.log.expanduser().resolve(),
         launch_agent=args.launch_agent.expanduser().resolve(),
     )

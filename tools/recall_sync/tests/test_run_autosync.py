@@ -244,7 +244,49 @@ class AutosyncTests(unittest.TestCase):
             self.assertEqual(runner.call_count, 2)
             self.assertEqual(
                 runner.call_args_list[1].kwargs["env"]["METIS_CONCEPTS_YAML"],
-                str(concepts),
+                str(concepts.resolve()),
+            )
+
+    def test_private_env_concept_override_controls_revision_and_child(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repo, runtime, collection, concepts, log = self.fixture(Path(directory))
+            override = Path(directory) / "alternate-concepts.yaml"
+            override.write_text("nodes: []\n", encoding="utf-8")
+            (runtime / ".last_sync_mtime").write_text(
+                f"{collection.stat().st_mtime_ns}:{concepts.stat().st_mtime_ns}",
+                encoding="utf-8",
+            )
+            runner = mock.Mock(
+                side_effect=[
+                    subprocess.CompletedProcess([], 0),
+                    subprocess.CompletedProcess([], 0),
+                ]
+            )
+
+            result = run_autosync.run_once(
+                repo_root=repo,
+                runtime_dir=runtime,
+                collection=collection,
+                concepts=concepts,
+                log_path=log,
+                settle_seconds=0,
+                command_runner=runner,
+                env_loader=lambda _: {
+                    "SUPABASE_URL": "https://example.invalid",
+                    "SUPABASE_SERVICE_KEY": "secret",
+                    "METIS_CONCEPTS_YAML": str(override),
+                },
+            )
+
+            self.assertEqual(result, 0)
+            self.assertEqual(runner.call_count, 2)
+            self.assertEqual(
+                runner.call_args_list[1].kwargs["env"]["METIS_CONCEPTS_YAML"],
+                str(override.resolve()),
+            )
+            self.assertEqual(
+                (runtime / ".last_sync_mtime").read_text().strip(),
+                f"{collection.stat().st_mtime_ns}:{override.stat().st_mtime_ns}",
             )
 
     def test_timeout_is_bounded_logged_and_leaves_the_stamp_pending(self) -> None:
@@ -315,6 +357,22 @@ class AutosyncTests(unittest.TestCase):
 
 
 class InstallerTests(unittest.TestCase):
+    def test_private_env_concept_override_controls_watch_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / "runtime"
+            runtime.mkdir()
+            override = Path(directory) / "alternate-concepts.yaml"
+            (runtime / ".env").write_text(
+                f"METIS_CONCEPTS_YAML={override}\n", encoding="utf-8"
+            )
+
+            result = install_runtime.effective_concepts_path(
+                runtime_dir=runtime,
+                configured=Path(directory) / "default-concepts.yaml",
+            )
+
+            self.assertEqual(result, override.resolve())
+
     def test_plist_runs_reviewed_source_and_discards_raw_output(self) -> None:
         payload = install_runtime.build_plist(
             python=Path("/runtime/.venv/bin/python"),

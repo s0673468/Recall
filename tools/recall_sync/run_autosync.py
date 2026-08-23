@@ -178,28 +178,6 @@ def run_once(
             time.sleep(settle_seconds)
         run_id = str(uuid.uuid4())
         try:
-            source_revision = (
-                f"{collection.stat().st_mtime_ns}:"
-                f"{concepts.stat().st_mtime_ns}"
-            )
-        except OSError:
-            append_event(
-                log_path,
-                _event(
-                    operation="read_sources",
-                    outcome="failed",
-                    cause_code="sync_source_unavailable",
-                    retryable=True,
-                    run_id=run_id,
-                ),
-            )
-            return 1
-
-        stamp_path = runtime_dir / ".last_sync_mtime"
-        if _read_stamp(stamp_path) == source_revision:
-            return 0
-
-        try:
             runtime_values = dict(env_loader(runtime_dir / ".env"))
         except Exception:
             append_event(
@@ -226,9 +204,34 @@ def run_once(
             )
             return 1
 
+        effective_concepts = Path(
+            runtime_values.get("METIS_CONCEPTS_YAML", str(concepts))
+        ).expanduser().resolve()
+        try:
+            source_revision = (
+                f"{collection.stat().st_mtime_ns}:"
+                f"{effective_concepts.stat().st_mtime_ns}"
+            )
+        except OSError:
+            append_event(
+                log_path,
+                _event(
+                    operation="read_sources",
+                    outcome="failed",
+                    cause_code="sync_source_unavailable",
+                    retryable=True,
+                    run_id=run_id,
+                ),
+            )
+            return 1
+
+        stamp_path = runtime_dir / ".last_sync_mtime"
+        if _read_stamp(stamp_path) == source_revision:
+            return 0
+
         child_env = dict(os.environ)
         child_env.update(runtime_values)
-        child_env["METIS_CONCEPTS_YAML"] = str(concepts)
+        child_env["METIS_CONCEPTS_YAML"] = str(effective_concepts)
         commands: Sequence[tuple[str, Path]] = (
             ("import_collection", repo_root / "tools/anki_revision/import_to_supabase.py"),
             ("sync_concepts", repo_root / "tools/recall_sync/sync_concept_nodes.py"),
