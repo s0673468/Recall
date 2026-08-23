@@ -10,12 +10,14 @@ class RatingBar extends StatelessWidget {
   final Map<Rating, DateTime> preview;
   final DateTime? previewAt;
   final ValueChanged<Rating> onRate;
+  final bool enabled;
 
   const RatingBar({
     super.key,
     required this.preview,
     this.previewAt,
     required this.onRate,
+    this.enabled = true,
   });
 
   static const List<(Rating, String, Color)> _defs = [
@@ -71,7 +73,7 @@ class RatingBar extends StatelessWidget {
       button: true,
       excludeSemantics: true,
       child: FilledButton(
-        onPressed: () => onRate(rating),
+        onPressed: enabled ? () => onRate(rating) : null,
         style: FilledButton.styleFrom(
           minimumSize: const Size(0, 48),
           backgroundColor: primary

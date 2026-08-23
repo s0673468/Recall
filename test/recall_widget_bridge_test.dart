@@ -80,6 +80,30 @@ void main() {
     expect(store.clearCount, 2);
   });
 
+  test(
+    'retries an unchanged snapshot after a transient update failure',
+    () async {
+      store.failNextUpdate = true;
+      final now = DateTime.utc(2026, 7, 13, 12, 30);
+      final ready = ReviewState(
+        loading: false,
+        globalDueCount: 9,
+        globalDueUpdatedAt: now,
+      );
+
+      await expectLater(
+        publisher.publish(signedIn: true, state: ready),
+        throwsStateError,
+      );
+      await publisher.publish(signedIn: true, state: ready);
+
+      expect(store.updateAttempts, 2);
+      expect(store.updates, [
+        RecallWidgetSnapshot(dueCount: 9, updatedAt: now),
+      ]);
+    },
+  );
+
   test('native channel receives only count and timestamp', () async {
     final now = DateTime.utc(2026, 7, 13, 12, 30);
     final calls = <MethodCall>[];
@@ -163,7 +187,9 @@ ReviewCard _card(int id, {int state = 0}) => ReviewCard(
 class _RecordingWidgetStore implements RecallWidgetStore {
   final updates = <RecallWidgetSnapshot>[];
   int clearCount = 0;
+  int updateAttempts = 0;
   bool failNextClear = false;
+  bool failNextUpdate = false;
 
   @override
   Future<void> clear() async {
@@ -176,6 +202,11 @@ class _RecordingWidgetStore implements RecallWidgetStore {
 
   @override
   Future<void> update(RecallWidgetSnapshot snapshot) async {
+    updateAttempts++;
+    if (failNextUpdate) {
+      failNextUpdate = false;
+      throw StateError('transient App Group failure');
+    }
     updates.add(snapshot);
   }
 }

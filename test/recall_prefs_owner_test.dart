@@ -198,6 +198,40 @@ void main() {
     },
   );
 
+  test('a corrupt pending preference cannot block cloud recovery', () async {
+    final api = _PrefsRecallApi()
+      ..useOwner('owner-a')
+      ..cloudByOwner['owner-a'] = const RecallPrefs(
+        newLimitDefault: 17,
+      ).toJson();
+    addTearDown(api.authStates.close);
+    addTearDown(api.client.dispose);
+    SharedPreferences.setMockInitialValues({
+      RecallPrefsController.localKeyForOwner('owner-a'):
+          '{"new_limit_default":8}',
+      RecallPrefsController.pendingKeyForOwner('owner-a'): '{',
+    });
+    final prefs = RecallPrefsController(api: api);
+
+    await prefs.activateOwner('owner-a');
+    expect(prefs.value.newLimitDefault, 8);
+    await prefs.syncOwner();
+
+    expect(prefs.value.newLimitDefault, 17);
+    expect(api.prefsFetches, 1);
+    final storage = await SharedPreferences.getInstance();
+    expect(
+      storage.getString(RecallPrefsController.pendingKeyForOwner('owner-a')),
+      isNull,
+    );
+    expect(
+      storage.getString(
+        RecallPrefsController.corruptPendingKeyForOwner('owner-a'),
+      ),
+      '{',
+    );
+  });
+
   test(
     'overlapping updates leave the latest cloud value authoritative',
     () async {

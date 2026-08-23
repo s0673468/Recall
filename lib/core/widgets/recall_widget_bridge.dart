@@ -68,6 +68,7 @@ class RecallWidgetPublisher {
 
   int? _lastDueCount;
   DateTime? _lastUpdatedAt;
+  RecallWidgetSnapshot? _queuedSnapshot;
   bool _cleared = false;
   bool _clearQueued = false;
   bool _signedIn = false;
@@ -91,13 +92,25 @@ class RecallWidgetPublisher {
     if (_lastDueCount == dueCount && _lastUpdatedAt == updatedAt) {
       return _pending;
     }
-    _lastDueCount = dueCount;
-    _lastUpdatedAt = updatedAt;
     final snapshot = RecallWidgetSnapshot(
       dueCount: dueCount,
       updatedAt: updatedAt.toUtc(),
     );
-    return _enqueue(() => store.update(snapshot));
+    if (_queuedSnapshot == snapshot) return _pending;
+    _queuedSnapshot = snapshot;
+    return _publishSnapshot(snapshot);
+  }
+
+  Future<void> _publishSnapshot(RecallWidgetSnapshot snapshot) async {
+    try {
+      await _enqueue(() => store.update(snapshot));
+      if (_signedIn) {
+        _lastDueCount = snapshot.dueCount;
+        _lastUpdatedAt = snapshot.updatedAt;
+      }
+    } finally {
+      if (_queuedSnapshot == snapshot) _queuedSnapshot = null;
+    }
   }
 
   Future<void> _clearOnSignOut() async {

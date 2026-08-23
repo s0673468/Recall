@@ -36,6 +36,7 @@ class RecallApi implements ReviewReplayGateway {
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
       'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg,tags)';
   static const _duePageSize = 500;
+  static const _statsPageSize = 500;
   static const contentRevalidationBatchSize = 20;
   static const _contentRevalidationPageSize = 50;
   static const _contentRevalidationScanLimit = 5000;
@@ -461,13 +462,23 @@ class RecallApi implements ReviewReplayGateway {
     PostgrestFilterBuilder<List<Map<String, dynamic>>> query,
   ) async {
     final rows = <Map<String, dynamic>>[];
-    for (var offset = 0; ; offset += _duePageSize) {
-      final page = await query
+    DateTime? afterDue;
+    int? afterId;
+    while (true) {
+      var pageQuery = query;
+      if (afterDue != null && afterId != null) {
+        final due = afterDue.toUtc().toIso8601String();
+        pageQuery = pageQuery.or('due.gt.$due,and(due.eq.$due,id.gt.$afterId)');
+      }
+      final page = await pageQuery
           .order('due', ascending: true)
           .order('id', ascending: true)
-          .range(offset, offset + _duePageSize - 1);
+          .limit(_duePageSize);
       rows.addAll(page);
       if (page.length < _duePageSize) return rows;
+      final last = page.last;
+      afterDue = DateTime.parse(last['due'] as String);
+      afterId = (last['id'] as num).toInt();
     }
   }
 
@@ -905,11 +916,30 @@ class RecallApi implements ReviewReplayGateway {
         .toUtc()
         .subtract(Duration(days: days))
         .toIso8601String();
-    final rows = await client
-        .from('review_log')
-        .select('card_id,guid,rating_at,rating,state_after,due_after')
-        .gte('rating_at', since)
-        .order('rating_at', ascending: true);
+    final rows = <Map<String, dynamic>>[];
+    DateTime? afterRatingAt;
+    int? afterId;
+    while (true) {
+      var query = client
+          .from('review_log')
+          .select('id,card_id,guid,rating_at,rating,state_after,due_after')
+          .gte('rating_at', since);
+      if (afterRatingAt != null && afterId != null) {
+        final at = afterRatingAt.toUtc().toIso8601String();
+        query = query.or(
+          'rating_at.gt.$at,and(rating_at.eq.$at,id.gt.$afterId)',
+        );
+      }
+      final page = await query
+          .order('rating_at', ascending: true)
+          .order('id', ascending: true)
+          .limit(_statsPageSize);
+      rows.addAll(page);
+      if (page.length < _statsPageSize) break;
+      final last = page.last;
+      afterRatingAt = DateTime.parse(last['rating_at'] as String);
+      afterId = (last['id'] as num).toInt();
+    }
     return [
       for (final r in rows)
         ReviewLogEntry(
@@ -930,11 +960,22 @@ class RecallApi implements ReviewReplayGateway {
   /// the service parses `node::<id>` tokens out of each tag string. Only tagged
   /// notes are fetched, so the payload stays small.
   Future<Map<String, String>> fetchNoteTags() async {
-    final rows = await client
-        .from('notes')
-        .select('guid,tags')
-        .eq('deleted', false)
-        .like('tags', '%node::%');
+    final rows = <Map<String, dynamic>>[];
+    String? afterGuid;
+    while (true) {
+      var query = client
+          .from('notes')
+          .select('guid,tags')
+          .eq('deleted', false)
+          .like('tags', '%node::%');
+      if (afterGuid != null) query = query.gt('guid', afterGuid);
+      final page = await query
+          .order('guid', ascending: true)
+          .limit(_statsPageSize);
+      rows.addAll(page);
+      if (page.length < _statsPageSize) break;
+      afterGuid = page.last['guid'] as String;
+    }
     return {
       for (final r in rows)
         if (r['guid'] != null)
@@ -989,19 +1030,38 @@ class RecallApi implements ReviewReplayGateway {
   /// cards a plain ranged select is well within limits.
   Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) async {
     if (includedDeckIds != null && includedDeckIds.isEmpty) return const [];
-    final select = includedDeckIds == null ? 'due' : 'due,notes!inner(deck_id)';
-    var query = client
-        .from('cards')
-        .select(select)
-        .eq('deleted', false)
-        .eq('suspended', false)
-        .neq('state', 0)
-        .not('due', 'is', null);
-    if (includedDeckIds != null) {
-      final ids = includedDeckIds.toList()..sort();
-      query = query.inFilter('notes.deck_id', ids);
+    final select = includedDeckIds == null
+        ? 'id,due'
+        : 'id,due,notes!inner(deck_id)';
+    final rows = <Map<String, dynamic>>[];
+    DateTime? afterDue;
+    int? afterId;
+    while (true) {
+      var query = client
+          .from('cards')
+          .select(select)
+          .eq('deleted', false)
+          .eq('suspended', false)
+          .neq('state', 0)
+          .not('due', 'is', null);
+      if (includedDeckIds != null) {
+        final ids = includedDeckIds.toList()..sort();
+        query = query.inFilter('notes.deck_id', ids);
+      }
+      if (afterDue != null && afterId != null) {
+        final due = afterDue.toUtc().toIso8601String();
+        query = query.or('due.gt.$due,and(due.eq.$due,id.gt.$afterId)');
+      }
+      final page = await query
+          .order('due', ascending: true)
+          .order('id', ascending: true)
+          .limit(_statsPageSize);
+      rows.addAll(page);
+      if (page.length < _statsPageSize) break;
+      final last = page.last;
+      afterDue = DateTime.parse(last['due'] as String);
+      afterId = (last['id'] as num).toInt();
     }
-    final rows = await query.limit(5000);
     return [
       for (final r in rows)
         if (r['due'] != null) DateTime.parse(r['due'] as String).toLocal(),

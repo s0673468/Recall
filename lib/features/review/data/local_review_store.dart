@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catch_up_state.dart';
@@ -31,12 +32,18 @@ class LocalReviewStore {
   static const catchUpKey = 'recall_catch_up_v1';
   static const remediationKey = 'recall_remediation_v1';
   static const installIdKey = 'recall_install_id_v1';
+  static const _legacyOwnerClaimKey = 'recall_local_state_owner_v1';
+  static const _ownerMigrationKey = 'recall_local_state_migrated_v1';
   static const maxDailyRemediations = 3;
 
   Future<void> _outboxTail = Future.value();
   Future<SharedPreferences>? _prefsFuture;
   String? _installId;
   int _eventSequence = 0;
+  String? _activeOwnerScope;
+  bool _ownerAware = false;
+
+  String? get activeOwnerScope => _activeOwnerScope;
 
   Future<SharedPreferences> get _prefs =>
       _prefsFuture ??= SharedPreferences.getInstance();
@@ -107,18 +114,84 @@ class LocalReviewStore {
     return run;
   }
 
+  /// Select the account namespace used by every cache and durable outbox.
+  ///
+  /// The first upgraded account claims the legacy unscoped values. They are
+  /// copied once, then left untouched as recovery evidence; later accounts can
+  /// never inherit them. The install id deliberately remains device-scoped.
+  Future<void> activateOwner(String ownerId) {
+    if (ownerId.trim().isEmpty) {
+      return Future.error(ArgumentError.value(ownerId, 'ownerId'));
+    }
+    final scope = sha256
+        .convert(utf8.encode(ownerId))
+        .toString()
+        .substring(0, 24);
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final claimed = prefs.getString(_legacyOwnerClaimKey);
+      if (claimed == null) {
+        if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
+          throw LocalOutboxWriteException(_legacyOwnerClaimKey);
+        }
+      }
+      final ownerClaim = claimed ?? scope;
+      final migrationKey = '$_ownerMigrationKey:$scope';
+      if (ownerClaim == scope && prefs.getBool(migrationKey) != true) {
+        for (final base in [
+          _snapshotKey,
+          _outboxKey,
+          _flagOutboxKey,
+          catchUpKey,
+          remediationKey,
+        ]) {
+          final legacy = prefs.getString(base);
+          final scoped = _scopedKey(base, scope);
+          if (legacy != null && prefs.getString(scoped) == null) {
+            if (!await prefs.setString(scoped, legacy)) {
+              throw LocalOutboxWriteException(scoped);
+            }
+          }
+        }
+        if (!await prefs.setBool(migrationKey, true)) {
+          throw LocalOutboxWriteException(migrationKey);
+        }
+      }
+      _ownerAware = true;
+      _activeOwnerScope = scope;
+    });
+  }
+
+  Future<void> releaseOwner() => _withOutboxLock(() async {
+    _ownerAware = true;
+    _activeOwnerScope = null;
+  });
+
+  String _storageKey(String base, {String? ownerScope}) {
+    final scope = ownerScope ?? _activeOwnerScope;
+    if (scope != null) return _scopedKey(base, scope);
+    if (_ownerAware) {
+      throw StateError('Recall local state has no active owner.');
+    }
+    return base;
+  }
+
+  static String _scopedKey(String base, String scope) => '$base:owner:$scope';
+
   Future<void> saveSnapshot({
     required List<DeckRow> decks,
     required List<ReviewCard> queue,
+    int? deckId,
     int? globalDueCount,
     DateTime? globalDueUpdatedAt,
     bool Function()? canWrite,
   }) async {
+    final snapshotKey = _snapshotStorageKey(deckId);
     await _withOutboxLock(() async {
       final prefs = await _prefs;
       if (canWrite != null && !canWrite()) return;
       await prefs.setString(
-        _snapshotKey,
+        snapshotKey,
         jsonEncode({
           'savedAt': DateTime.now().toUtc().toIso8601String(),
           'globalDueCount': globalDueCount,
@@ -138,9 +211,10 @@ class LocalReviewStore {
       DateTime? globalDueUpdatedAt,
     })?
   >
-  loadSnapshot() async {
+  loadSnapshot({int? deckId}) async {
+    final snapshotKey = _snapshotStorageKey(deckId);
     final prefs = await _prefs;
-    final raw = prefs.getString(_snapshotKey);
+    final raw = prefs.getString(snapshotKey);
     if (raw == null) return null;
     try {
       final m = jsonDecode(raw) as Map<String, dynamic>;
@@ -163,13 +237,19 @@ class LocalReviewStore {
     }
   }
 
+  String _snapshotStorageKey(int? deckId, {String? ownerScope}) {
+    final base = _storageKey(_snapshotKey, ownerScope: ownerScope);
+    return deckId == null ? base : '$base:deck:$deckId';
+  }
+
   /// Append one review; returns the new pending count so the caller can
   /// update its badge without re-reading + re-decoding the whole outbox.
   Future<int> enqueueReview(Map<String, dynamic> entry) {
+    final key = _storageKey(_outboxKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readOutbox(prefs)..add(entry);
-      await _writeList(prefs, _outboxKey, list);
+      final list = _readOutbox(prefs, key)..add(entry);
+      await _writeList(prefs, key, list);
       return list.length;
     });
   }
@@ -177,30 +257,32 @@ class LocalReviewStore {
   /// Read the queued reviews. Serialized through the outbox lock so a flush
   /// starting right after an undo's [removeEntry] can never read the stale
   /// pre-removal list and deliver a review the user just took back.
-  Future<List<Map<String, dynamic>>> outbox() {
+  Future<List<Map<String, dynamic>>> outbox({String? ownerScope}) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      return _readOutbox(prefs);
+      return _readOutbox(prefs, key);
     });
   }
 
   /// Drop the first [count] entries — the prefix a flush just delivered —
   /// and return how many remain. Entries enqueued while the flush ran are
   /// appended after that prefix, so they survive untouched.
-  Future<int> removeFirst(int count) {
+  Future<int> removeFirst(int count, {String? ownerScope}) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     if (count <= 0) {
       return _withOutboxLock(() async {
         final prefs = await _prefs;
-        return _readOutbox(prefs).length;
+        return _readOutbox(prefs, key).length;
       });
     }
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readOutbox(prefs);
+      final list = _readOutbox(prefs, key);
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
           : list.sublist(count);
-      await _writeList(prefs, _outboxKey, remaining);
+      await _writeList(prefs, key, remaining);
       return remaining.length;
     });
   }
@@ -209,13 +291,14 @@ class LocalReviewStore {
   /// rating the user just undid. Returns whether an entry was removed (false
   /// means a flush already delivered it) and the new pending count.
   Future<({bool removed, int remaining})> removeEntry(Object clientId) {
+    final key = _storageKey(_outboxKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readOutbox(prefs);
+      final list = _readOutbox(prefs, key);
       final before = list.length;
       list.removeWhere((e) => e['client_id'] == clientId);
       if (list.length != before) {
-        await _writeList(prefs, _outboxKey, list);
+        await _writeList(prefs, key, list);
       }
       return (removed: list.length != before, remaining: list.length);
     });
@@ -225,8 +308,9 @@ class LocalReviewStore {
   /// presentation state is disposable, so it falls back to opt-out rather
   /// than affecting the review outbox or queue load.
   Future<CatchUpLocalState> loadCatchUpState() async {
+    final key = _storageKey(catchUpKey);
     final prefs = await _prefs;
-    final raw = prefs.getString(catchUpKey);
+    final raw = prefs.getString(key);
     if (raw == null) return CatchUpLocalState.none;
     try {
       return CatchUpLocalState.fromJson(jsonDecode(raw));
@@ -236,13 +320,11 @@ class LocalReviewStore {
   }
 
   Future<void> saveCatchUpState(CatchUpLocalState state) {
+    final key = _storageKey(catchUpKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final written = await prefs.setString(
-        catchUpKey,
-        jsonEncode(state.toJson()),
-      );
-      if (!written) throw LocalOutboxWriteException(catchUpKey);
+      final written = await prefs.setString(key, jsonEncode(state.toJson()));
+      if (!written) throw LocalOutboxWriteException(key);
     });
   }
 
@@ -254,39 +336,42 @@ class LocalReviewStore {
 
   /// Append one flag; returns the new pending flag count.
   Future<int> enqueueFlag(Map<String, dynamic> entry) {
+    final key = _storageKey(_flagOutboxKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readList(prefs, _flagOutboxKey)..add(entry);
-      await _writeList(prefs, _flagOutboxKey, list);
+      final list = _readList(prefs, key)..add(entry);
+      await _writeList(prefs, key, list);
       return list.length;
     });
   }
 
   /// Read the queued flags (serialized through the shared outbox lock).
-  Future<List<Map<String, dynamic>>> flagOutbox() {
+  Future<List<Map<String, dynamic>>> flagOutbox({String? ownerScope}) {
+    final key = _storageKey(_flagOutboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      return _readList(prefs, _flagOutboxKey);
+      return _readList(prefs, key);
     });
   }
 
   /// Drop the first [count] flags — the prefix a flag flush just delivered —
   /// and return how many remain. Flags enqueued while the flush ran are
   /// appended after that prefix, so they survive untouched.
-  Future<int> removeFirstFlag(int count) {
+  Future<int> removeFirstFlag(int count, {String? ownerScope}) {
+    final key = _storageKey(_flagOutboxKey, ownerScope: ownerScope);
     if (count <= 0) {
       return _withOutboxLock(() async {
         final prefs = await _prefs;
-        return _readList(prefs, _flagOutboxKey).length;
+        return _readList(prefs, key).length;
       });
     }
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readList(prefs, _flagOutboxKey);
+      final list = _readList(prefs, key);
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
           : list.sublist(count);
-      await _writeList(prefs, _flagOutboxKey, remaining);
+      await _writeList(prefs, key, remaining);
       return remaining.length;
     });
   }
@@ -295,16 +380,17 @@ class LocalReviewStore {
   /// calendar day. Entries from an earlier day expire when the app next opens;
   /// the queue is a same-day nudge, not durable user history.
   Future<List<LocalRemediationItem>> remediationQueue({DateTime? now}) {
+    final key = _storageKey(remediationKey);
     final today = _dayKey(now ?? DateTime.now());
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final current = _readRemediations(prefs)
+      final current = _readRemediations(prefs, key)
           .where((item) => item.dayKey == today)
           .take(maxDailyRemediations)
           .toList();
-      final all = _readRemediations(prefs);
+      final all = _readRemediations(prefs, key);
       if (current.length != all.length) {
-        await _writeList(prefs, remediationKey, [
+        await _writeList(prefs, key, [
           for (final item in current) item.toJson(),
         ]);
       }
@@ -318,11 +404,12 @@ class LocalReviewStore {
     Iterable<String> nodeIds, {
     DateTime? now,
   }) {
+    final key = _storageKey(remediationKey);
     final queuedAt = now ?? DateTime.now();
     final today = _dayKey(queuedAt);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final current = _readRemediations(prefs)
+      final current = _readRemediations(prefs, key)
           .where((item) => item.dayKey == today)
           .take(maxDailyRemediations)
           .toList();
@@ -337,9 +424,7 @@ class LocalReviewStore {
           );
         }
       }
-      await _writeList(prefs, remediationKey, [
-        for (final item in current) item.toJson(),
-      ]);
+      await _writeList(prefs, key, [for (final item in current) item.toJson()]);
       return current;
     });
   }
@@ -347,18 +432,17 @@ class LocalReviewStore {
   /// Mark one primer remediation as read. Returns false when it was already
   /// gone, which makes repeated route completions harmless.
   Future<bool> completeRemediation(String nodeId, {DateTime? now}) {
+    final key = _storageKey(remediationKey);
     final today = _dayKey(now ?? DateTime.now());
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final current = _readRemediations(prefs)
+      final current = _readRemediations(prefs, key)
           .where((item) => item.dayKey == today)
           .take(maxDailyRemediations)
           .toList();
       final before = current.length;
       current.removeWhere((item) => item.nodeId == nodeId);
-      await _writeList(prefs, remediationKey, [
-        for (final item in current) item.toJson(),
-      ]);
+      await _writeList(prefs, key, [for (final item in current) item.toJson()]);
       return current.length != before;
     });
   }
@@ -366,18 +450,27 @@ class LocalReviewStore {
   /// Drop the cached snapshot + outboxes (called on sign-out so the next user
   /// on a shared browser can't see the previous user's cards/reviews/flags).
   Future<void> clear() {
+    final snapshotKey = _snapshotStorageKey(null);
+    final outboxKey = _storageKey(_outboxKey);
+    final flagOutboxKey = _storageKey(_flagOutboxKey);
+    final catchUpStorageKey = _storageKey(catchUpKey);
+    final remediationStorageKey = _storageKey(remediationKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      await prefs.remove(_snapshotKey);
-      await prefs.remove(_outboxKey);
-      await prefs.remove(_flagOutboxKey);
-      await prefs.remove(catchUpKey);
-      await prefs.remove(remediationKey);
+      for (final key in prefs.getKeys()) {
+        if (key == snapshotKey || key.startsWith('$snapshotKey:deck:')) {
+          await prefs.remove(key);
+        }
+      }
+      await prefs.remove(outboxKey);
+      await prefs.remove(flagOutboxKey);
+      await prefs.remove(catchUpStorageKey);
+      await prefs.remove(remediationStorageKey);
     });
   }
 
-  List<Map<String, dynamic>> _readOutbox(SharedPreferences prefs) =>
-      _readList(prefs, _outboxKey);
+  List<Map<String, dynamic>> _readOutbox(SharedPreferences prefs, String key) =>
+      _readList(prefs, key);
 
   List<Map<String, dynamic>> _readList(SharedPreferences prefs, String key) {
     final raw = prefs.getString(key);
@@ -395,8 +488,11 @@ class LocalReviewStore {
     }
   }
 
-  List<LocalRemediationItem> _readRemediations(SharedPreferences prefs) => [
-    for (final entry in _readList(prefs, remediationKey))
+  List<LocalRemediationItem> _readRemediations(
+    SharedPreferences prefs,
+    String key,
+  ) => [
+    for (final entry in _readList(prefs, key))
       if (entry['node_id'] is String && entry['queued_at'] is String)
         LocalRemediationItem.fromJson(entry),
   ];

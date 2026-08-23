@@ -61,12 +61,14 @@ class RecallDependencies {
       );
       final engine = FsrsEngine(desiredRetention: RecallPrefs.defaultRetention);
       final prefs = RecallPrefsController(api: api);
+      final store = LocalReviewStore();
       final restoredOwner = api.currentUser;
       startupStage = OperationalCauseCode.startupPreferencesFailed;
       if (restoredOwner == null) {
         await prefs.releaseOwner();
       } else {
         // Only the owner-scoped local mirror is on the startup critical path.
+        await store.activateOwner(restoredOwner.id);
         await prefs.activateOwner(restoredOwner.id);
       }
       startupStage = OperationalCauseCode.startupReminderFailed;
@@ -78,11 +80,12 @@ class RecallDependencies {
       final controller = ReviewController(
         api: api,
         engine: engine,
-        store: LocalReviewStore(),
+        store: store,
         prefs: prefs,
         beforeSessionLoad: () async {
           final owner = api.currentUser;
           if (owner == null) return;
+          await store.activateOwner(owner.id);
           await prefs.activateOwner(owner.id);
           unawaited(prefs.syncOwner());
         },
@@ -90,7 +93,11 @@ class RecallDependencies {
           try {
             await studyReminder.releaseOwner();
           } finally {
-            await prefs.releaseOwner();
+            try {
+              await prefs.releaseOwner();
+            } finally {
+              await store.releaseOwner();
+            }
           }
         },
         afterSignIn: () async {

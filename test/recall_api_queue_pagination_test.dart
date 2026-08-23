@@ -31,15 +31,18 @@ void main() {
   test('fetchQueue pages past the existing 500-row due window', () async {
     var duePage = 0;
     final orders = <String>[];
+    final cursors = <String?>[];
     final client = SupabaseClient(
       'https://example.supabase.co',
       'anon-key',
       httpClient: MockClient((request) async {
         final path = request.url.path;
         List<Map<String, dynamic>> rows;
-        if (path.endsWith('/cards') && request.url.query.contains('state=neq.0')) {
+        if (path.endsWith('/cards') &&
+            request.url.query.contains('state=neq.0')) {
           duePage++;
           orders.add(request.url.queryParameters['order'] ?? '');
+          cursors.add(request.url.queryParameters['or']);
           rows = duePage == 1
               ? [for (var i = 0; i < 500; i++) _dueRow(i)]
               : [_dueRow(500)];
@@ -64,6 +67,8 @@ void main() {
       'due.asc.nullslast,id.asc.nullslast',
       'due.asc.nullslast,id.asc.nullslast',
     ]);
+    expect(cursors.first, isNull);
+    expect(cursors.last, contains('id.gt.499'));
     expect(queue, hasLength(501));
     expect(queue.last.id, 500);
   });
