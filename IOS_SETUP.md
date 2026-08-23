@@ -27,10 +27,11 @@ data-protection Keychain and fails closed without that entitlement.
 
 ```bash
 # From the repository root.
-flutter pub get
-flutter analyze --no-pub
-flutter test --no-pub --reporter=failures-only
-flutter build ios --simulator --debug \
+./tool/bootstrap_flutter
+./tool/flutterw pub get
+./tool/flutterw analyze --no-pub
+./tool/flutterw test --no-pub --reporter=failures-only
+./tool/flutterw build ios --simulator --debug \
   --dart-define-from-file=config/supabase.local.json
 ```
 
@@ -42,7 +43,7 @@ generated signing files.
 After device validation, build a release archive with:
 
 ```bash
-flutter build ipa --release \
+./tool/flutterw build ipa --release \
   --dart-define-from-file=config/supabase.local.json
 ```
 
@@ -91,9 +92,9 @@ To place the protected local config on the clipboard without printing it:
 
 Paste that value into the secret workflow variable. The checked-in
 `ios/ci_scripts/ci_post_clone.sh` sits beside `Runner.xcworkspace`, as Xcode
-Cloud requires. It installs pinned Flutter 3.44.9, reconstructs and validates
-the ignored config, runs `flutter pub get`, and prepares the Release archive
-with Xcode Cloud's unique `CI_BUILD_NUMBER`.
+Cloud requires. It installs the exact release in `.flutter-version`,
+reconstructs and validates the ignored config, runs the checked wrapper, and
+prepares the Release archive with Xcode Cloud's unique `CI_BUILD_NUMBER`.
 `ios/ci_scripts/ci_post_xcodebuild.sh` removes the reconstructed file after
 the Xcode action. Xcode Cloud's environment is temporary, and the runtime
 config is compiled through Dart defines rather than bundled as an asset.

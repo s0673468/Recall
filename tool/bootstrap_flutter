@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+version_file="$repo_root/.flutter-version"
+
+required_version="$(python3 - "$version_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(f"Missing Flutter version file: {path}")
+value = path.read_text(encoding="utf-8").strip()
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
+    raise SystemExit(f"Invalid Flutter version in {path}: {value!r}")
+print(value)
+PY
+)"
+
+cache_base="${RECALL_FLUTTER_CACHE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/recall}"
+target="$cache_base/flutter-$required_version"
+repository="${RECALL_FLUTTER_REPOSITORY:-https://github.com/flutter/flutter.git}"
+git_bin="${RECALL_FLUTTER_GIT_BIN:-git}"
+stage="$cache_base/.flutter-$required_version.stage.$$"
+
+sdk_version() {
+  local flutter_bin="$1"
+  "$flutter_bin" --version --machine 2>/dev/null | python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+    value = payload["frameworkVersion"]
+except (json.JSONDecodeError, KeyError, TypeError):
+    raise SystemExit(1)
+if not isinstance(value, str) or not value:
+    raise SystemExit(1)
+print(value)
+'
+}
+
+if [[ -e "$target" ]]; then
+  if [[ -x "$target/bin/flutter" ]] &&
+      installed_version="$(sdk_version "$target/bin/flutter")" &&
+      [[ "$installed_version" == "$required_version" ]]; then
+    echo "Flutter $required_version is already installed at $target"
+    exit 0
+  fi
+  echo "Flutter cache path exists but is incomplete or has the wrong version: $target" >&2
+  echo "Move it aside, then run ./tool/bootstrap_flutter again." >&2
+  exit 1
+fi
+
+mkdir -p "$cache_base"
+if [[ -e "$stage" ]]; then
+  echo "Temporary Flutter install path already exists: $stage" >&2
+  exit 1
+fi
+
+cleanup() {
+  status=$?
+  if [[ -d "$stage" ]]; then
+    rm -rf "$stage"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+"$git_bin" clone --depth 1 --branch "$required_version" "$repository" "$stage"
+
+if [[ ! -x "$stage/bin/flutter" ]]; then
+  echo "Downloaded Flutter SDK is incomplete: $stage" >&2
+  exit 1
+fi
+if ! installed_version="$(sdk_version "$stage/bin/flutter")"; then
+  echo "Downloaded Flutter SDK returned malformed version metadata." >&2
+  exit 1
+fi
+if [[ "$installed_version" != "$required_version" ]]; then
+  echo "Downloaded Flutter SDK is $installed_version; expected $required_version." >&2
+  exit 1
+fi
+if [[ -e "$target" ]]; then
+  echo "Flutter cache path appeared during installation: $target" >&2
+  exit 1
+fi
+
+mv "$stage" "$target"
+trap - EXIT
+echo "Installed Flutter $required_version at $target"

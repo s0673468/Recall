@@ -6,8 +6,6 @@ umask 077
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="${RECALL_CI_REPO_ROOT:-${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$script_dir/../.." && pwd)}}"
 workspace="${CI_WORKSPACE:-$(dirname "$repo_root")}"
-flutter_version="${RECALL_CI_FLUTTER_VERSION:-3.47.1}"
-flutter_root="${RECALL_CI_FLUTTER_ROOT:-$workspace/flutter-$flutter_version}"
 flutter_repository="${RECALL_CI_FLUTTER_REPOSITORY:-https://github.com/flutter/flutter.git}"
 git_bin="${RECALL_CI_GIT_BIN:-git}"
 config_b64="${RECALL_SUPABASE_CONFIG_B64:-}"
@@ -25,6 +23,28 @@ fi
 
 if [[ ! -d "$repo_root" ]]; then
   echo "Recall checkout does not exist: $repo_root" >&2
+  exit 1
+fi
+
+version_file="$repo_root/.flutter-version"
+flutter_version="$(/usr/bin/python3 - "$version_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(f"Missing Flutter version file: {path}")
+value = path.read_text(encoding="utf-8").strip()
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
+    raise SystemExit(f"Invalid Flutter version in {path}: {value!r}")
+print(value)
+PY
+)"
+flutter_root="${RECALL_CI_FLUTTER_ROOT:-$workspace/flutter-$flutter_version}"
+flutter_runner="$repo_root/tool/flutterw"
+if [[ ! -x "$flutter_runner" ]]; then
+  echo "Recall Flutter wrapper is missing or not executable: $flutter_runner" >&2
   exit 1
 fi
 
@@ -84,12 +104,12 @@ if [[ ! -x "$flutter_bin" ]]; then
     "$flutter_root"
 fi
 
-export PATH="$flutter_root/bin:$PATH"
+export RECALL_FLUTTER_ROOT="$flutter_root"
 
 cd "$repo_root"
-"$flutter_bin" config --enable-ios --no-cli-animations
-"$flutter_bin" pub get
-"$flutter_bin" build ios \
+"$flutter_runner" config --enable-ios --no-cli-animations
+"$flutter_runner" pub get
+"$flutter_runner" build ios \
   --config-only \
   --release \
   --no-codesign \

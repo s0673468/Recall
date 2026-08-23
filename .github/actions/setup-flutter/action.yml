@@ -4,19 +4,22 @@ description: >
   pre-installed ~/flutter — subosito/flutter-action cache-misses there and
   re-downloads the ~4GB SDK every run. On github-hosted runners, fall back to
   subosito. Vendored verbatim from the Health repo when Recall moved out
-  (slim phase 2); keep the Flutter version pinned to Recall's tested toolchain.
-
-inputs:
-  flutter-version:
-    description: >
-      Flutter version for github-hosted runners. Ignored on self-hosted, which
-      uses whatever is pinned at ~/flutter. Keep in sync with Recall's tested toolchain.
-    required: false
-    default: "3.47.1"
+  (slim phase 2). .flutter-version is Recall's single toolchain source.
 
 runs:
   using: composite
   steps:
+    - name: Read pinned Flutter version
+      id: flutter_version
+      shell: bash
+      run: |
+        required_version="$(tr -d '\r\n' < "$GITHUB_WORKSPACE/.flutter-version")"
+        if [[ ! "$required_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "Invalid .flutter-version: $required_version" >&2
+          exit 1
+        fi
+        echo "value=$required_version" >> "$GITHUB_OUTPUT"
+
     # Self-hosted M1 org runner: Flutter is pre-installed at ~/flutter, so jobs
     # reuse it instead of re-downloading the ~4GB SDK every run.
     - name: Use pre-installed Flutter (self-hosted)
@@ -94,5 +97,9 @@ runs:
         # Pin to Recall's tested toolchain. Unpinned stable drifts ahead and fails
         # `flutter analyze` on deprecations that don't exist locally (infos are
         # fatal). Bump only with matching local and device validation.
-        flutter-version: ${{ inputs.flutter-version }}
+        flutter-version: ${{ steps.flutter_version.outputs.value }}
         cache: true
+
+    - name: Verify pinned Flutter
+      shell: bash
+      run: ./tool/flutterw --version

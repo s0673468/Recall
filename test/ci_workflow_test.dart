@@ -7,11 +7,18 @@ void main() {
   final pages = File('.github/workflows/pages.yml');
   final setupFlutter = File('.github/actions/setup-flutter/action.yml');
   final xcodeCloudSetup = File('ios/ci_scripts/ci_post_clone.sh');
+  final flutterVersion = File('.flutter-version');
   final metadata = File('.metadata');
 
   test('every build lane uses the same pinned Flutter release', () {
-    expect(setupFlutter.readAsStringSync(), contains('default: "3.47.1"'));
-    expect(xcodeCloudSetup.readAsStringSync(), contains(':-3.47.1}'));
+    expect(flutterVersion.readAsStringSync().trim(), '3.47.1');
+    expect(setupFlutter.readAsStringSync(), contains('.flutter-version'));
+    expect(
+      setupFlutter.readAsStringSync(),
+      contains('./tool/flutterw --version'),
+    );
+    expect(xcodeCloudSetup.readAsStringSync(), contains('.flutter-version'));
+    expect(xcodeCloudSetup.readAsStringSync(), contains('tool/flutterw'));
     expect(
       metadata.readAsStringSync(),
       contains('revision: "6655482ec06e547f90abf8ae7590466f4415978d"'),
@@ -42,7 +49,7 @@ void main() {
       'python -m unittest discover -s scripts/tests',
       'python -m unittest discover -s tools/fsrs_optimize/tests',
       'xcodebuild test',
-      'flutter build web --release',
+      './tool/flutterw build web --release',
     ]) {
       expect(workflow, contains(command));
     }

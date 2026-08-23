@@ -36,6 +36,11 @@ not removing that data source.
 - runs as the Recall browser/PWA surface and as installable Android and iPhone
   apps from the same tested Flutter codebase
 
+Native iOS through internal TestFlight is the active personal release target.
+The PWA stays deployed as a fallback, and Android stays buildable for platform
+continuity, but neither receives routine signed-in or physical-device acceptance
+unless that target is explicitly brought back into use.
+
 Recall is also the reference implementation for the shared app-family visual
 language. See [`docs/design-language.md`](docs/design-language.md) for the
 surface hierarchy, product-accent rules, and cross-platform contract.
@@ -193,18 +198,23 @@ sandbox; web builds perform no export. There is no network telemetry path.
 ## Local commands
 
 ```bash
-flutter pub get
-flutter analyze --no-pub
-flutter test --no-pub --reporter=failures-only
-flutter run -d chrome --dart-define-from-file=config/supabase.local.json
-flutter build apk --debug --no-pub \
+./tool/bootstrap_flutter
+./tool/flutterw pub get
+./tool/flutterw analyze --no-pub
+./tool/flutterw test --no-pub --reporter=failures-only
+./tool/flutterw run -d chrome --dart-define-from-file=config/supabase.local.json
+./tool/flutterw build apk --debug --no-pub \
   --dart-define-from-file=config/supabase.local.json
-flutter build ios --simulator --debug \
+./tool/flutterw build ios --simulator --debug \
   --dart-define-from-file=config/supabase.local.json
 
 # Repeatable rich-card parser benchmark (20,000 warmed operations per case).
-dart run tool/recall_performance_benchmark.dart
+./tool/flutterw pub run tool/recall_performance_benchmark.dart
 ```
+
+`.flutter-version` is the single supported SDK version. `tool/flutterw` checks
+the exact SDK before every supported command, so an older global Flutter cannot
+silently produce a different build.
 
 Use `config/supabase.local.example.json` for local bootstrapping only. Keep the
 build input to `SUPABASE_URL` plus `SUPABASE_ANON_KEY`; user access still goes
