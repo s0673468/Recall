@@ -160,6 +160,40 @@ void main() {
     expect(store.updateAttempts, 2);
   });
 
+  test('the latest rapid sign-out queues a trailing native clear', () async {
+    final now = DateTime.utc(2026, 7, 13, 12, 30);
+    final ready = ReviewState(
+      loading: false,
+      globalDueCount: 6,
+      globalDueUpdatedAt: now,
+    );
+    final firstUpdateStarted = Completer<void>();
+    final releaseFirstUpdate = Completer<void>();
+    store
+      ..nextUpdateStarted = firstUpdateStarted
+      ..nextUpdateGate = releaseFirstUpdate;
+
+    final accountA = publisher.publish(
+      signedIn: true,
+      ownerId: 'account-a',
+      state: ready,
+    );
+    await firstUpdateStarted.future;
+    final accountASignOut = publisher.publish(signedIn: false, state: ready);
+    final accountB = publisher.publish(
+      signedIn: true,
+      ownerId: 'account-b',
+      state: ready,
+    );
+    final accountBSignOut = publisher.publish(signedIn: false, state: ready);
+
+    releaseFirstUpdate.complete();
+    await Future.wait([accountA, accountASignOut, accountB, accountBSignOut]);
+
+    expect(store.operations, ['update:6', 'clear', 'update:6', 'clear']);
+    expect(store.clearCount, 2);
+  });
+
   test('native channel receives only count and timestamp', () async {
     final now = DateTime.utc(2026, 7, 13, 12, 30);
     final calls = <MethodCall>[];

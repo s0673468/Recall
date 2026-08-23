@@ -73,7 +73,7 @@ class RecallWidgetPublisher {
   String? _ownerId;
   int _sessionGeneration = 0;
   bool _cleared = false;
-  bool _clearQueued = false;
+  int? _queuedClearGeneration;
   bool _signedIn = false;
   Future<void> _pending = Future<void>.value();
 
@@ -95,10 +95,11 @@ class RecallWidgetPublisher {
     _signedIn = signedIn;
     _ownerId = signedIn ? ownerId : null;
     if (!signedIn) {
-      if (_cleared || _clearQueued) return _pending;
+      final generation = _sessionGeneration;
+      if (_cleared || _queuedClearGeneration == generation) return _pending;
       _lastDueCount = null;
       _lastUpdatedAt = null;
-      return _clearOnSignOut();
+      return _clearOnSignOut(generation);
     }
 
     _cleared = false;
@@ -139,14 +140,16 @@ class RecallWidgetPublisher {
     }
   }
 
-  Future<void> _clearOnSignOut() async {
-    _clearQueued = true;
+  Future<void> _clearOnSignOut(int generation) async {
+    _queuedClearGeneration = generation;
     try {
       await _enqueue(store.clear);
-      if (!_signedIn) _cleared = true;
+      if (!_signedIn && _sessionGeneration == generation) _cleared = true;
     } finally {
       // A failed clear must be retryable on the next signed-out publication.
-      _clearQueued = false;
+      if (_queuedClearGeneration == generation) {
+        _queuedClearGeneration = null;
+      }
     }
   }
 
