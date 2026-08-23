@@ -116,6 +116,19 @@ void main() {
       expect(BacklogCatchUp.estimatedDays(0), 0);
     });
 
+    test('estimated days accounts for capacity already used today', () {
+      expect(BacklogCatchUp.estimatedDays(80, completedToday: 2), 5);
+      expect(BacklogCatchUp.estimatedDays(20, completedToday: 19), 2);
+      expect(
+        const CatchUpView(
+          mode: CatchUpMode.active,
+          dueCount: 80,
+          completedToday: 2,
+        ).estimatedDays,
+        5,
+      );
+    });
+
     test('local mode has explicit opt-in, opt-out, and cleared states', () {
       const none = CatchUpLocalState.none;
       expect(none.mode, CatchUpMode.none);
