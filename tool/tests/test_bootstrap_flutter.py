@@ -27,7 +27,13 @@ class BootstrapFlutterTest(unittest.TestCase):
         self.cache = self.root / "cache"
         self.git_log = self.root / "git.log"
 
-    def write_fake_git(self, sdk_version: str, *, incomplete: bool = False) -> Path:
+    def write_fake_git(
+        self,
+        sdk_version: str,
+        *,
+        incomplete: bool = False,
+        first_run_noise: bool = False,
+    ) -> Path:
         fake_git = self.root / f"git-{sdk_version.replace('.', '-')}"
         lines = [
             "#!/bin/sh",
@@ -40,10 +46,22 @@ class BootstrapFlutterTest(unittest.TestCase):
             'mkdir -p "$target/bin"',
         ]
         if not incomplete:
-            lines.extend(
+            flutter_lines = [
+                'cat > "$target/bin/flutter" <<\'SH\'',
+                "#!/bin/sh",
+            ]
+            if first_run_noise:
+                flutter_lines.extend(
+                    [
+                        'if [ ! -e "$0.primed" ]; then',
+                        '  : > "$0.primed"',
+                        "  printf '%s\\n' 'bootstrapping Flutter'",
+                        "  exit 0",
+                        "fi",
+                    ]
+                )
+            flutter_lines.extend(
                 [
-                    'cat > "$target/bin/flutter" <<\'SH\'',
-                    "#!/bin/sh",
                     'if [ "$1" = "--version" ] && [ "$2" = "--machine" ]; then',
                     f"  printf '%s\\n' '{{\"frameworkVersion\":\"{sdk_version}\"}}'",
                     "  exit 0",
@@ -53,6 +71,7 @@ class BootstrapFlutterTest(unittest.TestCase):
                     'chmod +x "$target/bin/flutter"',
                 ]
             )
+            lines.extend(flutter_lines)
         fake_git.write_text("\n".join(lines) + "\n", encoding="utf-8")
         fake_git.chmod(fake_git.stat().st_mode | stat.S_IXUSR)
         return fake_git
@@ -82,7 +101,8 @@ class BootstrapFlutterTest(unittest.TestCase):
 
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(second.returncode, 0, second.stderr)
-        self.assertTrue((self.cache / "flutter-3.47.1" / "bin" / "flutter").is_file())
+        flutter = self.cache / "flutter-3.47.1" / "bin" / "flutter"
+        self.assertTrue(flutter.is_file())
         self.assertEqual(len(self.git_log.read_text(encoding="utf-8").splitlines()), 1)
         self.assertEqual(list(self.cache.glob(".flutter-*.stage.*")), [])
 
@@ -96,6 +116,15 @@ class BootstrapFlutterTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("incomplete or has the wrong version", result.stderr)
         self.assertFalse(self.git_log.exists())
+
+    def test_fresh_sdk_is_primed_before_machine_metadata_is_validated(self) -> None:
+        fake_git = self.write_fake_git("3.47.1", first_run_noise=True)
+
+        result = self.run_bootstrap(fake_git)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        flutter = self.cache / "flutter-3.47.1" / "bin" / "flutter"
+        self.assertTrue(flutter.is_file())
 
     def test_wrong_download_is_not_promoted_and_stage_is_removed(self) -> None:
         fake_git = self.write_fake_git("3.44.2")

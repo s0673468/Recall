@@ -28,6 +28,9 @@ stage="$cache_base/.flutter-$required_version.stage.$$"
 
 sdk_version() {
   local flutter_bin="$1"
+  # A fresh checkout bootstraps its Dart SDK and Flutter tool on first use.
+  # Prime that one-time setup before requiring clean machine-readable JSON.
+  "$flutter_bin" --version --machine >/dev/null 2>&1 || return 1
   "$flutter_bin" --version --machine 2>/dev/null | python3 -c '
 import json
 import sys
