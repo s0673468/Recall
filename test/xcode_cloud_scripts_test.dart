@@ -43,6 +43,11 @@ void main() {
     flutterBin.writeAsStringSync('''
 #!/bin/sh
 if [ "\$1" = "--version" ] && [ "\$2" = "--machine" ]; then
+  if [ ! -e "\$0.primed" ]; then
+    : > "\$0.primed"
+    printf '%s\\n' 'bootstrapping Flutter'
+    exit 0
+  fi
   printf '%s\\n' '{"frameworkVersion":"3.47.1"}'
   exit 0
 fi

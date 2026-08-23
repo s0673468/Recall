@@ -104,6 +104,13 @@ if [[ ! -x "$flutter_bin" ]]; then
     "$flutter_root"
 fi
 
+# A fresh checkout bootstraps its Dart SDK and Flutter tool on first use. Prime
+# that one-time setup before the wrapper requires clean machine-readable JSON.
+if ! "$flutter_bin" --version --machine >/dev/null 2>&1; then
+  echo "Flutter SDK could not complete first-run setup: $flutter_root" >&2
+  exit 1
+fi
+
 export RECALL_FLUTTER_ROOT="$flutter_root"
 
 cd "$repo_root"
