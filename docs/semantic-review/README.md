@@ -12,5 +12,7 @@ Recall library review. They intentionally exclude private card text and local An
   reading, search, error-state, accessibility, version, and APK delivery checks.
 - `2026-08-20-low-density-third-pass-summary.json` records the card-by-card caveat and jargon
   cleanup, independent semantic verification, and exact local/cloud delivery checks.
+- `2026-08-23-complete-garden-summary.json` records the fresh whole-catalog semantic and factual
+  review, independent cross-checks, guarded backups, and exact local/cloud delivery proof.
 
 The review rules are defined in [`../card-golden-standard.md`](../card-golden-standard.md).
