@@ -1,0 +1,62 @@
+{
+  "schema": "recall.complete-semantic-garden-summary/v1",
+  "review_date": "2026-08-23",
+  "frozen_catalog": {
+    "concepts": 219,
+    "cards": 1536,
+    "primers": 219,
+    "figures": 106
+  },
+  "review_outcome": {
+    "cards_kept": 1519,
+    "cards_edited": 13,
+    "duplicate_cards_deleted": 4,
+    "cards_added": 0,
+    "cards_split": 0,
+    "primers_edited": 5,
+    "figures_edited": 0,
+    "tag_mutations": 0,
+    "proposed_nodes": 0,
+    "unresolved_items": 0
+  },
+  "independent_verification": {
+    "author_assignments": 3,
+    "cross_review_assignments": 3,
+    "cards_cross_checked": 1536,
+    "primers_cross_checked": 219,
+    "figures_cross_checked": 106,
+    "author_proposals_checked": 24,
+    "author_proposals_accepted": 19,
+    "reviewer_corrections_applied": 3,
+    "unsafe_deletions_rejected": 2,
+    "unresolved_findings": 0,
+    "adjudication_receipt_sha256": "ed74daeafa7e7496207ea780582fd87676a20f852492385e578e2b09ff361376"
+  },
+  "backups_and_receipts": {
+    "anki_backup_file": "collection_backup_before_complete_semantic_garden_20260823_20260823_113953.anki2",
+    "anki_backup_sha256": "09a566c6e33c93dd327dd3a5830c34141df9023aa453c2efb08b6e914c83ff5f",
+    "primer_backup_file": "recall-primer-scope-before-20260823T143933Z.json",
+    "primer_backup_sha256": "6643b6e7498686b7e3815722dfa53db9dc93a76bef106f825dad51268d6d97cd",
+    "anki_changeset_sha256": "095f9a60bc4744841711aefe020b989f298b20e74fa87b29ee31600f2e53098e",
+    "anki_apply_receipt_sha256": "8afde6fcc32b853708a56629a0a35625eba9530f9f52f8efebe506e3a4a2fb24"
+  },
+  "delivery": {
+    "local_active_notes": 1532,
+    "cloud_active_notes": 1532,
+    "missing_in_cloud": 0,
+    "extra_in_cloud": 0,
+    "field_mismatches": 0,
+    "local_cloud_content_sha256": "565e913f7b3ea7a87592f124464b0d52e60cb4688c962a4b1305631b3af4c270",
+    "sqlite_integrity": "passed",
+    "structural_validation": "passed",
+    "content_lint_issues": 0,
+    "retained_card_rows_unchanged": true,
+    "deck_configuration_unchanged": true,
+    "review_history_rows_unchanged": 6953,
+    "automatic_opt_in_scheduling_boundaries": "unchanged",
+    "open_learner_flags": 0,
+    "primer_source_pr": "S067-experiment-org/METIS#78",
+    "primer_source_merge": "6acbb1482317993a8c280b0da5d75b7066418508",
+    "recall_full_gate": "447 tests passed"
+  }
+}
