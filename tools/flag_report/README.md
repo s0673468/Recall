@@ -49,10 +49,10 @@ for each required projection:
 Missing tables/columns, malformed rows, a reason outside the fixed live set,
 or missing note/deck context abort the run before any Markdown is written.
 The tool does not infer a schema migration from a successful partial read.
-The Recall checkout has no versioned Supabase DDL for `note_flags`; the
-idempotency migration referenced by `IOS_SETUP.md` is owned outside this
-checkout. Apply and verify the owning remote schema separately before treating
-the runtime preflight as proof of production readiness.
+Recall owns the `note_flags` lifecycle and event-id uniqueness DDL under
+[`scripts/supabase/`](../../scripts/supabase/README.md). Apply and verify that
+schema only through its documented production boundary; this runtime preflight
+is read-only evidence, not proof that every constraint, policy, or RPC matches.
 
 ## Tests
 

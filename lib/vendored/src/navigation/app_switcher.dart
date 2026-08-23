@@ -8,82 +8,114 @@ import 'app_switcher_platform_stub.dart'
     if (dart.library.js_interop) 'app_switcher_platform_web.dart'
     as platform;
 
-/// One installable app of the Health suite. The web apps are served from the
-/// same origin under one suite root (e.g. `https://<host>/Health/`), each at
-/// its own subpath.
+const _configuredHealthSuiteRoot = String.fromEnvironment('HEALTH_SUITE_ROOT');
+const _configuredTrackWebRoot = String.fromEnvironment('TRACK_WEB_ROOT');
+const _configuredRecallWebRoot = String.fromEnvironment('RECALL_WEB_ROOT');
+
+/// One installable app in the Health family.
+///
+/// Track and Recall are the two maintained products. Recall is deployed from
+/// its standalone repository. Track's public web route is optional because a
+/// private Pages deployment can return 404 to an unauthenticated browser.
 class HealthWebApp {
   /// Home-screen name of the app (matches each manifest's `short_name`).
   final String name;
 
-  /// Subpath under the suite root: `''` for the dashboard, `'track/'`, ...
-  final String subpath;
-
   final IconData icon;
 
-  const HealthWebApp._(this.name, this.subpath, this.icon);
+  /// Installed-app deep link preferred by native mobile.
+  final String? preferredNativeUri;
 
-  static const dashboard = HealthWebApp._(
-    'Dashboard',
-    '',
-    Icons.monitor_heart_rounded,
-  );
+  const HealthWebApp._(this.name, this.icon, {this.preferredNativeUri});
+
   static const track = HealthWebApp._(
     'Track',
-    'track/',
     Icons.checklist_rounded,
+    preferredNativeUri: 'track://today',
   );
-  static const recall = HealthWebApp._(
-    'Recall',
-    'recall/',
-    Icons.style_rounded,
-  );
+  static const recall = HealthWebApp._('Recall', Icons.style_rounded);
 
-  /// Every app in the suite, in switcher display order.
-  static const List<HealthWebApp> all = [dashboard, track, recall];
+  /// Every maintained app in display order.
+  static const List<HealthWebApp> all = [track, recall];
 }
 
-/// Resolves the suite root from a document base URI by stripping a trailing
-/// sub-app segment (`track/`, `recall/`). The dashboard's base *is*
-/// the root. Works on any host because nothing about the origin or the
-/// `/Health/` prefix is hardcoded — Flutter's injected `<base href>` already
-/// encodes the deployed path.
+/// Resolve an app-family destination from Recall's current document base.
 ///
-/// On native mobile, the platform adapter supplies the deployed suite
-/// root instead of a document URI.
+/// Recall defaults to its real public Pages path. Track gets an HTTPS route
+/// only when TRACK_WEB_ROOT (preferred) or the legacy HEALTH_SUITE_ROOT is
+/// explicitly configured; otherwise the public PWA hides the one-app switcher
+/// and native mobile uses Track's installed-app URI without a dead web link.
 @visibleForTesting
-String? suiteRootFromBaseUri(String? baseUri) {
-  if (baseUri == null || baseUri.isEmpty) return null;
-  var base = baseUri;
-  for (final separator in const ['?', '#']) {
-    final index = base.indexOf(separator);
-    if (index >= 0) base = base.substring(0, index);
+String? appDestinationFromBaseUri(
+  HealthWebApp app,
+  String? baseUri, {
+  String? healthSuiteRoot,
+  String? trackWebRoot,
+  String? recallWebRoot,
+}) {
+  final current = baseUri == null ? null : Uri.tryParse(baseUri);
+  if (current == null || !current.hasScheme || current.host.isEmpty) {
+    return null;
   }
-  if (!base.endsWith('/')) {
-    // Drop a trailing document name (e.g. `.../index.html`).
-    final slash = base.lastIndexOf('/');
-    if (slash < 0) return null;
-    base = base.substring(0, slash + 1);
-  }
-  for (final app in HealthWebApp.all) {
-    final sub = app.subpath;
-    if (sub.isNotEmpty && base.endsWith('/$sub')) {
-      return base.substring(0, base.length - sub.length);
+
+  final origin = current.replace(path: '/', query: null, fragment: null);
+  if (app == HealthWebApp.track) {
+    final track = trackWebRoot ?? _configuredTrackWebRoot;
+    if (track.isNotEmpty) {
+      return _httpsDirectoryUri(track, relativeTo: origin)?.toString();
     }
+    final health = healthSuiteRoot ?? _configuredHealthSuiteRoot;
+    final healthRoot = _httpsDirectoryUri(health, relativeTo: origin);
+    return healthRoot?.resolve('track/').toString();
   }
-  return base;
+  return _directoryUri(
+    recallWebRoot ?? _configuredRecallWebRoot,
+    fallback: origin.resolve('Recall/'),
+    relativeTo: origin,
+  )?.toString();
+}
+
+Uri? _directoryUri(
+  String configured, {
+  Uri? fallback,
+  required Uri relativeTo,
+}) {
+  if (configured.isEmpty) return fallback;
+  final parsed = Uri.tryParse(configured);
+  if (parsed == null) return fallback;
+  final absolute = parsed.hasScheme ? parsed : relativeTo.resolveUri(parsed);
+  final path = absolute.path.endsWith('/')
+      ? absolute.path
+      : '${absolute.path}/';
+  return absolute.replace(path: path, query: null, fragment: null);
+}
+
+Uri? _httpsDirectoryUri(String configured, {required Uri relativeTo}) {
+  final uri = _directoryUri(configured, relativeTo: relativeTo);
+  return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty
+      ? uri
+      : null;
 }
 
 void _openApp(HealthWebApp app) {
-  final root = suiteRootFromBaseUri(platform.documentBaseUri());
-  if (root == null) return;
+  final destination = appDestinationFromBaseUri(
+    app,
+    platform.documentBaseUri(),
+  );
   // Same-tab assign: keeps a standalone iPhone PWA in-place instead of
   // popping the target app out into a browser tab.
-  unawaited(platform.assignLocation('$root${app.subpath}'));
+  unawaited(
+    platform.assignLocation(
+      destination,
+      preferredNativeUrl: app.preferredNativeUri,
+    ),
+  );
 }
 
 /// A compact pill row linking the active Health apps, highlighting [current].
-/// Browser builds stay in the suite; native mobile opens sibling apps in the
-/// system browser. Other native platforms render nothing.
+/// Configured browser builds navigate in-place. Native mobile prefers installed
+/// app links and opens an explicitly configured web fallback when unavailable.
+/// Other native platforms render nothing.
 class AppSwitcher extends StatelessWidget {
   final HealthWebApp current;
   final WrapAlignment alignment;
@@ -133,6 +165,7 @@ class _AppPill extends StatelessWidget {
       borderRadius: BorderRadius.circular(UiRadii.pill),
       child: InkWell(
         borderRadius: BorderRadius.circular(UiRadii.pill),
+        key: Key('app_switcher_${app.name.toLowerCase()}'),
         onTap: selected ? null : () => _openApp(app),
         child: Container(
           constraints: const BoxConstraints(minHeight: 40),
@@ -205,8 +238,16 @@ class AppSwitcherMenuButton extends StatelessWidget {
 }
 
 @visibleForTesting
-bool supportsAppSwitcher({bool? isWeb, TargetPlatform? targetPlatform}) {
-  if (isWeb ?? kIsWeb) return true;
+bool supportsAppSwitcher({
+  bool? isWeb,
+  TargetPlatform? targetPlatform,
+  bool? hasWebSibling,
+}) {
+  if (isWeb ?? kIsWeb) {
+    return hasWebSibling ??
+        (_configuredTrackWebRoot.isNotEmpty ||
+            _configuredHealthSuiteRoot.isNotEmpty);
+  }
   return switch (targetPlatform ?? defaultTargetPlatform) {
     TargetPlatform.iOS || TargetPlatform.android => true,
     _ => false,

@@ -105,7 +105,7 @@ void main() {
     final build = appBuild.readAsStringSync();
     expect(build, contains('namespace = "com.german.health_anki_flutter"'));
     expect(build, contains('applicationId = "com.german.health_anki_flutter"'));
-    expect(build, contains('compileSdk = flutter.compileSdkVersion'));
+    expect(build, contains('compileSdk = 37'));
     expect(build, contains('targetSdk = flutter.targetSdkVersion'));
     expect(build, contains('minSdk = 24'));
   });
@@ -122,7 +122,7 @@ void main() {
   });
 
   test(
-    'Android 17 migration stays fail-closed on the supported stable matrix',
+    'Android 17 toolchain stays explicit on the supported stable matrix',
     () {
       final build = appBuild.readAsStringSync();
       final settings = androidSettings.readAsStringSync();
@@ -131,26 +131,26 @@ void main() {
       final flutterSetup = setupFlutter.readAsStringSync();
       final setupGuide = androidSetup.readAsStringSync();
 
-      expect(build, contains('compileSdk = flutter.compileSdkVersion'));
+      expect(build, contains('compileSdk = 37'));
       expect(build, contains('targetSdk = flutter.targetSdkVersion'));
-      expect(settings, contains('com.android.application") version "9.0.1"'));
+      expect(settings, contains('com.android.application") version "9.2.1"'));
       expect(
         settings,
-        contains('org.jetbrains.kotlin.android") version "2.3.20"'),
+        contains('org.jetbrains.kotlin.android") version "2.4.0"'),
       );
       expect(gradle, contains('android.builtInKotlin=false'));
       expect(gradle, contains('android.newDsl=false'));
-      expect(wrapper, contains('gradle-9.1.0-all.zip'));
+      expect(wrapper, contains('gradle-9.4.1-all.zip'));
       expect(wrapper, contains('distributionSha256Sum='));
-      expect(flutterSetup, contains('default: "3.44.9"'));
-      expect(xcodeCloudSetup.readAsStringSync(), contains(':-3.44.9}'));
+      expect(flutterSetup, contains('default: "3.47.1"'));
+      expect(xcodeCloudSetup.readAsStringSync(), contains(':-3.47.1}'));
       expect(
         flutterMetadata.readAsStringSync(),
-        contains('6b182d2c7585eba26d4edce0f97630effd256c33'),
+        contains('6655482ec06e547f90abf8ae7590466f4415978d'),
       );
       expect(setupGuide, contains('target SDK 36'));
-      expect(setupGuide, contains('Flutter 3.47'));
-      expect(setupGuide, contains('must remain on target SDK 36'));
+      expect(setupGuide, contains('Flutter 3.47.1'));
+      expect(setupGuide, contains('compile SDK: 37'));
     },
   );
 
@@ -163,7 +163,8 @@ void main() {
       final activity = mainActivity.readAsStringSync();
 
       expect(xml, isNot(contains('android.permission.ACCESS_LOCAL_NETWORK')));
-      expect(directDependencies, contains('supabase_flutter: ^2.17.1'));
+      expect(directDependencies, contains('supabase_flutter: ^2.17.2'));
+      expect(directDependencies, contains('flutter_secure_storage: ^11.0.0'));
       for (final removedPackage in [
         'device_info_plus',
         'package_info_plus',

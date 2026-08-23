@@ -1,4 +1,5 @@
 import '../data/recall_api.dart';
+import '../data/models.dart';
 import '../domain/concept_attribution.dart';
 import '../domain/stats_models.dart';
 
@@ -24,7 +25,15 @@ class StatsService {
   Future<List<ReviewLogEntry>> loadReviewLog() =>
       api.fetchReviewLog(days: heatmapWeeks * 7 + 7);
 
-  Future<List<DateTime>> loadDueDates() => api.fetchDueDates();
+  Future<List<DateTime>> loadDueDates({Set<int>? includedDeckIds}) =>
+      api.fetchDueDates(includedDeckIds: includedDeckIds);
+
+  /// Stats describes the normal automatic workload. Optional curricula stay
+  /// visible in Decks and directly reviewable, but do not inflate this chart.
+  Future<List<DateTime>> loadAutomaticDueDates() async {
+    final decks = await api.fetchDecks();
+    return loadDueDates(includedDeckIds: automaticReviewDeckIds(decks));
+  }
 
   Future<Map<String, String>> loadNoteTags() => api.fetchNoteTags();
 
@@ -202,11 +211,7 @@ class StatsService {
   /// [noteTags] maps note guid -> raw tags string. Reviews whose guid is absent
   /// from the map (untagged, or the log row predates guid capture) contribute to
   /// nothing. Pure — no I/O.
-  static ({
-    List<NodeRetention> ranked,
-    int notEnoughData,
-    int coveredNodeCount,
-  })
+  static ({List<NodeRetention> ranked, int notEnoughData, int coveredNodeCount})
   computeNodeRetention({
     required List<ReviewLogEntry> reviewLog,
     required Map<String, String> noteTags,

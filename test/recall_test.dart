@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
 import 'package:flutter_math_fork/flutter_math.dart';
@@ -33,11 +34,13 @@ import 'package:health_anki_flutter/features/review/presentation/screens/read_sc
 import 'package:health_anki_flutter/features/review/presentation/screens/stats_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
+import 'package:health_anki_flutter/features/review/presentation/widgets/due_forecast_chart.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/rating_bar.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/review_heatmap.dart';
 import 'package:health_anki_flutter/navigation/app_shell.dart';
 import 'package:health_anki_flutter/navigation/recall_deep_links.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
+import 'package:health_anki_flutter/vendored/src/navigation/app_switcher.dart';
 
 const _desktopFsrsParameters = [
   0.98086613,
@@ -539,6 +542,8 @@ class _FakeRecallApi implements RecallApi {
   /// Fixtures + failure toggles for the stats screen.
   List<ReviewLogEntry> reviewLog = const [];
   List<DateTime> dueDates = const [];
+  List<({int deckId, DateTime due})>? scheduledDueDates;
+  Set<int>? lastDueDateDeckIds;
   Map<String, String> noteTags = const {};
   List<ConceptNodeInfo> conceptNodes = const [];
   List<ConceptPage> conceptPages = const [];
@@ -552,8 +557,17 @@ class _FakeRecallApi implements RecallApi {
   }
 
   @override
-  Future<List<DateTime>> fetchDueDates() async {
+  Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) async {
     if (failDueDates) throw StateError('cards fetch failed');
+    lastDueDateDeckIds = includedDeckIds;
+    final scheduled = scheduledDueDates;
+    if (scheduled != null) {
+      return [
+        for (final row in scheduled)
+          if (includedDeckIds == null || includedDeckIds.contains(row.deckId))
+            row.due,
+      ];
+    }
     return dueDates;
   }
 
@@ -2994,6 +3008,52 @@ void main() {
   });
 
   group('Stats screen', () {
+    testWidgets('work-ahead forecast excludes manual-only decks', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.now();
+      final api =
+          _FakeRecallApi(
+              [_card()],
+              decks: const [
+                DeckRow(deckId: 1, name: 'ML'),
+                DeckRow(deckId: 2, name: 'Opt-in::Portuguese'),
+              ],
+            )
+            ..scheduledDueDates = [
+              (deckId: 1, due: now.add(const Duration(days: 1))),
+              (deckId: 2, due: now.add(const Duration(days: 1))),
+            ];
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatsScreen(api: api, controller: controller),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.dragUntilVisible(
+        find.byType(DueForecastChart),
+        find.byType(Scrollable).first,
+        const Offset(0, -300),
+      );
+      final chart = tester.widget<DueForecastChart>(
+        find.byType(DueForecastChart),
+      );
+      expect(api.lastDueDateDeckIds, {1});
+      expect(chart.days.fold<int>(0, (sum, day) => sum + day.count), 1);
+    });
+
     testWidgets('a failed forecast query does not blank the heatmap', (
       tester,
     ) async {
@@ -4769,6 +4829,11 @@ void main() {
         required EdgeInsets padding,
         TextScaler textScaler = TextScaler.noScaling,
       }) async {
+        debugDefaultTargetPlatformOverride = nativeIos
+            ? TargetPlatform.iOS
+            : nativeAndroid
+            ? TargetPlatform.android
+            : null;
         tester.view.physicalSize = size;
         tester.view.devicePixelRatio = 1;
         await tester.pumpWidget(
@@ -4801,8 +4866,29 @@ void main() {
         expect(tester.takeException(), isNull);
       }
 
+      Future<void> bringAppSwitcherIntoView() async {
+        final statsScrollable = find
+            .descendant(
+              of: find.byType(StatsScreen),
+              matching: find.byType(Scrollable),
+            )
+            .first;
+        await tester.dragUntilVisible(
+          find.byType(AppSwitcher),
+          statsScrollable,
+          const Offset(0, -300),
+        );
+        await tester.drag(statsScrollable, const Offset(0, -160));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('app_switcher_recall')).hitTestable(),
+          findsOneWidget,
+        );
+      }
+
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
 
       await pumpShell(
         size: const Size(411, 914),
@@ -4821,6 +4907,10 @@ void main() {
       await tester.tap(find.text('Stats').last);
       await tester.pumpAndSettle();
       if (await _captureVisual(tester, 'android-stats')) return;
+      if (AppSwitcher.isSupported) {
+        await bringAppSwitcherIntoView();
+        if (await _captureVisual(tester, 'android-app-switcher')) return;
+      }
       await tester.tap(find.text('Read').last);
       await tester.pumpAndSettle();
       if (await _captureVisual(tester, 'android-read')) return;
@@ -4832,6 +4922,12 @@ void main() {
         padding: const EdgeInsets.fromLTRB(0, 59, 0, 34),
       );
       if (await _captureVisual(tester, 'ios-study-answer')) return;
+      await tester.tap(find.text('Stats').last);
+      await tester.pumpAndSettle();
+      if (AppSwitcher.isSupported) {
+        await bringAppSwitcherIntoView();
+        if (await _captureVisual(tester, 'ios-app-switcher')) return;
+      }
 
       await pumpShell(
         size: const Size(900, 600),
@@ -4857,6 +4953,7 @@ void main() {
 
       tester.view.physicalSize = const Size(402, 874);
       tester.view.devicePixelRatio = 1;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
 
       await tester.pumpWidget(
         MaterialApp(
@@ -4880,6 +4977,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       await _captureVisual(tester, 'ios-settings');
+      debugDefaultTargetPlatformOverride = null;
     });
   });
 }
@@ -4941,6 +5039,7 @@ Future<bool> _captureVisual(WidgetTester tester, String name) async {
     find.byKey(const Key('visual_benchmark_boundary')),
     matchesGoldenFile(Uri.file('$output/$name.png')),
   );
+  debugDefaultTargetPlatformOverride = null;
   return true;
 }
 

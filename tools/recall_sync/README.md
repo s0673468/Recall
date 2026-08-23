@@ -1,7 +1,8 @@
-# Recall concept-reference sync
+# Recall authoring sync runtime
 
-This directory is the reviewed source for the Mac-local
-`sync_concept_nodes.py` runtime.
+This directory is the reviewed source for Recall's Mac-local Anki authoring
+runtime. `run_autosync.py` owns the launchd execution path and calls the
+repository-owned card importer plus `sync_concept_nodes.py`.
 
 The `concept_nodes` table is a union:
 
@@ -19,16 +20,36 @@ python -m pip install -r tools/recall_sync/requirements.txt
 python -m unittest discover -s tools/recall_sync/tests
 ```
 
-## Deploy the reviewed source locally
+## Install the reviewed runtime
 
-After the change is merged, copy the exact reviewed script into the existing
-private runtime and verify the two files match:
+Keep the service-role values only in
+`~/Code/_runtime/recall-anki-sync/.env`; `.env.example` documents the allowed
+keys without embedding this project’s endpoint or public identifiers. The installer requires that file and
+the existing private virtual environment, then writes an owner-only LaunchAgent
+that executes the reviewed repository source directly:
 
 ```bash
-install -m 0644 tools/recall_sync/sync_concept_nodes.py \
-  ~/Code/_runtime/recall-anki-sync/sync_concept_nodes.py
-cmp tools/recall_sync/sync_concept_nodes.py \
-  ~/Code/_runtime/recall-anki-sync/sync_concept_nodes.py
+~/Code/_runtime/recall-anki-sync/.venv/bin/python \
+  tools/recall_sync/install_runtime.py
+launchctl bootout "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.german.recall-autosync.plist 2>/dev/null || true
+~/Code/_runtime/recall-anki-sync/.venv/bin/python \
+  tools/recall_sync/install_runtime.py --apply
+launchctl bootstrap "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.german.recall-autosync.plist
 ```
 
-The runtime `.env` remains private and is never copied into this repository.
+The first command is a no-write plist preview. `--apply` enforces mode `0700`
+on the runtime directory and `0600` on the `.env`, stamp, lock, receipt log, and
+LaunchAgent. It preserves the previous plain-text log as an owner-only
+timestamped legacy file instead of deleting it.
+
+The persistent log is `~/Library/Logs/recall-autosync.jsonl`. It contains only
+closed `operational-event/v2` envelopes, never subprocess output. Same-directory
+atomic replacement keeps at most 100 events and 64 KiB. Import failure does not
+advance the source stamp. Concept sync remains additive; either child failure
+keeps the source revision pending for the LaunchAgent's bounded 15-minute retry.
+Each child process has a 20-minute timeout, and both the Anki collection and
+METIS concept graph use nanosecond change tokens. A private
+`METIS_CONCEPTS_YAML` override controls the runner, its change token, and the
+LaunchAgent watch path.
