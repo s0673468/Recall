@@ -113,4 +113,19 @@ void main() {
       expect(plugin, isNot(contains(forbidden)));
     }
   });
+
+  test('iOS release signing authorizes the private session Keychain', () {
+    final entitlements = runnerEntitlements.readAsStringSync();
+    final pbxproj = project.readAsStringSync();
+
+    expect(entitlements, contains('<key>keychain-access-groups</key>'));
+    expect(
+      entitlements,
+      contains(r'$(AppIdentifierPrefix)com.german.ankiReview'),
+    );
+    expect(
+      pbxproj,
+      contains('CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;'),
+    );
+  });
 }

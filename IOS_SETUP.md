@@ -19,6 +19,10 @@ No account password, service-role key, signing identity, or provisioning profile
 belongs in the repository. The build input may contain only `SUPABASE_URL` and
 the public `SUPABASE_ANON_KEY`.
 
+`Runner.entitlements` carries Recall's bundle-scoped Keychain access group.
+Keep it on every build configuration: `flutter_secure_storage` 11 uses Apple's
+data-protection Keychain and fails closed without that entitlement.
+
 ## Build
 
 ```bash

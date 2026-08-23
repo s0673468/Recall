@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/background/background_sync_coordinator.dart';
 import '../core/config/recall_config.dart';
+import '../core/diagnostics/operational_diagnostics.dart';
 import '../features/auth/data/secure_session_storage.dart';
 import '../features/reminders/application/study_reminder_controller.dart';
 import '../features/review/application/fsrs_engine.dart';
@@ -31,88 +32,115 @@ class RecallDependencies {
   });
 
   static Future<RecallDependencies> create() async {
-    final config = await RecallConfig.load();
-    if (!config.isConfigured) {
-      throw const RecallConfigException();
+    var startupStage = OperationalCauseCode.startupConfigFailed;
+    try {
+      final config = await RecallConfig.load();
+      if (!config.isConfigured) {
+        throw const RecallConfigException();
+      }
+
+      startupStage = OperationalCauseCode.startupSupabaseFailed;
+      final secureSessionStorage =
+          supportsRecallSecureSession(
+            isWeb: kIsWeb,
+            targetPlatform: defaultTargetPlatform,
+          )
+          ? SecureRecallSupabaseLocalStorage.forSupabaseUrl(config.url)
+          : null;
+      final client = await _client(
+        config,
+        secureSessionStorage: secureSessionStorage,
+        onStage: (stage) => startupStage = stage,
+      );
+
+      final api = RecallApi(
+        client,
+        persistSession: secureSessionStorage?.persistSessionStrict,
+        removePersistedSession:
+            secureSessionStorage?.removePersistedSessionStrict,
+      );
+      final engine = FsrsEngine(desiredRetention: RecallPrefs.defaultRetention);
+      final prefs = RecallPrefsController(api: api);
+      final restoredOwner = api.currentUser;
+      startupStage = OperationalCauseCode.startupPreferencesFailed;
+      if (restoredOwner == null) {
+        await prefs.releaseOwner();
+      } else {
+        // Only the owner-scoped local mirror is on the startup critical path.
+        await prefs.activateOwner(restoredOwner.id);
+      }
+      startupStage = OperationalCauseCode.startupReminderFailed;
+      final studyReminder = StudyReminderController();
+      await studyReminder.initialize(ownerId: restoredOwner?.id);
+      startupStage = OperationalCauseCode.startupControllerFailed;
+      // The controller subscribes to auth changes in its constructor and loads
+      // the queue once there's a session, so it must exist before sign-in.
+      final controller = ReviewController(
+        api: api,
+        engine: engine,
+        store: LocalReviewStore(),
+        prefs: prefs,
+        beforeSessionLoad: () async {
+          final owner = api.currentUser;
+          if (owner == null) return;
+          await prefs.activateOwner(owner.id);
+          unawaited(prefs.syncOwner());
+        },
+        afterSignOut: () async {
+          try {
+            await studyReminder.releaseOwner();
+          } finally {
+            await prefs.releaseOwner();
+          }
+        },
+        afterSignIn: () async {
+          final owner = api.currentUser;
+          if (owner != null) await studyReminder.activateOwner(owner.id);
+        },
+      );
+      final backgroundSync = BackgroundSyncCoordinator(
+        platform: const MethodChannelBackgroundSyncPlatform(),
+        sync: controller.syncPendingInBackground,
+      );
+      if (restoredOwner != null) unawaited(prefs.syncOwner());
+      startupStage = OperationalCauseCode.startupBackgroundFailed;
+      await backgroundSync.start();
+
+      return RecallDependencies(
+        reviewController: controller,
+        api: api,
+        recallPrefs: prefs,
+        backgroundSync: backgroundSync,
+        studyReminder: studyReminder,
+      );
+    } catch (_) {
+      unawaited(
+        RecallDiagnostics.instance.record(
+          level: OperationalLevel.error,
+          component: OperationalComponent.startup,
+          operation: OperationalOperation.initializeDependencies,
+          outcome: OperationalOutcome.failed,
+          causeCode: startupStage,
+          retryable: startupStage != OperationalCauseCode.startupConfigFailed,
+        ),
+      );
+      rethrow;
     }
-
-    final secureSessionStorage =
-        supportsRecallSecureSession(
-          isWeb: kIsWeb,
-          targetPlatform: defaultTargetPlatform,
-        )
-        ? SecureRecallSupabaseLocalStorage.forSupabaseUrl(config.url)
-        : null;
-    final client = await _client(
-      config,
-      secureSessionStorage: secureSessionStorage,
-    );
-
-    final api = RecallApi(
-      client,
-      persistSession: secureSessionStorage?.persistSessionStrict,
-      removePersistedSession:
-          secureSessionStorage?.removePersistedSessionStrict,
-    );
-    final engine = FsrsEngine(desiredRetention: RecallPrefs.defaultRetention);
-    final prefs = RecallPrefsController(api: api);
-    final restoredOwner = api.currentUser;
-    if (restoredOwner == null) {
-      await prefs.releaseOwner();
-    } else {
-      // Only the owner-scoped local mirror is on the startup critical path.
-      await prefs.activateOwner(restoredOwner.id);
-    }
-    final studyReminder = StudyReminderController();
-    await studyReminder.initialize(ownerId: restoredOwner?.id);
-    // The controller subscribes to auth changes in its constructor and loads the
-    // queue once there's a session — so it must exist before we (maybe) sign in.
-    final controller = ReviewController(
-      api: api,
-      engine: engine,
-      store: LocalReviewStore(),
-      prefs: prefs,
-      beforeSessionLoad: () async {
-        final owner = api.currentUser;
-        if (owner == null) return;
-        await prefs.activateOwner(owner.id);
-        unawaited(prefs.syncOwner());
-      },
-      afterSignOut: () async {
-        try {
-          await studyReminder.releaseOwner();
-        } finally {
-          await prefs.releaseOwner();
-        }
-      },
-      afterSignIn: () async {
-        final owner = api.currentUser;
-        if (owner != null) await studyReminder.activateOwner(owner.id);
-      },
-    );
-    final backgroundSync = BackgroundSyncCoordinator(
-      platform: const MethodChannelBackgroundSyncPlatform(),
-      sync: controller.syncPendingInBackground,
-    );
-    if (restoredOwner != null) unawaited(prefs.syncOwner());
-    await backgroundSync.start();
-
-    return RecallDependencies(
-      reviewController: controller,
-      api: api,
-      recallPrefs: prefs,
-      backgroundSync: backgroundSync,
-      studyReminder: studyReminder,
-    );
   }
 
   static Future<SupabaseClient> _client(
     RecallConfig config, {
     SecureRecallSupabaseLocalStorage? secureSessionStorage,
+    required void Function(OperationalCauseCode stage) onStage,
   }) async {
     try {
       return Supabase.instance.client;
     } catch (_) {
+      if (secureSessionStorage != null) {
+        onStage(OperationalCauseCode.startupSecureStorageFailed);
+        await secureSessionStorage.initialize();
+      }
+      onStage(OperationalCauseCode.startupSupabaseFailed);
       await Supabase.initialize(
         url: config.url,
         publishableKey: config.anonKey,

@@ -17,6 +17,7 @@ enum OperationalLevel {
 }
 
 enum OperationalComponent {
+  startup('startup'),
   framework('framework'),
   backgroundSync('background_sync'),
   foregroundSync('foreground_sync'),
@@ -27,6 +28,7 @@ enum OperationalComponent {
 }
 
 enum OperationalOperation {
+  initializeDependencies('initialize_dependencies'),
   handleFrameworkError('handle_framework_error'),
   handleUncaughtError('handle_uncaught_error'),
   syncPending('sync_pending'),
@@ -48,6 +50,13 @@ enum OperationalOutcome {
 
 enum OperationalCauseCode {
   none('none'),
+  startupConfigFailed('startup.config_failed'),
+  startupSecureStorageFailed('startup.secure_storage_failed'),
+  startupSupabaseFailed('startup.supabase_failed'),
+  startupPreferencesFailed('startup.preferences_failed'),
+  startupReminderFailed('startup.reminder_failed'),
+  startupControllerFailed('startup.controller_failed'),
+  startupBackgroundFailed('startup.background_failed'),
   flutterFrameworkError('flutter.framework_error'),
   flutterUncaughtError('flutter.uncaught_error'),
   backgroundSyncFailed('sync.background_failed'),
