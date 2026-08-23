@@ -1,7 +1,7 @@
 {
     "name": "Recall",
     "short_name": "Recall",
-    "id": "/Health/recall/",
+    "id": "/Recall/",
     "start_url": ".",
     "scope": "./",
     "display": "standalone",

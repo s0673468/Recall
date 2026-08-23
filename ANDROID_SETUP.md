@@ -10,7 +10,8 @@ and platform integration code; scheduling and data ownership stay in Dart.
 - installed name: **Recall**
 - application ID: `com.german.health_anki_flutter`
 - minimum Android version: API 24
-- compile and target SDK: Flutter's pinned target SDK 36 values
+- compile SDK: 37, required by `flutter_secure_storage` 11
+- target SDK 36, Flutter's pinned Android 16 value
 - Java language level: 17
 - authentication: Supabase email and password with a revocable session in
   Android encrypted storage
@@ -27,7 +28,7 @@ only `SUPABASE_URL` and the public `SUPABASE_ANON_KEY` in the ignored
 
 ## Build and test
 
-Install Flutter 3.44.9, Android SDK 36, and JDK 17 or newer. Android Studio's
+Install Flutter 3.47.1, Android SDK 37, and JDK 17 or newer. Android Studio's
 bundled JDK is supported. From the repository root:
 
 ```bash
@@ -165,15 +166,22 @@ through `INTERNET`. Recall does not declare or request that runtime permission
 and has no LAN feature. When Recall moves to target SDK 37, LAN access must stay
 blocked rather than adding the broad permission.
 
-Recall must remain on target SDK 36 until Flutter 3.47 or a later stable release
-provides the built-in Kotlin migration needed for a fully supported Android 17
-toolchain. Android's API 37 side is ready with AGP 9.1.1, Gradle 9.3.1, and JDK
-17, but Flutter 3.44.9 still defaults to SDK 36 and its supported Kotlin matrix
-does not close over that AGP version. A locally successful forced target-37
-build is not sufficient production evidence. Re-evaluate this gate against the
-current stable Flutter release before changing `compileSdk` or `targetSdk`.
+Recall uses Flutter 3.47.1, AGP 9.2.1, Gradle 9.4.1, JDK 17, and the standalone
+Kotlin Gradle Plugin 2.4.0. AGP 9.2.1's built-in Kotlin 2.2.10 is below
+Flutter 3.47's minimum 2.2.20, so `android.builtInKotlin=false` remains explicit.
+The app compiles with SDK 37 because
+`flutter_secure_storage` 11 requires it, while `targetSdk` remains Flutter's
+pinned SDK 36. Compiling against Android 17 does not opt Recall into its runtime
+behavior changes. Moving `targetSdk` to 37 remains a separate acceptance task.
 
-Passkeys are not enabled. Supabase Flutter 2.17.1 keeps only the platform
+`flutter_secure_storage` 11 keeps the API 24 minimum and removes the storage
+algorithms deprecated in version 10. Recall already uses version 10's named
+storage namespace and default migration path. Before distributing the first
+version 11 build, install it over the currently distributed version 10 build on
+a data-preserving test device and prove that the signed-in session still opens,
+sign-out deletes it, and sign-in persists again after a cold restart.
+
+Passkeys are not enabled. Supabase Flutter 2.17.2 keeps only the platform
 interface; Recall deliberately provides no native authenticator plugin. Android
 passkeys require coordinated Supabase Auth enablement, a relying-party domain,
 Digital Asset Links, and final signing fingerprints. Email/password remains the
@@ -202,7 +210,7 @@ Current platform references:
 - [Flutter Android deployment](https://docs.flutter.dev/deployment/android)
 - [Flutter built-in Kotlin migration](https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-app-developers)
 - [Android 16 SDK setup](https://developer.android.com/about/versions/16/setup-sdk)
-- [Android Gradle plugin 9.1.1](https://developer.android.com/build/releases/agp-9-1-0-release-notes)
+- [Android Gradle plugin 9.2.1](https://developer.android.com/build/releases/agp-9-2-0-release-notes)
 - [Flutter edge-to-edge migration](https://docs.flutter.dev/release/breaking-changes/default-systemuimode-edge-to-edge)
 - [Flutter predictive back migration](https://docs.flutter.dev/release/breaking-changes/android-predictive-back)
 - [Android adaptive orientation and resizability](https://developer.android.com/develop/adaptive-apps/guides/app-orientation-aspect-ratio-resizability)

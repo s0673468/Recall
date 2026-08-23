@@ -12,7 +12,7 @@ inputs:
       Flutter version for github-hosted runners. Ignored on self-hosted, which
       uses whatever is pinned at ~/flutter. Keep in sync with Recall's tested toolchain.
     required: false
-    default: "3.44.9"
+    default: "3.47.1"
 
 runs:
   using: composite

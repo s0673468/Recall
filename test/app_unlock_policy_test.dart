@@ -50,7 +50,8 @@ class _SignedInRecallApi implements RecallApi {
   Future<List<ConceptPage>> fetchConceptPages() async => const [];
 
   @override
-  Future<List<DateTime>> fetchDueDates() async => const [];
+  Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) async =>
+      const [];
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

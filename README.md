@@ -121,10 +121,9 @@ transaction**, keyed on `client_event_id`:
   or retry loop is needed on this path.
 
 The function is `SECURITY INVOKER`, so the `auth.uid() = user_id` policies
-still apply. It lives in the Health repo as
-`scripts/supabase_migrate_recall_review_rpc.sql`, with a matching
-`supabase_verify_…` script that exercises the policy inside a
-rolled-back transaction, and a `supabase_rollback_…` script.
+still apply. Recall now owns its complete schema, ordered migrations,
+read-only structural verification, rolled-back behavior check, and safe RPC
+rollback under [`scripts/supabase/`](scripts/supabase/README.md).
 
 **The client-side path below is the fallback**, used only when the function
 isn't deployed. It cannot be made fully idempotent from outside the database:
@@ -210,6 +209,11 @@ dart run tool/recall_performance_benchmark.dart
 Use `config/supabase.local.example.json` for local bootstrapping only. Keep the
 build input to `SUPABASE_URL` plus `SUPABASE_ANON_KEY`; user access still goes
 through interactive auth and row-level security.
+
+For a fresh Supabase project or a schema change, follow the exact apply,
+verification, production-approval, and rollback boundaries in
+[`scripts/supabase/README.md`](scripts/supabase/README.md). Repository changes
+never apply SQL to production automatically.
 
 See [ANDROID_SETUP.md](ANDROID_SETUP.md) for Android signing, safe device
 installation, platform behavior, and validation. See [IOS_SETUP.md](IOS_SETUP.md)

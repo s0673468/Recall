@@ -149,11 +149,15 @@ reach Supabase. The WidgetKit bridge publishes only the verified all-decks due
 count and its cloud refresh time. See `ios/RecallWidget/README.md` for App Group
 signing and the guarded Personal Team fallback.
 
-Before releasing the idempotent native outbox path, apply
-`scripts/supabase_migrate_recall_idempotency.sql` to the Recall Supabase
-project. It adds nullable event IDs plus unique indexes; existing rows are not
-rewritten. The client retains a rolling-deploy fallback for an older schema,
-but server-enforced duplicate protection begins only after this migration.
+Before releasing the idempotent native outbox path, apply the complete ordered
+Recall schema through
+[`scripts/supabase/README.md`](scripts/supabase/README.md). The event-identity
+step is
+`scripts/supabase/migrations/005_review_event_idempotency.sql`; the transactional
+RPC follows in `006_apply_review_rpc.sql`. Existing rows are not rewritten. The
+client retains a rolling-deploy fallback for an older schema, but
+server-enforced duplicate protection begins only after both steps pass the
+checked-in structural and rolled-back behavior verification.
 
 ## Required iPhone 15 Pro Max checks
 
