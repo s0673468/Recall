@@ -7,8 +7,7 @@ description: >-
   not use for ordinary Recall app features or scheduling-only analysis.
 ---
 
-<!-- Repo-canonical skill. Install identical copies in
-     ~/.claude/skills/anki-revision and ~/.codex/skills/anki-revision. -->
+<!-- Repo-canonical skill. Install under ~/.codex/skills/anki-revision. -->
 
 # Anki revision
 
