@@ -71,9 +71,24 @@ class BacklogCatchUp {
     return orderedDue.take(remaining).toList();
   }
 
-  static int estimatedDays(int dueCount) {
+  /// Calendar days needed from now, using only the unused part of today's
+  /// allowance before counting full future days.
+  static int estimatedDays(
+    int dueCount, {
+    int completedToday = 0,
+    int dailyLimit = dailyCap,
+  }) {
     if (dueCount <= 0) return 0;
-    return (dueCount + dailyCap - 1) ~/ dailyCap;
+    if (dailyLimit <= 0) {
+      throw ArgumentError.value(dailyLimit, 'dailyLimit', 'must be positive');
+    }
+    final remainingToday = math.max(
+      0,
+      dailyLimit - math.max(0, completedToday),
+    );
+    final afterToday = math.max(0, dueCount - remainingToday);
+    final futureDays = (afterToday + dailyLimit - 1) ~/ dailyLimit;
+    return (remainingToday > 0 ? 1 : 0) + futureDays;
   }
 
   static String dayKey(DateTime date) =>
@@ -119,7 +134,11 @@ class CatchUpView {
   bool get isEligible => dueCount > threshold;
   bool get shouldOffer => isNone && isEligible;
   int get remainingToday => math.max(0, dailyCap - completedToday);
-  int get estimatedDays => BacklogCatchUp.estimatedDays(dueCount);
+  int get estimatedDays => BacklogCatchUp.estimatedDays(
+    dueCount,
+    completedToday: completedToday,
+    dailyLimit: dailyCap,
+  );
 
   String get planLine =>
       '$dailyCap cards/day · about $estimatedDays '

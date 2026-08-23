@@ -4804,6 +4804,61 @@ void main() {
       expect(find.text('Show all'), findsOneWidget);
       expect(find.textContaining('20 cards/day'), findsOneWidget);
     });
+
+    testWidgets('catch-up days left includes the partially used day', (
+      tester,
+    ) async {
+      await _loadVisualFonts();
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = ReviewController(
+        api: _FakeRecallApi(_catchUpQueue(82)),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      await controller.startCatchUp();
+      for (var reviewed = 0; reviewed < 2; reviewed++) {
+        controller.flip();
+        await controller.rate(Rating.good);
+      }
+
+      expect(controller.state.catchUp.dueCount, 80);
+      expect(controller.state.catchUp.completedToday, 2);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          home: RepaintBoundary(
+            key: const Key('visual_benchmark_boundary'),
+            child: Scaffold(
+              body: MediaQuery(
+                data: const MediaQueryData(
+                  size: Size(390, 844),
+                  padding: EdgeInsets.fromLTRB(0, 24, 0, 24),
+                ),
+                child: SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(UiSpacing.sm),
+                    child: StudyScreen(controller: controller),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('2/20 today'), findsOneWidget);
+      expect(find.textContaining('about 5 days left'), findsOneWidget);
+      expect(find.textContaining('about 4 days left'), findsNothing);
+      await _captureVisual(tester, 'catch-up-partial-day');
+    });
   });
 
   group('Visual benchmark surfaces', () {
