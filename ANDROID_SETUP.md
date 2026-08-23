@@ -5,6 +5,10 @@ scheduler, offline snapshot, durable review and flag outboxes, reminders,
 settings, and statistics as iOS and web. The checked-in Android target is host
 and platform integration code; scheduling and data ownership stay in Dart.
 
+Android is currently a maintained build target, not an active personal release
+target. Routine release and physical-device acceptance are iOS-only; perform
+the Android device steps below only when Android use is explicitly resumed.
+
 ## Target
 
 - installed name: **Recall**
@@ -28,14 +32,16 @@ only `SUPABASE_URL` and the public `SUPABASE_ANON_KEY` in the ignored
 
 ## Build and test
 
-Install Flutter 3.47.1, Android SDK 37, and JDK 17 or newer. Android Studio's
-bundled JDK is supported. From the repository root:
+Install Android SDK 37 and JDK 17 or newer. Android Studio's bundled JDK is
+supported. The repository installs and verifies its own pinned Flutter. From
+the repository root:
 
 ```bash
-flutter pub get
-flutter analyze --no-pub
-flutter test --no-pub --reporter=failures-only
-flutter build apk --debug --no-pub \
+./tool/bootstrap_flutter
+./tool/flutterw pub get
+./tool/flutterw analyze --no-pub
+./tool/flutterw test --no-pub --reporter=failures-only
+./tool/flutterw build apk --debug --no-pub \
   --dart-define-from-file=config/supabase.local.json
 ```
 
@@ -52,7 +58,7 @@ JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew :app:assembleDebug :app:assembleD
 Use the profile build for on-device frame and startup measurements:
 
 ```bash
-flutter build apk --profile --no-pub \
+./tool/flutterw build apk --profile --no-pub \
   --dart-define-from-file=config/supabase.local.json
 adb install -r build/app/outputs/flutter-apk/app-profile.apk
 ```
@@ -82,7 +88,7 @@ not Google Play distribution or a passkey origin. Back up the owner-only file;
 a different certificate cannot update an existing installation.
 
 ```bash
-flutter build apk --release --no-pub \
+./tool/flutterw build apk --release --no-pub \
   --dart-define-from-file=config/supabase.local.json
 ```
 
@@ -166,9 +172,10 @@ through `INTERNET`. Recall does not declare or request that runtime permission
 and has no LAN feature. When Recall moves to target SDK 37, LAN access must stay
 blocked rather than adding the broad permission.
 
-Recall uses Flutter 3.47.1, AGP 9.2.1, Gradle 9.4.1, JDK 17, and the standalone
-Kotlin Gradle Plugin 2.4.0. AGP 9.2.1's built-in Kotlin 2.2.10 is below
-Flutter 3.47's minimum 2.2.20, so `android.builtInKotlin=false` remains explicit.
+Recall uses the release declared in `.flutter-version`, AGP 9.2.1, Gradle
+9.4.1, JDK 17, and the standalone Kotlin Gradle Plugin 2.4.0. AGP 9.2.1's
+built-in Kotlin 2.2.10 is below the pinned Flutter release's minimum 2.2.20, so
+`android.builtInKotlin=false` remains explicit.
 The app compiles with SDK 37 because
 `flutter_secure_storage` 11 requires it, while `targetSdk` remains Flutter's
 pinned SDK 36. Compiling against Android 17 does not opt Recall into its runtime

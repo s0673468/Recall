@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+version_file="$repo_root/.flutter-version"
+
+read_required_version() {
+  python3 - "$version_file" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(f"Missing Flutter version file: {path}")
+value = path.read_text(encoding="utf-8").strip()
+if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value):
+    raise SystemExit(f"Invalid Flutter version in {path}: {value!r}")
+print(value)
+PY
+}
+
+required_version="$(read_required_version)"
+cache_base="${RECALL_FLUTTER_CACHE_ROOT:-${XDG_CACHE_HOME:-${HOME}/.cache}/recall}"
+cached_root="$cache_base/flutter-$required_version"
+
+if [[ -n "${RECALL_FLUTTER_ROOT:-}" ]]; then
+  flutter_bin="$RECALL_FLUTTER_ROOT/bin/flutter"
+elif [[ -x "$cached_root/bin/flutter" ]]; then
+  flutter_bin="$cached_root/bin/flutter"
+elif command -v flutter >/dev/null 2>&1; then
+  flutter_bin="$(command -v flutter)"
+else
+  echo "Flutter $required_version is not installed for Recall." >&2
+  echo "Run ./tool/bootstrap_flutter from the repository root." >&2
+  exit 1
+fi
+
+if [[ ! -x "$flutter_bin" ]]; then
+  echo "Recall's Flutter executable is missing or not executable: $flutter_bin" >&2
+  echo "Run ./tool/bootstrap_flutter from the repository root." >&2
+  exit 1
+fi
+
+if ! machine_output="$("$flutter_bin" --version --machine 2>/dev/null)"; then
+  echo "Could not read Flutter version metadata from $flutter_bin." >&2
+  echo "Run ./tool/bootstrap_flutter from the repository root." >&2
+  exit 1
+fi
+
+if ! found_version="$(printf '%s' "$machine_output" | python3 -c '
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+    value = payload["frameworkVersion"]
+except (json.JSONDecodeError, KeyError, TypeError):
+    raise SystemExit(1)
+if not isinstance(value, str) or not value:
+    raise SystemExit(1)
+print(value)
+')"; then
+  echo "Flutter returned malformed version metadata from $flutter_bin." >&2
+  echo "Run ./tool/bootstrap_flutter from the repository root." >&2
+  exit 1
+fi
+
+if [[ "$found_version" != "$required_version" ]]; then
+  echo "Recall requires Flutter $required_version, but $flutter_bin is $found_version." >&2
+  echo "Run ./tool/bootstrap_flutter from the repository root." >&2
+  exit 1
+fi
+
+exec "$flutter_bin" "$@"

@@ -47,11 +47,11 @@ jobs:
 
       - name: Build Recall web
         run: |
-          flutter pub get
+          ./tool/flutterw pub get
           # Project Pages site serves at /<repo>/, so base-href is /Recall/.
           # --no-web-resources-cdn pins local canvaskit; config is compiled in via
           # --dart-define (String.fromEnvironment), never bundled as a secret asset.
-          flutter build web --release --base-href /Recall/ \
+          ./tool/flutterw build web --release --base-href /Recall/ \
             --no-web-resources-cdn \
             --dart-define-from-file=config/supabase.local.json
 

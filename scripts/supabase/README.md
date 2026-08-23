@@ -94,7 +94,8 @@ review of that card waits until the statement rolls back.
 For repository-only drift checking, run:
 
 ```bash
-flutter test --no-pub test/supabase_schema_contract_test.dart --reporter=failures-only
+./tool/flutterw test --no-pub test/supabase_schema_contract_test.dart \
+  --reporter=failures-only
 ```
 
 This static test proves that every Supabase table/RPC named by current Recall

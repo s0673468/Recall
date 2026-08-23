@@ -13,6 +13,7 @@ void main() {
   );
   final setupFlutter = File('.github/actions/setup-flutter/action.yml');
   final xcodeCloudSetup = File('ios/ci_scripts/ci_post_clone.sh');
+  final flutterVersion = File('.flutter-version');
   final flutterMetadata = File('.metadata');
   final pubspecLock = File('pubspec.lock');
   final androidSetup = File('ANDROID_SETUP.md');
@@ -142,14 +143,16 @@ void main() {
       expect(gradle, contains('android.newDsl=false'));
       expect(wrapper, contains('gradle-9.4.1-all.zip'));
       expect(wrapper, contains('distributionSha256Sum='));
-      expect(flutterSetup, contains('default: "3.47.1"'));
-      expect(xcodeCloudSetup.readAsStringSync(), contains(':-3.47.1}'));
+      expect(flutterVersion.readAsStringSync().trim(), '3.47.1');
+      expect(flutterSetup, contains('.flutter-version'));
+      expect(flutterSetup, contains('./tool/flutterw --version'));
+      expect(xcodeCloudSetup.readAsStringSync(), contains('.flutter-version'));
       expect(
         flutterMetadata.readAsStringSync(),
         contains('6655482ec06e547f90abf8ae7590466f4415978d'),
       );
       expect(setupGuide, contains('target SDK 36'));
-      expect(setupGuide, contains('Flutter 3.47.1'));
+      expect(setupGuide, contains('declared in `.flutter-version`'));
       expect(setupGuide, contains('compile SDK: 37'));
     },
   );

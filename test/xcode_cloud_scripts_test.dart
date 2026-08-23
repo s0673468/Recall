@@ -3,6 +3,24 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+Future<void> installPinnedToolchainFiles(
+  String repositoryRoot,
+  Directory checkout,
+) async {
+  File(
+    '$repositoryRoot/.flutter-version',
+  ).copySync('${checkout.path}/.flutter-version');
+  final toolDirectory = Directory('${checkout.path}/tool')
+    ..createSync(recursive: true);
+  final wrapper = File(
+    '$repositoryRoot/tool/flutterw',
+  ).copySync('${toolDirectory.path}/flutterw');
+  final chmod = await Process.run('/bin/chmod', ['+x', wrapper.path]);
+  if (chmod.exitCode != 0) {
+    throw StateError('Could not make test Flutter wrapper executable.');
+  }
+}
+
 void main() {
   final repositoryRoot = Directory.current.path;
   final postCloneScript = '$repositoryRoot/ios/ci_scripts/ci_post_clone.sh';
@@ -17,12 +35,22 @@ void main() {
 
     final checkout = Directory('${sandbox.path}/checkout')
       ..createSync(recursive: true);
+    await installPinnedToolchainFiles(repositoryRoot, checkout);
     final flutterRoot = Directory('${sandbox.path}/flutter')
       ..createSync(recursive: true);
     final flutterBin = File('${flutterRoot.path}/bin/flutter');
     flutterBin.parent.createSync(recursive: true);
     flutterBin.writeAsStringSync('''
 #!/bin/sh
+if [ "\$1" = "--version" ] && [ "\$2" = "--machine" ]; then
+  if [ ! -e "\$0.primed" ]; then
+    : > "\$0.primed"
+    printf '%s\\n' 'bootstrapping Flutter'
+    exit 0
+  fi
+  printf '%s\\n' '{"frameworkVersion":"3.47.1"}'
+  exit 0
+fi
 printf '%s\\n' "\$*" >> "\$RECALL_CI_CALL_LOG"
 ''');
     await Process.run('/bin/chmod', ['+x', flutterBin.path]);
@@ -110,12 +138,17 @@ printf '%s\\n' "\$*" >> "\$RECALL_CI_CALL_LOG"
 
     final checkout = Directory('${sandbox.path}/checkout')
       ..createSync(recursive: true);
+    await installPinnedToolchainFiles(repositoryRoot, checkout);
     final flutterRoot = Directory('${sandbox.path}/flutter')
       ..createSync(recursive: true);
     final flutterBin = File('${flutterRoot.path}/bin/flutter');
     flutterBin.parent.createSync(recursive: true);
     flutterBin.writeAsStringSync('''
 #!/bin/sh
+if [ "\$1" = "--version" ] && [ "\$2" = "--machine" ]; then
+  printf '%s\\n' '{"frameworkVersion":"3.47.1"}'
+  exit 0
+fi
 exit 23
 ''');
     await Process.run('/bin/chmod', ['+x', flutterBin.path]);

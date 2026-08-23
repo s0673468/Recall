@@ -47,21 +47,24 @@ jobs:
       - uses: ./.github/actions/setup-flutter
 
       - name: flutter pub get
-        run: flutter pub get
+        run: ./tool/flutterw pub get
 
       # analyze_options treats infos/warnings as fatal, matching the local gate.
       - name: flutter analyze
-        run: flutter analyze
+        run: ./tool/flutterw analyze
 
       - name: flutter test
-        run: flutter test --reporter=failures-only
+        run: ./tool/flutterw test --reporter=failures-only
+
+      - name: Test pinned Flutter tooling
+        run: python3 -m unittest discover -s tool/tests -p 'test_*.py'
 
       - name: Test Pages build finisher
         run: python3 -m unittest discover -s web/tool/tests -p 'test_*.py'
 
       - name: Build deployable web bundle
         run: |
-          flutter build web --release --no-pub --base-href /Recall/ \
+          ./tool/flutterw build web --release --no-pub --base-href /Recall/ \
             --no-web-resources-cdn
           python3 web/tool/stamp_service_worker.py build/web "$GITHUB_SHA"
 
@@ -89,10 +92,10 @@ jobs:
           "platforms;android-37.0"
 
       - name: flutter pub get
-        run: flutter pub get
+        run: ./tool/flutterw pub get
 
       - name: Compile Android debug host
-        run: flutter build apk --debug --no-pub
+        run: ./tool/flutterw build apk --debug --no-pub
 
       - name: Android unit and instrumentation build checks
         working-directory: android
@@ -157,11 +160,11 @@ jobs:
       - uses: ./.github/actions/setup-flutter
 
       - name: flutter pub get
-        run: flutter pub get
+        run: ./tool/flutterw pub get
 
       - name: Prepare iOS simulator configuration
         run: >-
-          flutter build ios --debug --simulator --config-only --no-codesign
+          ./tool/flutterw build ios --debug --simulator --config-only --no-codesign
           --no-pub
 
       - name: Select an available iPhone simulator
