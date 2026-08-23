@@ -2718,6 +2718,64 @@ void main() {
       expect(find.textContaining('eramos'), findsOneWidget);
     });
 
+    testWidgets('StudyScreen reparses revised content for the same card', (
+      tester,
+    ) async {
+      await _loadVisualFonts();
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([
+        _card(
+          id: 508,
+          front: '<b>Original prompt</b>',
+          back: '{{c1::Original answer}} detail',
+        ),
+      ]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          home: RepaintBoundary(
+            key: const Key('visual_benchmark_boundary'),
+            child: Scaffold(body: StudyScreen(controller: controller)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Original prompt'), findsOneWidget);
+
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Original answer'), findsOneWidget);
+
+      api.queue[0] = _card(
+        id: 508,
+        front: '<i>Revised prompt</i>',
+        back: '{{c1::Revised answer}} detail',
+      );
+      await controller.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Revised prompt'), findsOneWidget);
+      expect(find.textContaining('Original prompt'), findsNothing);
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Revised answer'), findsOneWidget);
+      expect(find.textContaining('Original answer'), findsNothing);
+      await _captureVisual(tester, 'study-content-refresh');
+    });
+
     testWidgets('long answers are left aligned and scroll from the text', (
       tester,
     ) async {
@@ -2799,9 +2857,6 @@ void main() {
       SharedPreferences.setMockInitialValues({});
       // Real-data shape: the answer lives ONLY in the front's {{cN::}} markup;
       // the back is a separate plain summary with no deletion.
-      // Distinct card id: the parse memo is a global static keyed by
-      // "$cardId:$face", so reusing the default id=1 would collide with the
-      // previous StudyScreen test's cached back.
       final controller = ReviewController(
         api: _FakeRecallApi([
           _card(

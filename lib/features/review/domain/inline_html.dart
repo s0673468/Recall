@@ -536,20 +536,20 @@ String _extractSrc(String attrs) {
 // ── Small LRU memo ───────────────────────────────────────────────────────
 
 const int _cacheCap = 50;
-final Map<String, List<InlineHtmlNode>> _cache = {};
+final Map<String, ({String source, List<InlineHtmlNode> nodes})> _cache = {};
 
-/// Parse with a tiny LRU keyed by (cardId, face). [CardFace] rebuilds on every
-/// reveal, so memoising the pure span tree keeps parsing off the hot path.
-/// A null [cacheKey] parses uncached.
+/// Parse with a tiny LRU keyed by (cardId, face). The source text is retained
+/// with each entry so a refreshed card can safely reuse its stable identity
+/// without rendering an older revision. A null [cacheKey] parses uncached.
 List<InlineHtmlNode> parseInlineHtmlCached(String html, {String? cacheKey}) {
   if (cacheKey == null) return parseInlineHtml(html);
   final hit = _cache.remove(cacheKey);
-  if (hit != null) {
+  if (hit != null && hit.source == html) {
     _cache[cacheKey] = hit; // move to MRU
-    return hit;
+    return hit.nodes;
   }
   final parsed = parseInlineHtml(html);
-  _cache[cacheKey] = parsed;
+  _cache[cacheKey] = (source: html, nodes: parsed);
   if (_cache.length > _cacheCap) {
     _cache.remove(_cache.keys.first);
   }

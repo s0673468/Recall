@@ -99,11 +99,10 @@ class PrimerScreen extends StatelessWidget {
                           revealCloze: true,
                           selectable: false,
                           textAlign: TextAlign.start,
-                          // Unlike card faces, a primer body can change server-side
-                          // within a session (rows are updated in place), so the
-                          // memo key must vary with content, not just identity.
-                          cacheKey:
-                              'primer:${page.nodeId}:${page.bodyHtml.hashCode}',
+                          // Parser caches validate the body text as well as
+                          // this stable identity, so an in-session refresh can
+                          // never reuse an older primer revision.
+                          cacheKey: 'primer:${page.nodeId}',
                           style: bodyStyle,
                         ),
                       ],
