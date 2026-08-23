@@ -68,20 +68,38 @@ class RecallWidgetPublisher {
 
   int? _lastDueCount;
   DateTime? _lastUpdatedAt;
+  RecallWidgetSnapshot? _queuedSnapshot;
+  int? _queuedGeneration;
+  String? _ownerId;
+  int _sessionGeneration = 0;
   bool _cleared = false;
-  bool _clearQueued = false;
+  int? _queuedClearGeneration;
   bool _signedIn = false;
   Future<void> _pending = Future<void>.value();
 
   RecallWidgetPublisher({required this.store});
 
-  Future<void> publish({required bool signedIn, required ReviewState state}) {
-    _signedIn = signedIn;
-    if (!signedIn) {
-      if (_cleared || _clearQueued) return _pending;
+  Future<void> publish({
+    required bool signedIn,
+    String? ownerId,
+    required ReviewState state,
+  }) {
+    final sessionChanged =
+        signedIn != _signedIn ||
+        (signedIn && ownerId != null && ownerId != _ownerId);
+    if (sessionChanged) {
+      _sessionGeneration++;
       _lastDueCount = null;
       _lastUpdatedAt = null;
-      return _clearOnSignOut();
+    }
+    _signedIn = signedIn;
+    _ownerId = signedIn ? ownerId : null;
+    if (!signedIn) {
+      final generation = _sessionGeneration;
+      if (_cleared || _queuedClearGeneration == generation) return _pending;
+      _lastDueCount = null;
+      _lastUpdatedAt = null;
+      return _clearOnSignOut(generation);
     }
 
     _cleared = false;
@@ -91,23 +109,47 @@ class RecallWidgetPublisher {
     if (_lastDueCount == dueCount && _lastUpdatedAt == updatedAt) {
       return _pending;
     }
-    _lastDueCount = dueCount;
-    _lastUpdatedAt = updatedAt;
     final snapshot = RecallWidgetSnapshot(
       dueCount: dueCount,
       updatedAt: updatedAt.toUtc(),
     );
-    return _enqueue(() => store.update(snapshot));
+    final generation = _sessionGeneration;
+    if (_queuedSnapshot == snapshot && _queuedGeneration == generation) {
+      return _pending;
+    }
+    _queuedSnapshot = snapshot;
+    _queuedGeneration = generation;
+    return _publishSnapshot(snapshot, generation);
   }
 
-  Future<void> _clearOnSignOut() async {
-    _clearQueued = true;
+  Future<void> _publishSnapshot(
+    RecallWidgetSnapshot snapshot,
+    int generation,
+  ) async {
+    try {
+      await _enqueue(() => store.update(snapshot));
+      if (_signedIn && _sessionGeneration == generation) {
+        _lastDueCount = snapshot.dueCount;
+        _lastUpdatedAt = snapshot.updatedAt;
+      }
+    } finally {
+      if (_queuedSnapshot == snapshot && _queuedGeneration == generation) {
+        _queuedSnapshot = null;
+        _queuedGeneration = null;
+      }
+    }
+  }
+
+  Future<void> _clearOnSignOut(int generation) async {
+    _queuedClearGeneration = generation;
     try {
       await _enqueue(store.clear);
-      if (!_signedIn) _cleared = true;
+      if (!_signedIn && _sessionGeneration == generation) _cleared = true;
     } finally {
       // A failed clear must be retryable on the next signed-out publication.
-      _clearQueued = false;
+      if (_queuedClearGeneration == generation) {
+        _queuedClearGeneration = null;
+      }
     }
   }
 
@@ -167,10 +209,12 @@ class _RecallWidgetBridgeState extends State<RecallWidgetBridge> {
   }
 
   void _publish() {
+    final owner = widget.controller.currentUser;
     unawaited(
       _publisher
           .publish(
-            signedIn: widget.controller.currentUser != null,
+            signedIn: owner != null,
+            ownerId: owner?.id,
             state: widget.controller.state,
           )
           .catchError((Object error, StackTrace stackTrace) {

@@ -405,7 +405,7 @@ class ReviewController extends ChangeNotifier {
     // Not on a deck switch — the snapshot holds the previous filter's queue.
     var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
-      final snapshot = await store.loadSnapshot();
+      final snapshot = await store.loadSnapshot(deckId: _state.deckFilter);
       if (loadToken != _loadSequence) return; // superseded by a newer load
       if (snapshot != null && snapshot.queue.isNotEmpty) {
         final pending = await store.outbox();
@@ -586,7 +586,7 @@ class ReviewController extends ChangeNotifier {
         _set(_state.copyWith(loading: false, error: null, offline: true));
         return;
       }
-      final snapshot = await store.loadSnapshot();
+      final snapshot = await store.loadSnapshot(deckId: _state.deckFilter);
       if (loadToken != _loadSequence) return; // superseded while reading disk
       if (snapshot != null) {
         final pending = await store.outbox();
@@ -812,6 +812,7 @@ class ReviewController extends ChangeNotifier {
       await store.saveSnapshot(
         decks: decks,
         queue: queue,
+        deckId: _state.deckFilter,
         globalDueCount: globalDueCount,
         globalDueUpdatedAt: globalDueUpdatedAt,
         canWrite: () => loadToken == _loadSequence,
@@ -1033,12 +1034,17 @@ class ReviewController extends ChangeNotifier {
   /// Flush durable study actions and summarize the result for iOS background
   /// fetch. A failed network attempt leaves every undelivered entry in place.
   Future<BackgroundSyncReport> syncPendingInBackground() async {
-    final beforeReviews = (await store.outbox()).length;
-    final beforeFlags = (await store.flagOutbox()).length;
+    final ownerScope = store.activeOwnerScope;
+    if (ownerScope == null) {
+      return const BackgroundSyncReport(attempted: 0, delivered: 0, pending: 0);
+    }
+    final beforeReviews = (await store.outbox(ownerScope: ownerScope)).length;
+    final beforeFlags = (await store.flagOutbox(ownerScope: ownerScope)).length;
     final attempted = beforeReviews + beforeFlags;
     await syncPending();
     final pending =
-        (await store.outbox()).length + (await store.flagOutbox()).length;
+        (await store.outbox(ownerScope: ownerScope)).length +
+        (await store.flagOutbox(ownerScope: ownerScope)).length;
     return BackgroundSyncReport(
       attempted: attempted,
       delivered: (attempted - pending).clamp(0, attempted),
@@ -1084,13 +1090,28 @@ class ReviewController extends ChangeNotifier {
   int? _timedCardId;
   DateTime? _cardShownAt;
 
+  bool _rateInFlight = false;
+  bool get rateInFlight => _rateInFlight;
+
   Future<void> rate(Rating rating) async {
     final card = _state.current;
-    // Blocked while an undo is completing: a rating landing mid-undo would
-    // be rewound over by the undo's queue restore — the card would come
-    // back as unrated and end up reviewed twice.
-    if (card == null || !_state.showBack || _undoInFlight) return;
+    // Local persistence is intentionally awaited before the UI advances. Lock
+    // that window too: two fast taps must never enqueue the same visible card
+    // twice while its first durable event id is still being minted.
+    if (card == null || !_state.showBack || _undoInFlight || _rateInFlight) {
+      return;
+    }
+    _rateInFlight = true;
+    notifyListeners();
+    try {
+      await _rateVisibleCard(card, rating);
+    } finally {
+      _rateInFlight = false;
+      notifyListeners();
+    }
+  }
 
+  Future<void> _rateVisibleCard(ReviewCard card, Rating rating) async {
     _interactionGeneration++;
     final reviewedAt = clock().toUtc();
     final outcome = engine.review(card, rating, now: reviewedAt);
@@ -1425,11 +1446,15 @@ class ReviewController extends ChangeNotifier {
   /// prefix is removed from the outbox, so ratings enqueued while this ran
   /// are never clobbered.
   Future<void> _flushOnce() async {
-    final pending = await store.outbox();
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
+    final pending = await store.outbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
     var sent = 0;
     for (final entry in pending) {
+      if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       try {
         final logId = await api.applyReview(entry);
         sent++;
@@ -1446,10 +1471,22 @@ class ReviewController extends ChangeNotifier {
         break;
       }
     }
-    final remaining = await store.removeFirst(sent);
-    if (_state.pendingSync != remaining) {
+    final remaining = await store.removeFirst(sent, ownerScope: ownerScope);
+    if (_flushStillOwnsSession(ownerId, ownerScope) &&
+        _state.pendingSync != remaining) {
       _set(_state.copyWith(pendingSync: remaining));
     }
+  }
+
+  /// Production local state is owner-aware, so both the API session and the
+  /// hashed storage namespace must still name the account that began a flush.
+  /// The unscoped branch preserves the deliberately session-free unit harness.
+  bool _flushStillOwnsSession(String? ownerId, String? ownerScope) {
+    if (ownerScope == null) return !store.ownerAware;
+    return ownerId != null &&
+        api.currentUser?.id == ownerId &&
+        store.activeOwnerScope == ownerScope &&
+        store.isActiveOwner(ownerId);
   }
 
   /// Single-flight flag flush, structurally identical to [_flushOutbox] but on
@@ -1483,11 +1520,15 @@ class ReviewController extends ChangeNotifier {
   /// a flag; only the delivered prefix is removed. Flags carry no UI badge, so
   /// this makes no state change — it stays silent and out of the review path.
   Future<void> _flushFlagsOnce() async {
-    final pending = await store.flagOutbox();
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
+    final pending = await store.flagOutbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
     var sent = 0;
     for (final entry in pending) {
+      if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       try {
         await api.applyFlag(entry);
         sent++;
@@ -1496,7 +1537,7 @@ class ReviewController extends ChangeNotifier {
         break;
       }
     }
-    await store.removeFirstFlag(sent);
+    await store.removeFirstFlag(sent, ownerScope: ownerScope);
   }
 
   /// Background work (queue loads, outbox flushes) can finish after the

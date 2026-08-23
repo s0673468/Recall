@@ -187,6 +187,7 @@ class StudyScreen extends StatelessWidget {
                   preview: controller.previewCurrent(),
                   previewAt: controller.previewCurrentAt,
                   onRate: controller.rate,
+                  enabled: !controller.rateInFlight,
                 )
               : SizedBox(
                   key: const ValueKey('study_show_answer'),

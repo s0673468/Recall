@@ -21,6 +21,7 @@ class RecallPrefsController extends ChangeNotifier {
   static const localKey = 'recall_prefs_v1';
   static const _ownerLocalPrefix = 'recall_prefs_v2';
   static const _ownerPendingPrefix = 'recall_prefs_pending_v1';
+  static const _ownerCorruptPendingPrefix = 'recall_prefs_pending_corrupt_v1';
 
   final RecallApi api;
   final Future<SharedPreferences> Function() _prefsLoader;
@@ -47,6 +48,10 @@ class RecallPrefsController extends ChangeNotifier {
 
   static String pendingKeyForOwner(String ownerId) =>
       '$_ownerPendingPrefix:${_ownerKey(ownerId)}';
+
+  @visibleForTesting
+  static String corruptPendingKeyForOwner(String ownerId) =>
+      '$_ownerCorruptPendingPrefix:${_ownerKey(ownerId)}';
 
   static String _ownerKey(String ownerId) =>
       sha256.convert(utf8.encode(ownerId)).toString();
@@ -137,25 +142,40 @@ class RecallPrefsController extends ChangeNotifier {
       final pendingRaw = prefs.getString(pendingKey);
       if (pendingRaw != null) {
         final pending = _decode(pendingRaw, pending: true);
-        if (pending == null) return;
-        if (_ownerId != ownerId || api.currentUser?.id != ownerId) return;
-        try {
-          await api.saveRecallPrefs(pending.toJson());
-        } catch (_) {
-          debugPrint('Recall: prefs cloud write deferred (offline?)');
+        if (pending == null) {
+          // A malformed latest-value record cannot be replayed, but leaving it
+          // in the authoritative pending slot would block every later cloud
+          // refresh. Preserve the raw recovery evidence under the same hashed
+          // owner scope, then clear only the unchanged corrupt value.
+          await _withLocalLock(() async {
+            if (prefs.getString(pendingKey) != pendingRaw) return;
+            await _setStringStrict(
+              prefs,
+              corruptPendingKeyForOwner(ownerId),
+              pendingRaw,
+            );
+            await _removeStrict(prefs, pendingKey);
+          });
+        } else {
+          if (_ownerId != ownerId || api.currentUser?.id != ownerId) return;
+          try {
+            await api.saveRecallPrefs(pending.toJson());
+          } catch (_) {
+            debugPrint('Recall: prefs cloud write deferred (offline?)');
+            return;
+          }
+
+          // A newer update may have replaced the pending value while this
+          // write was in flight. Clear only the exact value the server accepted.
+          await _withLocalLock(() async {
+            if (prefs.getString(pendingKey) == pendingRaw) {
+              await _removeStrict(prefs, pendingKey);
+            }
+          });
+          // The just-replayed local value is authoritative. Do not immediately
+          // replace it with a lagging read replica or stale fake/cloud response.
           return;
         }
-
-        // A newer update may have replaced the pending value while this write
-        // was in flight. Clear only the exact value the server accepted.
-        await _withLocalLock(() async {
-          if (prefs.getString(pendingKey) == pendingRaw) {
-            await _removeStrict(prefs, pendingKey);
-          }
-        });
-        // The just-replayed local value is authoritative. Do not immediately
-        // replace it with a lagging read replica or stale fake/cloud response.
-        return;
       }
 
       final versionAtFetch = _version;

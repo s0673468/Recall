@@ -638,6 +638,14 @@ Future<void> _enqueuePendingReview({
   await store.enqueueReview(entry);
 }
 
+User _testUser(String id) => User(
+  id: id,
+  appMetadata: const {},
+  userMetadata: const {},
+  aud: 'authenticated',
+  createdAt: DateTime.utc(2026, 8, 23).toIso8601String(),
+);
+
 void main() {
   test('review events identify the native iOS client', () {
     expect(
@@ -1085,6 +1093,30 @@ void main() {
       await controller.signIn(email: 'person@example.com', password: 'secret');
 
       expect(controller.state.error, 'Wrong email or password.');
+    });
+
+    test('a rapid double rating records the visible card only once', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([_card(), _card(id: 2)])
+        ..failApplyReview = true;
+      final store = LocalReviewStore();
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      controller.flip();
+
+      await Future.wait([
+        controller.rate(Rating.good),
+        controller.rate(Rating.good),
+      ]);
+
+      expect(controller.state.reviewedThisSession, 1);
+      expect(controller.state.current?.id, 2);
+      expect(await store.outbox(), hasLength(1));
     });
 
     test(
@@ -1955,6 +1987,49 @@ void main() {
         expect(api.applied.length, 2);
         expect(controller.state.pendingSync, 0);
         expect(controller.state.index, 2);
+      },
+    );
+
+    test(
+      'an account switch stops the old review outbox after its in-flight item',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final cards = [_card(id: 1), _card(id: 2)];
+        final api = _FakeRecallApi(cards)..user = _testUser('account-a');
+        final store = LocalReviewStore();
+        await store.activateOwner('account-a');
+        await _enqueuePendingReview(store: store, api: api, card: cards[0]);
+        await _enqueuePendingReview(store: store, api: api, card: cards[1]);
+        final firstDeliveryStarted = Completer<void>();
+        final releaseFirstDelivery = Completer<void>();
+        var deliveryCount = 0;
+        api.beforeApplyReview = () {
+          deliveryCount++;
+          if (deliveryCount == 1) {
+            firstDeliveryStarted.complete();
+            return releaseFirstDelivery.future;
+          }
+          return Future<void>.value();
+        };
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        final sync = controller.syncPending();
+        await firstDeliveryStarted.future;
+        // Supabase has replaced its session, but the serialized local cleanup
+        // has not yet released account A's namespace.
+        api.user = _testUser('account-b');
+        releaseFirstDelivery.complete();
+        await sync;
+
+        expect(api.applied.map((entry) => entry['card_id']), [1]);
+        final accountARemaining = await store.outbox();
+        expect(accountARemaining, hasLength(1));
+        expect(accountARemaining.single['card_id'], 2);
       },
     );
   });
@@ -3393,6 +3468,80 @@ void main() {
   });
 
   group('Offline store', () {
+    test('account namespaces isolate snapshots and durable outboxes', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.activateOwner('owner-a');
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 1, name: 'Owner A')],
+        queue: [_card(id: 101, front: 'owner-a-card')],
+      );
+      await store.enqueueReview({'card_id': 101, 'client_id': 'owner-a-event'});
+
+      await store.activateOwner('owner-b');
+
+      expect(await store.loadSnapshot(), isNull);
+      expect(await store.outbox(), isEmpty);
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 2, name: 'Owner B')],
+        queue: [_card(id: 202, deckId: 2, front: 'owner-b-card')],
+      );
+
+      await store.activateOwner('owner-a');
+      expect((await store.loadSnapshot())!.queue.single.front, 'owner-a-card');
+      expect((await store.outbox()).single['client_id'], 'owner-a-event');
+      await store.releaseOwner();
+      expect(() => store.outbox(), throwsStateError);
+    });
+
+    test(
+      'legacy local state is claimed by only the first upgraded owner',
+      () async {
+        final legacyCard = _card(id: 303, front: 'legacy-owner-card');
+        SharedPreferences.setMockInitialValues({
+          'recall_snapshot_v1': jsonEncode({
+            'savedAt': DateTime.utc(2026, 8, 23).toIso8601String(),
+            'globalDueCount': 1,
+            'globalDueUpdatedAt': DateTime.utc(2026, 8, 23).toIso8601String(),
+            'decks': [const DeckRow(deckId: 3, name: 'Legacy').toJson()],
+            'queue': [legacyCard.toJson()],
+          }),
+          'recall_outbox_v1': jsonEncode([
+            {'card_id': 303, 'client_id': 'legacy-event'},
+          ]),
+        });
+        final store = LocalReviewStore();
+
+        await store.activateOwner('first-owner');
+        expect((await store.loadSnapshot())!.queue.single.id, 303);
+        expect((await store.outbox()).single['client_id'], 'legacy-event');
+
+        await store.activateOwner('second-owner');
+        expect(await store.loadSnapshot(), isNull);
+        expect(await store.outbox(), isEmpty);
+      },
+    );
+
+    test('signed-out background sync reports no work', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.activateOwner('owner-a');
+      await store.releaseOwner();
+      final controller = ReviewController(
+        api: _FakeRecallApi(const []),
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+
+      final report = await controller.syncPendingInBackground();
+
+      expect(report.attempted, 0);
+      expect(report.delivered, 0);
+      expect(report.pending, 0);
+      expect(report.nativeResult, 'noData');
+    });
+
     test(
       'corrupt review outbox fails closed instead of looking empty',
       () async {
@@ -3444,6 +3593,35 @@ void main() {
       expect(snap.queue.single.stability, 5);
       expect(snap.globalDueCount, 12);
       expect(snap.globalDueUpdatedAt, dueUpdatedAt);
+    });
+
+    test('all-decks and direct-deck snapshots stay independent', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.saveSnapshot(
+        decks: const [
+          DeckRow(deckId: 1, name: 'ML'),
+          DeckRow(deckId: 2, name: 'Math'),
+        ],
+        queue: [_card(id: 1, deckId: 1), _card(id: 2, deckId: 2)],
+      );
+      await store.saveSnapshot(
+        deckId: 2,
+        decks: const [
+          DeckRow(deckId: 1, name: 'ML'),
+          DeckRow(deckId: 2, name: 'Math'),
+        ],
+        queue: [_card(id: 2, deckId: 2)],
+      );
+
+      expect((await store.loadSnapshot())!.queue.map((card) => card.id), [
+        1,
+        2,
+      ]);
+      expect(
+        (await store.loadSnapshot(deckId: 2))!.queue.map((card) => card.id),
+        [2],
+      );
     });
 
     test('outbox enqueues and drains', () async {
@@ -3524,10 +3702,16 @@ void main() {
         decks: const [DeckRow(deckId: 1, name: 'ML')],
         queue: [_card(id: 1)],
       );
+      await store.saveSnapshot(
+        deckId: 1,
+        decks: const [DeckRow(deckId: 1, name: 'ML')],
+        queue: [_card(id: 1)],
+      );
       await store.enqueueReview({'card_id': 1, 'rating': 3});
       await store.enqueueFlag({'card_id': 1, 'reason': 'wrong'});
       await store.clear();
       expect(await store.loadSnapshot(), isNull);
+      expect(await store.loadSnapshot(deckId: 1), isNull);
       expect(await store.outbox(), isEmpty);
       expect(await store.flagOutbox(), isEmpty);
     });
@@ -4260,6 +4444,45 @@ void main() {
       expect(api.flagged.single['card_id'], 1);
       expect(await store.flagOutbox(), isEmpty);
     });
+
+    test(
+      'an account switch stops the old flag outbox after its in-flight item',
+      () async {
+        final api = _FakeRecallApi(const [])..user = _testUser('account-a');
+        final store = LocalReviewStore();
+        await store.activateOwner('account-a');
+        await store.enqueueFlag({'card_id': 1, 'client_id': 'flag-a-1'});
+        await store.enqueueFlag({'card_id': 2, 'client_id': 'flag-a-2'});
+        final firstDeliveryStarted = Completer<void>();
+        final releaseFirstDelivery = Completer<void>();
+        var deliveryCount = 0;
+        api.beforeApplyFlag = () {
+          deliveryCount++;
+          if (deliveryCount == 1) {
+            firstDeliveryStarted.complete();
+            return releaseFirstDelivery.future;
+          }
+          return Future<void>.value();
+        };
+        final controller = ReviewController(
+          api: api,
+          engine: FsrsEngine(),
+          store: store,
+        );
+        addTearDown(controller.dispose);
+
+        final sync = controller.syncPending();
+        await firstDeliveryStarted.future;
+        api.user = _testUser('account-b');
+        releaseFirstDelivery.complete();
+        await sync;
+
+        expect(api.flagged.map((entry) => entry['card_id']), [1]);
+        final accountARemaining = await store.flagOutbox();
+        expect(accountARemaining, hasLength(1));
+        expect(accountARemaining.single['card_id'], 2);
+      },
+    );
 
     test('queued flags survive a store reload (simulated restart)', () async {
       final api1 = _FakeRecallApi([_card(id: 3)]);
@@ -5191,6 +5414,7 @@ class _GatedSnapshotStore extends LocalReviewStore {
   Future<void> saveSnapshot({
     required List<DeckRow> decks,
     required List<ReviewCard> queue,
+    int? deckId,
     int? globalDueCount,
     DateTime? globalDueUpdatedAt,
     bool Function()? canWrite,
@@ -5201,6 +5425,7 @@ class _GatedSnapshotStore extends LocalReviewStore {
       await super.saveSnapshot(
         decks: decks,
         queue: queue,
+        deckId: deckId,
         globalDueCount: globalDueCount,
         globalDueUpdatedAt: globalDueUpdatedAt,
         canWrite: canWrite,
