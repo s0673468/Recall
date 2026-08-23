@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install or check the repo-canonical anki-revision skill in both harnesses."""
+"""Install or check the repo-canonical anki-revision skill for Codex."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from pathlib import Path
 
 
 TARGETS = (
-    Path.home() / ".claude" / "skills" / "anki-revision",
     Path.home() / ".codex" / "skills" / "anki-revision",
 )
 
@@ -62,12 +61,12 @@ def main() -> int:
         staging.replace(target)
         print(f"installed {skill_file}")
     if drift:
-        print("skill mirror drift:")
+        print("installed skill drift:")
         for path in drift:
             print(f"  {path}")
         return 1
     if args.check:
-        print("skill mirrors match repo-canonical source")
+        print("installed Codex skill matches repo-canonical source")
     return 0
 
 

@@ -6,8 +6,8 @@ must not maintain divergent copies or import code from an installed skill.
 
 The canonical authoring standard is
 [`docs/card-golden-standard.md`](../../docs/card-golden-standard.md). The thin
-cross-harness skill is [`skills/anki-revision/SKILL.md`](../../skills/anki-revision/SKILL.md).
-Install or verify both mirrors with:
+Codex skill is [`skills/anki-revision/SKILL.md`](../../skills/anki-revision/SKILL.md).
+Install or verify the Codex copy with:
 
 ```bash
 python3 skills/anki-revision/install.py
