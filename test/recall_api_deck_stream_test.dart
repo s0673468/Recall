@@ -85,5 +85,32 @@ void main() {
         expect(uri.queryParameters['notes.deck_id'], 'in.(1,3)');
       }
     });
+
+    test('scopes the due forecast to automatic decks', () async {
+      await api.fetchDueDates(includedDeckIds: {1, 3});
+
+      final request = requests.singleWhere(
+        (uri) => uri.path.endsWith('/cards'),
+      );
+      expect(request.queryParameters['notes.deck_id'], 'in.(1,3)');
+      expect(
+        request.queryParameters['select'],
+        contains('notes!inner(deck_id)'),
+      );
+    });
+
+    test('an empty automatic stream performs no forecast query', () async {
+      expect(await api.fetchDueDates(includedDeckIds: const {}), isEmpty);
+      expect(requests, isEmpty);
+    });
+
+    test('an unrestricted due-date read remains available', () async {
+      await api.fetchDueDates();
+
+      final request = requests.singleWhere(
+        (uri) => uri.path.endsWith('/cards'),
+      );
+      expect(request.queryParameters, isNot(contains('notes.deck_id')));
+    });
   });
 }

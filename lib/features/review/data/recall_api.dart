@@ -984,17 +984,24 @@ class RecallApi implements ReviewReplayGateway {
 
   /// Upcoming due dates (local) for scheduled (non-new) cards — powers the due
   /// forecast. Suspended cards are dormant and generate no upcoming workload,
-  /// so they're excluded here too. With ~1.2k cards a plain ranged select is
-  /// well within limits.
-  Future<List<DateTime>> fetchDueDates() async {
-    final rows = await client
+  /// so they're excluded here too. [includedDeckIds] scopes the automatic
+  /// forecast; leaving it null preserves unrestricted callers. With ~1.2k
+  /// cards a plain ranged select is well within limits.
+  Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) async {
+    if (includedDeckIds != null && includedDeckIds.isEmpty) return const [];
+    final select = includedDeckIds == null ? 'due' : 'due,notes!inner(deck_id)';
+    var query = client
         .from('cards')
-        .select('due')
+        .select(select)
         .eq('deleted', false)
         .eq('suspended', false)
         .neq('state', 0)
-        .not('due', 'is', null)
-        .limit(5000);
+        .not('due', 'is', null);
+    if (includedDeckIds != null) {
+      final ids = includedDeckIds.toList()..sort();
+      query = query.inFilter('notes.deck_id', ids);
+    }
+    final rows = await query.limit(5000);
     return [
       for (final r in rows)
         if (r['due'] != null) DateTime.parse(r['due'] as String).toLocal(),

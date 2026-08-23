@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -56,6 +56,15 @@ jobs:
       - name: flutter test
         run: flutter test --reporter=failures-only
 
+      - name: Test Pages build finisher
+        run: python3 -m unittest discover -s web/tool/tests -p 'test_*.py'
+
+      - name: Build deployable web bundle
+        run: |
+          flutter build web --release --no-pub --base-href /Recall/ \
+            --no-web-resources-cdn
+          python3 web/tool/stamp_service_worker.py build/web "$GITHUB_SHA"
+
   android-native:
     # Recall is public. Hosted Linux keeps fork PRs away from private runners.
     runs-on: ubuntu-latest
@@ -74,6 +83,11 @@ jobs:
 
       - uses: ./.github/actions/setup-flutter
 
+      - name: Install Android SDK 37
+        run: >-
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          "platforms;android-37.0"
+
       - name: flutter pub get
         run: flutter pub get
 
@@ -83,3 +97,104 @@ jobs:
       - name: Android unit and instrumentation build checks
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest --no-daemon
+
+  flag-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install flag-report dependencies
+        run: python -m pip install -r tools/flag_report/requirements.txt
+
+      - name: Test read-only flag report
+        run: python -m unittest discover -s tools/flag_report/tests -p 'test_*.py'
+
+  testflight-helper:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Test TestFlight delivery helper
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+
+  fsrs-optimizer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install FSRS optimizer dependencies
+        run: python -m pip install -r tools/fsrs_optimize/requirements.txt
+
+      - name: Test report-only FSRS optimizer
+        run: python -m unittest discover -s tools/fsrs_optimize/tests -p 'test_*.py'
+
+  ios-native:
+    # Public repo: native Apple tests use a GitHub-hosted Mac, never the M1 hub.
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-flutter
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: Prepare iOS simulator configuration
+        run: >-
+          flutter build ios --debug --simulator --config-only --no-codesign
+          --no-pub
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          import subprocess
+
+          payload = json.loads(
+              subprocess.check_output(
+                  ["xcrun", "simctl", "list", "devices", "available", "--json"],
+                  text=True,
+              )
+          )
+          runtimes = sorted(
+              payload["devices"],
+              key=lambda value: tuple(int(part) for part in re.findall(r"\d+", value)),
+              reverse=True,
+          )
+          for runtime in runtimes:
+              for device in payload["devices"][runtime]:
+                  if device["name"].startswith("iPhone"):
+                      print(f"id={device['udid']}")
+                      raise SystemExit(0)
+          raise SystemExit("No available iPhone simulator was found")
+          PY
+
+      - name: Run native iOS tests
+        run: >-
+          xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner
+          -configuration Debug
+          -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}"
+          CODE_SIGNING_ALLOWED=NO

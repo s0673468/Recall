@@ -139,8 +139,18 @@ class SecureRecallSupabaseLocalStorage
   Future<void> initialize() => _initialization ??= _initialize();
 
   Future<void> _initialize() async {
-    await super.initialize();
-    await _legacyCredentials.clearAndVerify();
+    try {
+      await super.initialize();
+    } catch (_) {
+      debugPrint('Recall: secure session storage initialization failed');
+      rethrow;
+    }
+    try {
+      await _legacyCredentials.clearAndVerify();
+    } catch (_) {
+      debugPrint('Recall: legacy credential cleanup failed');
+      rethrow;
+    }
   }
 
   Future<void> persistSessionStrict(String persistSessionString) async {

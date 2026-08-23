@@ -50,7 +50,9 @@ gradle.taskGraph.whenReady {
 
 android {
     namespace = "com.german.health_anki_flutter"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_secure_storage 11 requires API 37 at compile time. Recall keeps
+    // Flutter's target SDK 36 until the Android 17 behavior change is accepted.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {

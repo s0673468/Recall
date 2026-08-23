@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show AppSwitcher, HealthWebApp;
@@ -53,7 +52,7 @@ class StatsScreenState extends State<StatsScreen> {
 
   void _fetch() {
     _reviewLog = _service.loadReviewLog();
-    _dueDates = _service.loadDueDates();
+    _dueDates = _service.loadAutomaticDueDates();
     // The Concepts section needs the review log plus the node<->card tag map and
     // concept metadata/primers. Start each one-time fetch together and bundle
     // them so the section resolves (and fails) as one unit.
@@ -249,7 +248,7 @@ class StatsScreenState extends State<StatsScreen> {
           ),
           const SizedBox(height: UiSpacing.xl),
 
-          if (kIsWeb)
+          if (AppSwitcher.isSupported)
             const AppSwitcher(
               current: HealthWebApp.recall,
               alignment: WrapAlignment.center,

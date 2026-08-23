@@ -7,7 +7,7 @@
 // boot-critical files and lazily with everything else, served cache-first.
 //
 // Update model: the VERSION placeholder is stamped with the deploy SHA by
-// scripts/finish_pages_build.sh, so every deploy changes this file, the
+// web/tool/stamp_service_worker.py, so every deploy changes this file, the
 // browser installs the new worker in the background, and it activates on the
 // NEXT launch (no skipWaiting) — a running session never has its cache
 // swapped underneath it. The old version's cache is deleted on activation.
@@ -78,7 +78,11 @@ async function cacheFirst(request) {
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok && response.type === 'basic') {
-    cache.put(request, response.clone());
+    try {
+      await cache.put(request, response.clone());
+    } catch (_) {
+      // A full or unavailable cache must not discard a valid network response.
+    }
   }
   return response;
 }
