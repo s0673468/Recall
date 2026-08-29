@@ -125,16 +125,20 @@ class HtmlBreak extends InlineHtmlNode {
 class HtmlImage extends InlineHtmlNode {
   final String? url;
   final String rawSrc;
-  const HtmlImage({required this.url, required this.rawSrc});
+  final String? alt;
+  const HtmlImage({required this.url, required this.rawSrc, this.alt});
 
   bool get synced => url != null;
 
   @override
   bool operator ==(Object other) =>
-      other is HtmlImage && other.url == url && other.rawSrc == rawSrc;
+      other is HtmlImage &&
+      other.url == url &&
+      other.rawSrc == rawSrc &&
+      other.alt == alt;
 
   @override
-  int get hashCode => Object.hash(url, rawSrc);
+  int get hashCode => Object.hash(url, rawSrc, alt);
 }
 
 // ── Entity decoding ───────────────────────────────────────────────────────
@@ -321,6 +325,10 @@ final RegExp _srcRe = RegExp(
   '''src\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))''',
   caseSensitive: false,
 );
+final RegExp _altRe = RegExp(
+  '''alt\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))''',
+  caseSensitive: false,
+);
 final RegExp _colorAttrRe = RegExp(
   '''color\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))''',
   caseSensitive: false,
@@ -455,6 +463,7 @@ List<InlineHtmlNode> parseInlineHtml(String html, {bool trimEdges = true}) {
             HtmlImage(
               url: (rawSrc.startsWith('https://')) ? rawSrc : null,
               rawSrc: rawSrc,
+              alt: _extractAlt(attrs),
             ),
           );
         }
@@ -531,6 +540,14 @@ String _extractSrc(String attrs) {
   final m = _srcRe.firstMatch(attrs);
   if (m == null) return '';
   return (m.group(1) ?? m.group(2) ?? m.group(3) ?? '').trim();
+}
+
+String? _extractAlt(String attrs) {
+  final match = _altRe.firstMatch(attrs);
+  if (match == null) return null;
+  return decodeEntities(
+    (match.group(1) ?? match.group(2) ?? match.group(3) ?? '').trim(),
+  );
 }
 
 // ── Small LRU memo ───────────────────────────────────────────────────────

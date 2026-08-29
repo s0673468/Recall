@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  cupertino_icons: ^1.0.8
   app_links: ^7.2.1
   crypto: ^3.0.7
   supabase_flutter: ^2.17.2
