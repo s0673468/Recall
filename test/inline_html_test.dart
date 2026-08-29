@@ -60,8 +60,14 @@ void main() {
       expect(_styleOf(parseInlineHtml('<u>x</u>'), 'x').underline, isTrue);
       expect(_styleOf(parseInlineHtml('<code>x</code>'), 'x').code, isTrue);
       expect(_styleOf(parseInlineHtml('<pre>x</pre>'), 'x').code, isTrue);
-      expect(_styleOf(parseInlineHtml('H<sub>2</sub>O'), '2').subscript, isTrue);
-      expect(_styleOf(parseInlineHtml('x<sup>2</sup>'), '2').superscript, isTrue);
+      expect(
+        _styleOf(parseInlineHtml('H<sub>2</sub>O'), '2').subscript,
+        isTrue,
+      );
+      expect(
+        _styleOf(parseInlineHtml('x<sup>2</sup>'), '2').superscript,
+        isTrue,
+      );
     });
 
     test('<br> and block breaks split lines', () {
@@ -81,9 +87,7 @@ void main() {
     });
 
     test('unordered list renders bullet-prefixed lines', () {
-      final text = _plain(
-        parseInlineHtml('<ul><li>one</li><li>two</li></ul>'),
-      );
+      final text = _plain(parseInlineHtml('<ul><li>one</li><li>two</li></ul>'));
       expect(text, contains('• one'));
       expect(text, contains('• two'));
     });
@@ -115,9 +119,7 @@ void main() {
 
   group('parseInlineHtml — colour', () {
     test('span style colour is parsed and dark-clamped', () {
-      final nodes = parseInlineHtml(
-        '<span style="color:#000000">dark</span>',
-      );
+      final nodes = parseInlineHtml('<span style="color:#000000">dark</span>');
       final argb = _styleOf(nodes, 'dark').colorArgb;
       expect(argb, isNotNull);
       // Pure black would be invisible on dark; it must be lightened.
@@ -133,10 +135,13 @@ void main() {
 
   group('parseInlineHtml — images', () {
     test('absolute https image becomes a synced image node', () {
-      final nodes = parseInlineHtml('<img src="https://x.test/a.png">');
+      final nodes = parseInlineHtml(
+        '<img src="https://x.test/a.png" alt="Loss &amp; accuracy chart">',
+      );
       final img = nodes.whereType<HtmlImage>().single;
       expect(img.synced, isTrue);
       expect(img.url, 'https://x.test/a.png');
+      expect(img.alt, 'Loss & accuracy chart');
     });
 
     test('relative / collection.media image is unsynced', () {
@@ -144,6 +149,14 @@ void main() {
       final img = nodes.whereType<HtmlImage>().single;
       expect(img.synced, isFalse);
       expect(img.rawSrc, 'paste-123.jpg');
+      expect(img.alt, isNull);
+    });
+
+    test('preserves an authored empty alt for decorative images', () {
+      final img = parseInlineHtml(
+        '<img src="decoration.png" alt="">',
+      ).whereType<HtmlImage>().single;
+      expect(img.alt, isEmpty);
     });
   });
 

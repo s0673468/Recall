@@ -23,11 +23,12 @@ enum AcceptanceScenario {
   signedOut;
 
   static AcceptanceScenario parse(String value) => switch (value) {
+    'rich' => AcceptanceScenario.rich,
     'empty' => AcceptanceScenario.empty,
     'offline' => AcceptanceScenario.offline,
     'partial_stats_failure' => AcceptanceScenario.partialStatsFailure,
     'signed_out' => AcceptanceScenario.signedOut,
-    _ => AcceptanceScenario.rich,
+    _ => throw ArgumentError.value(value, 'value', 'unknown scenario'),
   };
 }
 
@@ -96,6 +97,7 @@ class SanitizedRecallDataset {
               : anchor.subtract(Duration(days: 1 + (i % 90))),
           cloudSeen: !isNew,
           tags: tags[guid],
+          latexSvg: i == cardCount ? _fixtureSvg(i) : null,
           contentRevalidationPending: i % 97 == 0,
         ),
       );
@@ -133,7 +135,8 @@ class SanitizedRecallDataset {
         ConceptPage(
           nodeId: 'concept-$i',
           title: i == conceptCount
-              ? 'A deliberately long primer title that must wrap without clipping'
+              ? 'Sanitized concept $i — a deliberately long primer title that '
+                    'must wrap without clipping'
               : 'Sanitized concept $i',
           bodyHtml:
               '<strong>Core idea.</strong> This local primer explains concept $i '
@@ -163,6 +166,19 @@ class SanitizedRecallDataset {
   }
 
   static ({String front, String back, bool hasLatex}) _cardContent(int id) {
+    if (id == cardCount - 1) {
+      return (
+        front:
+            'This deliberately long synthetic prompt checks that a production-'
+            'scale card can wrap, scroll, and keep its primary controls reachable '
+            'without exposing any real learning material. ${'detail ' * 40}',
+        back:
+            '<strong>Long answer.</strong> ${'Sanitized explanation. ' * 40}'
+            '<br><img src="missing-sanitized-media.png" '
+            'alt="Synthetic missing-media example">',
+        hasLatex: false,
+      );
+    }
     return switch (id % 6) {
       0 => (
         front: 'Why does a model overfit?',
@@ -226,16 +242,18 @@ class SanitizedRecallApi extends RecallApi {
   final AcceptanceScenario scenario;
   final StreamController<AuthState> _authStates =
       StreamController<AuthState>.broadcast();
-  final Set<int> _reviewedCardIds = <int>{};
-  final List<Map<String, dynamic>> appliedFlags = [];
-  final List<ReviewLogEntry> _reviews;
+  final Map<String, Set<int>> _reviewedCardIdsByOwner = {};
+  final Map<String, List<int>> _appliedReviewCardIdsByOwner = {};
+  final Map<String, List<Map<String, dynamic>>> _appliedFlagsByOwner = {};
+  final Map<String, List<ReviewLogEntry>> _reviewsByOwner = {};
+  final Map<String, Map<String, dynamic>> _prefsRowsByOwner = {};
 
   User? _user;
-  Map<String, dynamic>? _prefsRow;
+  bool online;
   int _nextReviewLogId = 20000;
 
   SanitizedRecallApi({required this.dataset, required this.scenario})
-    : _reviews = List<ReviewLogEntry>.from(dataset.reviews),
+    : online = scenario != AcceptanceScenario.offline,
       super(
         SupabaseClient(
           'https://sanitized-recall.invalid',
@@ -246,8 +264,15 @@ class SanitizedRecallApi extends RecallApi {
     if (scenario != AcceptanceScenario.signedOut) _user = _acceptanceUser();
   }
 
-  bool get _offline => scenario == AcceptanceScenario.offline;
   bool get _empty => scenario == AcceptanceScenario.empty;
+
+  List<int> get appliedReviewCardIds => List<int>.unmodifiable(
+    _appliedReviewCardIdsByOwner[_requireOwnerId()] ?? const <int>[],
+  );
+
+  List<Map<String, dynamic>> get appliedFlags => List.unmodifiable(
+    _appliedFlagsByOwner[_requireOwnerId()] ?? const <Map<String, dynamic>>[],
+  );
 
   @override
   String get device => 'sanitized-local-web';
@@ -283,19 +308,22 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<Map<String, dynamic>?> fetchRecallPrefs() async {
     _requireOnline();
-    return _prefsRow == null ? null : Map<String, dynamic>.from(_prefsRow!);
+    final row = _prefsRowsByOwner[_requireOwnerId()];
+    return row == null ? null : Map<String, dynamic>.from(row);
   }
 
   @override
   Future<void> saveRecallPrefs(Map<String, dynamic> value) async {
     _requireOnline();
-    _prefsRow = Map<String, dynamic>.from(value);
+    _prefsRowsByOwner[_requireOwnerId()] = Map<String, dynamic>.from(value);
   }
 
   Iterable<ReviewCard> _selected({int? deckId, Set<int>? includedDeckIds}) {
     if (_empty) return const <ReviewCard>[];
+    final reviewedCardIds =
+        _reviewedCardIdsByOwner[_requireOwnerId()] ?? const {};
     return dataset.cards.where((card) {
-      if (_reviewedCardIds.contains(card.id)) return false;
+      if (reviewedCardIds.contains(card.id)) return false;
       if (deckId != null) return card.deckId == deckId;
       return includedDeckIds == null || includedDeckIds.contains(card.deckId);
     });
@@ -383,9 +411,13 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<int?> applyReview(Map<String, dynamic> entry) async {
     _requireOnline();
+    final ownerId = _requireOwnerId();
     final cardId = (entry['card_id'] as num).toInt();
-    _reviewedCardIds.add(cardId);
-    _reviews.add(
+    _reviewedCardIdsByOwner.putIfAbsent(ownerId, () => <int>{}).add(cardId);
+    _appliedReviewCardIdsByOwner
+        .putIfAbsent(ownerId, () => <int>[])
+        .add(cardId);
+    _reviewsForOwner(ownerId).add(
       ReviewLogEntry(
         cardId: cardId,
         guid: entry['guid'] as String?,
@@ -403,11 +435,13 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<void> undoReview(Map<String, dynamic> entry) async {
     _requireOnline();
+    final ownerId = _requireOwnerId();
     final cardId = (entry['card_id'] as num).toInt();
-    _reviewedCardIds.remove(cardId);
-    for (var i = _reviews.length - 1; i >= 0; i--) {
-      if (_reviews[i].cardId == cardId) {
-        _reviews.removeAt(i);
+    _reviewedCardIdsByOwner[ownerId]?.remove(cardId);
+    final reviews = _reviewsForOwner(ownerId);
+    for (var i = reviews.length - 1; i >= 0; i--) {
+      if (reviews[i].cardId == cardId) {
+        reviews.removeAt(i);
         break;
       }
     }
@@ -416,16 +450,18 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<void> applyFlag(Map<String, dynamic> entry) async {
     _requireOnline();
-    appliedFlags.add(Map<String, dynamic>.from(entry));
+    _appliedFlagsByOwner
+        .putIfAbsent(_requireOwnerId(), () => <Map<String, dynamic>>[])
+        .add(Map<String, dynamic>.from(entry));
   }
 
   @override
   Future<List<ReviewLogEntry>> fetchReviewLog({int days = 190}) async {
     _requireOnline();
     final cutoff = dataset.now.subtract(Duration(days: days));
-    return _reviews
-        .where((review) => !review.at.toUtc().isBefore(cutoff))
-        .toList();
+    return _reviewsForOwner(
+      _requireOwnerId(),
+    ).where((review) => !review.at.toUtc().isBefore(cutoff)).toList();
   }
 
   @override
@@ -483,21 +519,35 @@ class SanitizedRecallApi extends RecallApi {
   }
 
   void _requireOnline() {
-    if (_offline) throw StateError('sanitized offline scenario');
+    if (!online) throw StateError('sanitized offline scenario');
   }
+
+  String _requireOwnerId() {
+    final id = _user?.id;
+    if (id == null) throw const AuthException('not authenticated');
+    return id;
+  }
+
+  List<ReviewLogEntry> _reviewsForOwner(String ownerId) => _reviewsByOwner
+      .putIfAbsent(ownerId, () => List<ReviewLogEntry>.from(dataset.reviews));
 
   static int _stableShuffleKey(int value) =>
       (value * 1103515245 + 12345) & 0x7fffffff;
 
-  static User _acceptanceUser({String email = 'learner@example.invalid'}) =>
-      User(
-        id: 'sanitized-acceptance-user',
-        appMetadata: const {},
-        userMetadata: const {},
-        aud: 'authenticated',
-        email: email,
-        createdAt: DateTime.utc(2026).toIso8601String(),
-      );
+  static User _acceptanceUser({String email = 'learner@example.invalid'}) {
+    final normalizedEmail = email.trim().toLowerCase();
+    final ownerSlug = normalizedEmail
+        .replaceAll(RegExp('[^a-z0-9]+'), '-')
+        .replaceAll(RegExp('^-|\$'), '');
+    return User(
+      id: 'sanitized-$ownerSlug',
+      appMetadata: const {},
+      userMetadata: const {},
+      aud: 'authenticated',
+      email: normalizedEmail,
+      createdAt: DateTime.utc(2026).toIso8601String(),
+    );
+  }
 }
 
 class AcceptanceReminderPlatform implements StudyReminderPlatform {
@@ -533,11 +583,12 @@ class AcceptanceBackgroundSyncPlatform implements BackgroundSyncPlatform {
 Future<RecallDependencies> createSanitizedAcceptanceDependencies({
   required AcceptanceScenario scenario,
   DateTime? now,
+  bool resetPreferences = true,
 }) async {
   // This separate acceptance entrypoint must never hydrate or mutate ordinary
   // app preferences from the localhost origin.
   // ignore: invalid_use_of_visible_for_testing_member
-  SharedPreferences.setMockInitialValues({});
+  if (resetPreferences) SharedPreferences.setMockInitialValues({});
   final dataset = SanitizedRecallDataset.productionScale(now: now);
   final api = SanitizedRecallApi(dataset: dataset, scenario: scenario);
   final store = LocalReviewStore();

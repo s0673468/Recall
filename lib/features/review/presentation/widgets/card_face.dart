@@ -616,19 +616,32 @@ class _ImageFragment extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Widget image;
     if (node.synced) {
-      return Image.network(
+      image = Image.network(
         node.url!,
         fit: BoxFit.contain,
+        excludeFromSemantics: true,
         errorBuilder: (context, error, stack) => _chip(
           icon: Icons.broken_image_outlined,
           label: 'image unavailable',
         ),
       );
+    } else {
+      image = _chip(
+        icon: Icons.image_not_supported_outlined,
+        label: 'media not synced',
+      );
     }
-    return _chip(
-      icon: Icons.image_not_supported_outlined,
-      label: 'media not synced',
+
+    final alt = node.alt;
+    if (alt == null) return image;
+    if (alt.isEmpty) return ExcludeSemantics(child: image);
+    return Semantics(
+      label: alt,
+      image: true,
+      excludeSemantics: true,
+      child: image,
     );
   }
 

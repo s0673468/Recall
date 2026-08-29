@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fsrs/fsrs.dart' show Rating;
 
 import 'package:health_anki_flutter/app/recall_app.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
@@ -27,7 +28,52 @@ void main() {
     expect(data.reviews, hasLength(12000));
     expect(data.conceptNodes, hasLength(72));
     expect(data.conceptPages, hasLength(72));
+    expect(data.conceptPages.last.nodeId, 'concept-72');
+    expect(data.conceptPages.last.title.toLowerCase(), contains('concept 72'));
+    expect(data.conceptPages.last.title.length, greaterThan(70));
     expect(data.noteTags, hasLength(1600));
+    expect(data.cards.map((card) => card.id).toSet(), hasLength(1600));
+    expect(data.cards.map((card) => card.guid).toSet(), hasLength(1600));
+    expect(
+      data.decks.every(
+        (deck) =>
+            data.cards.where((card) => card.deckId == deck.deckId).length == 50,
+      ),
+      isTrue,
+    );
+    expect(data.reviews.first.at.isBefore(data.reviews.last.at), isTrue);
+    expect(
+      data.reviews.last.at.difference(data.reviews.first.at).inDays,
+      greaterThanOrEqualTo(189),
+    );
+    expect(
+      List.generate(
+        data.reviews.length - 1,
+        (i) => !data.reviews[i].at.isAfter(data.reviews[i + 1].at),
+      ).every((ordered) => ordered),
+      isTrue,
+    );
+    expect(data.cards.any((card) => card.isNew), isTrue);
+    expect(data.cards.any((card) => card.state == 3), isTrue);
+    expect(
+      data.cards.any(
+        (card) => card.due != null && !card.due!.isAfter(data.now),
+      ),
+      isTrue,
+    );
+    expect(
+      data.cards.any((card) => card.due != null && card.due!.isAfter(data.now)),
+      isTrue,
+    );
+    expect(
+      List.generate(
+        SanitizedRecallDataset.conceptCount,
+        (i) => 'concept-${i + 1}',
+      ).every(
+        (nodeId) => data.noteTags.values.any((tags) => tags.contains(nodeId)),
+      ),
+      isTrue,
+    );
     expect(automaticReviewDeckIds(data.decks), hasLength(28));
     expect(
       data.decks.where((deck) => deck.name.startsWith('Opt-in::')),
@@ -35,11 +81,87 @@ void main() {
     );
     expect(data.cards.any((card) => card.hasLatex), isTrue);
     expect(data.cards.any((card) => card.front.contains('<code>')), isTrue);
+    expect(data.cards.any((card) => card.front.length > 300), isTrue);
+    expect(data.cards.any((card) => card.back.contains('<img')), isTrue);
+    expect(data.cards.any((card) => card.latexSvg != null), isTrue);
     expect(data.cards.any((card) => card.contentRevalidationPending), isTrue);
     expect(
       data.cards.every((card) => card.guid.startsWith('sanitized-guid-')),
       isTrue,
     );
+  });
+
+  test('acceptance scenarios reject misspelled state names', () {
+    expect(AcceptanceScenario.parse('rich'), AcceptanceScenario.rich);
+    expect(
+      () => AcceptanceScenario.parse('parital_stats_failure'),
+      throwsArgumentError,
+    );
+  });
+
+  test('sanitized cloud state is isolated between learner accounts', () async {
+    final data = SanitizedRecallDataset.productionScale(now: fixedNow);
+    final api = SanitizedRecallApi(
+      dataset: data,
+      scenario: AcceptanceScenario.signedOut,
+    );
+    addTearDown(api.disposeFixture);
+
+    await api.signIn(email: 'account-a@example.invalid', password: 'local');
+    final accountA = api.currentUser!.id;
+    final card = (await api.fetchQueue()).first;
+    await api.saveRecallPrefs({'new_limit': 37});
+    await api.applyReview({
+      'card_id': card.id,
+      'guid': card.guid,
+      'last_review': fixedNow.toIso8601String(),
+      'rating': 3,
+      'state': 2,
+      'due': fixedNow.add(const Duration(days: 3)).toIso8601String(),
+    });
+    await api.applyFlag({'card_id': card.id, 'reason': 'confusing'});
+
+    await api.signIn(email: 'account-b@example.invalid', password: 'local');
+    expect(api.currentUser!.id, isNot(accountA));
+    expect(await api.fetchRecallPrefs(), isNull);
+    expect(api.appliedReviewCardIds, isEmpty);
+    expect(api.appliedFlags, isEmpty);
+    expect((await api.fetchQueue()).map((item) => item.id), contains(card.id));
+
+    await api.signIn(email: 'account-a@example.invalid', password: 'local');
+    expect(await api.fetchRecallPrefs(), containsPair('new_limit', 37));
+    expect(api.appliedReviewCardIds, [card.id]);
+    expect(api.appliedFlags.single['reason'], 'confusing');
+  });
+
+  test('offline rating survives reconstruction and replays once', () async {
+    final offline = await createSanitizedAcceptanceDependencies(
+      scenario: AcceptanceScenario.offline,
+      now: fixedNow,
+    );
+    final ratedCardId = offline.reviewController.state.current!.id;
+    offline.reviewController.flip();
+    await offline.reviewController.rate(Rating.good);
+    expect(offline.reviewController.state.pendingSync, 1);
+    offline.dispose();
+    (offline.api as SanitizedRecallApi).disposeFixture();
+
+    final restarted = await createSanitizedAcceptanceDependencies(
+      scenario: AcceptanceScenario.rich,
+      now: fixedNow,
+      resetPreferences: false,
+    );
+    addTearDown(() {
+      restarted.dispose();
+      (restarted.api as SanitizedRecallApi).disposeFixture();
+    });
+    final restartedApi = restarted.api as SanitizedRecallApi;
+    await restarted.reviewController.syncPending();
+    expect(restartedApi.appliedReviewCardIds, [ratedCardId]);
+    expect(restarted.reviewController.state.pendingSync, 0);
+
+    await restarted.reviewController.syncPending();
+    expect(restartedApi.appliedReviewCardIds, [ratedCardId]);
   });
 
   testWidgets('a learner can traverse and use the production-scale app', (
@@ -161,6 +283,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Scheduling'), findsOneWidget);
     expect(find.text('Daily reminder'), findsOneWidget);
+    expect(find.byTooltip('Decrease New cards / day'), findsOneWidget);
+    expect(find.byTooltip('Increase New cards / day'), findsOneWidget);
     final settingsScroll = find
         .descendant(
           of: find.byType(SettingsScreen),

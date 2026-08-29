@@ -74,6 +74,43 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    testWidgets('image alt text is exposed as one image semantic', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: 'see <img src="https://x.test/a.png" alt="Loss trend chart">',
+            hasLatex: false,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+      expect(find.bySemanticsLabel('Loss trend chart'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    });
+
+    testWidgets('empty image alt excludes the decorative image semantics', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        _host(
+          const CardFace(
+            html: '<img src="https://x.test/a.png" alt="">',
+            hasLatex: false,
+            style: TextStyle(fontSize: 18),
+          ),
+        ),
+      );
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp('.+')), findsNothing);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    });
+
     testWidgets('relative <img> shows a "media not synced" chip', (
       tester,
     ) async {

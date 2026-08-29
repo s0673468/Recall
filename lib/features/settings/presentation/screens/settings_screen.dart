@@ -392,7 +392,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           if (active) ...[
-            _stepper(value: override, onChanged: (v) => onSet(v)),
+            _stepper(label: name, value: override, onChanged: (v) => onSet(v)),
             IconButton(
               tooltip: 'Use default',
               icon: const Icon(
@@ -457,16 +457,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ),
-        _stepper(value: value, onChanged: onChanged),
+        _stepper(label: label, value: value, onChanged: onChanged),
       ],
     );
   }
 
-  Widget _stepper({required int value, required ValueChanged<int> onChanged}) {
+  Widget _stepper({
+    required String label,
+    required int value,
+    required ValueChanged<int> onChanged,
+  }) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
+          tooltip: 'Decrease $label',
           icon: const Icon(Icons.remove_circle_outline),
           color: UiColors.textMuted,
           onPressed: value <= 0
@@ -486,6 +491,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         IconButton(
+          tooltip: 'Increase $label',
           icon: const Icon(Icons.add_circle_outline),
           color: UiColors.primary,
           onPressed: value >= RecallPrefs.maxNewLimit
