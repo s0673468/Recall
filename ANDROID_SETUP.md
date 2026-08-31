@@ -112,8 +112,9 @@ adb shell dumpsys package com.german.health_anki_flutter
 - API 33 notification permission is requested only after a signed-in user
   enables reminders. Recall also detects app- or channel-level notification
   blocking and offers a direct system Settings action. It uses an inexact
-  alarm, requests no exact-alarm access, and rearms after delivery, reboot,
-  clock, or time-zone changes.
+  alarm and requests no exact-alarm access. It rearms while delivery is blocked
+  and after reboot, app replacement, clock, or time-zone changes. Successful
+  delivery consumes eligibility until the app reconciles current account state.
 - Reminder and widget surfaces contain aggregate text only. Both open Study
   through an explicit immutable `PendingIntent`.
 - Supabase remains the source of truth. Foreground, resume, and every transition
