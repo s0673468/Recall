@@ -59,6 +59,21 @@ void main() {
       expect(grid.length, 26 * 7);
       expect(grid.fold<int>(0, (a, d) => a + d.count), 0);
     });
+
+    test('keeps future days empty when the log contains clock-skewed rows', () {
+      final today = DateTime(2026, 7, 8, 12);
+      final tomorrow = today.add(const Duration(days: 1));
+      final grid = StatsService.buildHeatmap([
+        _entry(today, 3),
+        for (var i = 0; i < 10; i++) _entry(tomorrow, 3),
+      ], today: today);
+
+      HeatmapDay cellFor(DateTime date) =>
+          grid.firstWhere((cell) => cell.date == StatsService.dayOnly(date));
+      expect(cellFor(today).count, 1);
+      expect(cellFor(today).level, 4);
+      expect(cellFor(tomorrow).count, 0);
+    });
   });
 
   group('heatmapLevel', () {
@@ -154,6 +169,17 @@ void main() {
         _entry(now.subtract(const Duration(days: 2)), 3),
       ], now: now, windowDays: 30);
       expect(r.total, 1);
+    });
+
+    test('excludes reviews on future local calendar days', () {
+      final now = DateTime(2026, 7, 7, 12);
+      final r = StatsService.computeRetention([
+        _entry(now, 3),
+        _entry(now.add(const Duration(days: 1)), 1),
+      ], now: now);
+
+      expect(r.total, 1);
+      expect(r.passed, 1);
     });
 
     test('zero reviews → empty, no NaN', () {
@@ -258,6 +284,18 @@ void main() {
       expect(t.reviews, 2);
       expect(t.recall, '50%');
       expect(t.streak, 2); // today + yesterday
+    });
+
+    test('excludes future local days from headline totals', () {
+      final today = DateTime(2026, 7, 7, 12);
+      final t = StatsService.tileStats([
+        _entry(today, 3),
+        _entry(today.add(const Duration(days: 1)), 1),
+      ], today: today);
+
+      expect(t.reviews, 1);
+      expect(t.recall, '100%');
+      expect(t.streak, 1);
     });
 
     test('streak counts past the recall window', () {
@@ -373,6 +411,23 @@ void main() {
         now: now,
       );
       expect(result.ranked.single.reviews, 4);
+    });
+
+    test('excludes reviews on future local calendar days', () {
+      final result = StatsService.computeNodeRetention(
+        reviewLog: [
+          _review('g1', now, 3),
+          for (var i = 0; i < 4; i++)
+            _review('g1', now.add(const Duration(days: 1)), 1),
+        ],
+        noteTags: {'g1': 'node::a'},
+        conceptNodes: [_node('a')],
+        now: now,
+        minReviews: 1,
+      );
+
+      expect(result.ranked.single.reviews, 1);
+      expect(result.ranked.single.againCount, 0);
     });
 
     test('a guid missing from the tags map contributes nothing', () {

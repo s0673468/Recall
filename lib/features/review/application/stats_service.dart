@@ -63,7 +63,7 @@ class StatsService {
     final counts = <DateTime, int>{};
     for (final r in reviews) {
       final day = dayOnly(r.at);
-      if (day.isBefore(gridStart)) continue;
+      if (day.isBefore(gridStart) || day.isAfter(todayDay)) continue;
       counts[day] = (counts[day] ?? 0) + 1;
     }
     final maxCount = counts.values.fold(0, (a, b) => a > b ? a : b);
@@ -128,7 +128,8 @@ class StatsService {
     required DateTime now,
     int windowDays = 30,
   }) {
-    final cutoff = dayOnly(now).subtract(Duration(days: windowDays));
+    final todayDay = dayOnly(now);
+    final cutoff = todayDay.subtract(Duration(days: windowDays));
     var total = 0, passed = 0;
     var youngTotal = 0, youngPassed = 0;
     var matureTotal = 0, maturePassed = 0;
@@ -136,8 +137,9 @@ class StatsService {
     // The API orders rows, but keeping this transform pure and order-safe makes
     // it usable with cached or test fixtures too. The previous review remains
     // available even when it falls outside the retention window.
-    final ordered = List<ReviewLogEntry>.from(reviews)
-      ..sort((a, b) => a.at.compareTo(b.at));
+    final ordered = List<ReviewLogEntry>.from(
+      reviews.where((r) => !dayOnly(r.at).isAfter(todayDay)),
+    )..sort((a, b) => a.at.compareTo(b.at));
     final previousAtByCard = <int, DateTime>{};
     final previousStateAfterByCard = <int, int?>{};
 
@@ -220,7 +222,8 @@ class StatsService {
     int window = conceptWindowDays,
     int minReviews = conceptMinReviews,
   }) {
-    final cutoff = dayOnly(now).subtract(Duration(days: window - 1));
+    final todayDay = dayOnly(now);
+    final cutoff = todayDay.subtract(Duration(days: window - 1));
 
     // guid -> node ids, parsed once from the tag strings.
     final guidNodes = <String, List<String>>{};
@@ -232,7 +235,8 @@ class StatsService {
     final reviews = <String, int>{};
     final again = <String, int>{};
     for (final r in reviewLog) {
-      if (dayOnly(r.at).isBefore(cutoff)) continue;
+      final day = dayOnly(r.at);
+      if (day.isBefore(cutoff) || day.isAfter(todayDay)) continue;
       final guid = r.guid;
       if (guid == null) continue;
       final ids = guidNodes[guid];
@@ -282,14 +286,16 @@ class StatsService {
     required DateTime today,
     int windowDays = 30,
   }) {
-    final cutoff = dayOnly(today).subtract(Duration(days: windowDays));
-    final windowed = reviews.where((r) => !dayOnly(r.at).isBefore(cutoff));
+    final todayDay = dayOnly(today);
+    final cutoff = todayDay.subtract(Duration(days: windowDays));
+    final throughToday = reviews.where((r) => !dayOnly(r.at).isAfter(todayDay));
+    final windowed = throughToday.where((r) => !dayOnly(r.at).isBefore(cutoff));
     final total = windowed.length;
     final retained = windowed.where((r) => r.rating >= 2).length;
     final recall = total == 0 ? '—' : '${(retained / total * 100).round()}%';
     // Streak spans the whole log, not the recall window: building the day-set
     // from `windowed` capped it at windowDays + 1.
-    final days = {for (final r in reviews) dayOnly(r.at)};
+    final days = {for (final r in throughToday) dayOnly(r.at)};
     return (recall: recall, reviews: total, streak: _streak(days, today));
   }
 
