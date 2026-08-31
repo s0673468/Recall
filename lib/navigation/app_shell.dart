@@ -119,7 +119,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         builder: (_) => SettingsScreen(
           prefs: widget.prefs,
           controller: widget.controller,
-          reminder: widget.reminder,
+          reminder: _nativeIos || _nativeAndroid ? widget.reminder : null,
           nativeIos: _nativeIos,
         ),
       ),

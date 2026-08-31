@@ -35,7 +35,9 @@ Run the executable acceptance suite with:
 ```
 
 The web harness accepts `RECALL_ACCEPTANCE_SCENARIO=rich`, `empty`, `offline`,
-`partial_stats_failure`, or `signed_out` as a compile-time Dart define.
+`partial_stats_failure`, or `signed_out` as a compile-time Dart define. `empty`
+represents an account with no decks, cards, reviews, tags, concepts, or primers,
+not merely an empty Study queue.
 
 ## Routes and platform shells
 
@@ -133,7 +135,7 @@ timestamp/id or guid cursor.
 | Desired retention slider | Shows the live percentage and workload estimate; commits once at drag end. | Minimum; maximum; interrupted drag; offline save. |
 | New cards minus/plus | Changes one step, clamps from 0 through 999, persists the latest value, and exposes distinct Decrease/Increase labels. | Rapid taps; both bounds; cloud failure; restart; screen-reader focus. |
 | New-card order | Oldest, Newest, and Random are mutually exclusive and affect the next queue load. | Change during a session; restart; offline pending value. |
-| Daily reminder switch | Requests permission when enabling; schedules only when due work is known and nothing was studied today; disabling cancels it. | Denied permission; unknown activity; zero due; account switch. |
+| Daily reminder switch | Appears only on native iOS/Android. Requests permission when enabling; schedules only when due work is known and nothing was studied today; disabling cancels it. | Denied permission; unknown activity; zero due; account switch; hidden on web. |
 | Reminder Settings action | On permission denial, opens the app's platform notification settings when available. | Missing settings activity; repeated request; native exception. |
 | Reminder time | Opens Material or Cupertino time selection and reschedules an enabled reminder. Cancel changes nothing. | 00:00; 23:59; disabled state; day boundary. |
 | Set override | Creates a per-deck new-card override from the global default. | 32 decks; long name; offline save. |
@@ -166,17 +168,17 @@ recovery can continue.
 
 | Feature or control | Acceptance criteria | Local evidence | Remaining boundary |
 |---|---|---|---|
-| iOS/Android due widget | Signed out shows an open/load state. Signed in shows due count, singular/plural label, updated/stale freshness, and opens `recall://study`. A failed native update must be retried even when the snapshot is unchanged. | Dart bridge regression tests; Swift/Kotlin contract tests; Android instrumentation APK builds. | Widget rendering and tap on physical iPhone/Android. |
+| iOS/Android due widget | Signed out shows an open/load state. Signed in shows due count, singular/plural label, updated/stale freshness, and opens `recall://study`. A failed native update must be retried even when the snapshot is unchanged. | Dart bridge regressions, Kotlin host contracts, Swift source/config checks, native compilation, and Android instrumentation APK assembly. | Widget rendering and tap on physical iPhone/Android; Swift widget behavior has no XCTest. |
 | Study reminder notification | Contains no card/deck content, opens Study, delivers only when eligible, and offers settings recovery after denial. | Controller, Swift, Kotlin, and configuration tests. | Permission prompt, delivery, and tap on physical devices. |
 | Android launcher shortcut | Opens only the exact Study deep link. | Manifest/configuration contract tests. | Installed-launcher tap. |
 | Installed deep link | Cold and warm `recall://study` launches select Study; malformed variants are ignored. | Dart route tests plus all five Android host instrumentation tests on an API 36 emulator, including both notification-permission states. | Installed iOS cold/warm launch and physical Android launcher behavior. |
-| Background/foreground sync | Requests a bounded sync, keeps failures non-fatal, and never exports raw error or user content. | Dart/native tests and operational envelope tests. | OS scheduler execution on installed apps. |
+| Background/foreground sync | Requests a bounded sync, keeps failures non-fatal, and never exports raw error or user content. | Dart and Android native tests, operational envelope tests, and native compilation. | iOS fetch-result/timeout behavior and OS scheduler execution on installed apps. |
 | Review haptics | Reveal, rating, undo, and completion map to their intended native feedback; web and unsupported platforms are no-ops. | Method-channel mapping tests. | Perceived feel and hardware setting interaction on physical iOS/Android. |
 | Native launch continuity | Native splash remains visually continuous until Flutter paints and never exposes a white flash. | Launch-screen/configuration contracts. | Cold launch recording on physical iOS/Android. |
 | PWA boot and installed identity | Shows an immediate splash, surfaces boot errors, uses the Recall name/icons/theme, loads local CanvasKit assets, and avoids registering a service worker on localhost. | Release web build, manifest/bootstrap tests, local browser pass. | Installed home-screen launch and deployed cache upgrade/offline behavior. |
 | Reduced motion and tab accessibility | `disableAnimations` resolves transitions to zero. Inactive tabs retain state but reject pointer input and leave semantics/focus traversal. | Motion and indexed-stack widget tests. | VoiceOver/TalkBack focus order on hardware. |
 | Zoom and large text | The PWA does not disable browser zoom. Core flows fit at 320×640 with 2x text and rating controls remain reachable. | Static viewport regression; widget visual tests. | VoiceOver/TalkBack and browser pinch zoom on real hardware. |
-| Orientation and window class | iPhone stays portrait; iPad/macOS/web resize; Android uses bottom navigation below 600 logical pixels and rail at/above 600. No primary action clips. | iOS configuration, shell layout, and viewport widget tests. | Physical rotation, split view, and browser window management. |
+| Orientation and window class | The maintained iOS target is iPhone-only and stays portrait; web resizes; Android uses bottom navigation below 600 logical pixels and rail at/above 600. No primary action clips. | iOS configuration, shell layout, and viewport widget tests. | Physical rotation and browser window management. |
 
 ## Evidence ledger
 
@@ -196,6 +198,18 @@ warning/error or clipped primary control. The API 36 emulator then passed all
 five Android host instrumentation tests after the notification permission was
 granted; the preceding denied-permission run also passed its blocked-delivery
 path.
+
+The 2026-08-31 rerun repeated the compiled rich release fixture at 411×914 and
+1440×1000. It exercised reveal, rating, undo, flagging, direct-deck selection,
+retention windows, future-date exclusion, primer search/opening, scheduling,
+per-deck overrides, and sign-out cancellation. Separate release builds proved
+the empty account across Study, Stats, and Read, an offline seeded review, an
+isolated forecast failure with retention and concepts intact, and synthetic
+signed-out sign-in. The browser emitted no runtime warning or error during the
+rich pass and no primary control clipped. Android unit tests and instrumentation
+APK assembly passed. The iOS simulator configuration compiled, but the local
+CoreSimulator worker died before XCTest execution began; no current-run iOS
+XCTest or installed-device behavior is claimed.
 
 ## Bug reproduction and disposition
 
@@ -218,6 +232,9 @@ path.
 | RPA-015 | Inspect the Settings minus/plus IconButtons with semantics enabled; global and per-deck steppers had indistinguishable unlabeled controls. | The shared stepper accepted only value/callback, so it had no setting context for accessible names. | Fixed by requiring a setting/deck label and emitting distinct `Decrease …` and `Increase …` tooltips. The production-scale Settings traversal asserts the global pair. |
 | RPA-016 | Follow the documented harness command; it produced a debug build even though the clean-pass rule and shipped web lane require release behavior. | The repeatable command and evidence rule had drifted apart. | Fixed by documenting the sanitized release build with the deployed base href and local web resources. |
 | RPA-017 | Build the release web harness; Flutter warned that `packages/cupertino_icons/CupertinoIcons` was referenced but its font asset was absent. | Recall used Cupertino icons on native iOS/modal surfaces without declaring the icon font package directly. | Fixed by adding the direct `cupertino_icons` dependency. The final release build must complete without the missing-font warning. |
+| RPA-018 | Add reviews dated on a future local calendar day, then inspect retention, heatmap, concept rankings, review totals, and streaks; future rows contaminated past-looking Stats. | Stats transforms enforced only a lower date bound. | Fixed by rejecting future local days while retaining same-day later timestamps. Focused regressions cover every affected transform. |
+| RPA-019 | Open web Settings and enable “Daily reminder”; the switch persisted as active and showed a time even though the web platform deliberately performed no delivery. | Settings exposed a native-only feature while the non-native platform adapter returned successful no-ops. | Fixed by exposing the reminder card only when the shell is running as native iOS or Android. The production-scale non-native traversal asserts that the control is absent. |
+| RPA-020 | Launch the documented `empty` scenario, then open Stats or Read; it still exposed 12,000 reviews and 72 primers. | The fake API emptied only selected Study cards while returning the rich corpus from the remaining collection methods. | Fixed by emptying every learner-owned fake collection. A regression checks decks, queues, history, tags, concepts, primers, due dates, and counts together. |
 
 ## Clean-pass rule and blocked evidence
 

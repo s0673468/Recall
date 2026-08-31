@@ -107,9 +107,11 @@ class SanitizedRecallDataset {
       for (var i = 0; i < reviewCount; i++)
         () {
           final card = cards[(i * 37) % cards.length];
-          final at = anchor.subtract(
-            Duration(days: i % 190, hours: i % 19, minutes: i % 53),
-          );
+          final at = i < 5
+              ? anchor.add(Duration(days: i + 1, hours: i))
+              : anchor.subtract(
+                  Duration(days: i % 190, hours: i % 19, minutes: i % 53),
+                );
           final rating = i % 11 == 0 ? 1 : 2 + (i % 3);
           return ReviewLogEntry(
             cardId: card.id,
@@ -299,6 +301,7 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<List<DeckRow>> fetchDecks() async {
     _requireOnline();
+    if (_empty) return const <DeckRow>[];
     return List<DeckRow>.unmodifiable(dataset.decks);
   }
 
@@ -458,6 +461,7 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<List<ReviewLogEntry>> fetchReviewLog({int days = 190}) async {
     _requireOnline();
+    if (_empty) return const <ReviewLogEntry>[];
     final cutoff = dataset.now.subtract(Duration(days: days));
     return _reviewsForOwner(
       _requireOwnerId(),
@@ -467,18 +471,21 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<Map<String, String>> fetchNoteTags() async {
     _requireOnline();
+    if (_empty) return const <String, String>{};
     return Map<String, String>.unmodifiable(dataset.noteTags);
   }
 
   @override
   Future<List<ConceptNodeInfo>> fetchConceptNodes() async {
     _requireOnline();
+    if (_empty) return const <ConceptNodeInfo>[];
     return List<ConceptNodeInfo>.unmodifiable(dataset.conceptNodes);
   }
 
   @override
   Future<List<ConceptPage>> fetchConceptPages() async {
     _requireOnline();
+    if (_empty) return const <ConceptPage>[];
     return List<ConceptPage>.unmodifiable(dataset.conceptPages);
   }
 
@@ -497,6 +504,7 @@ class SanitizedRecallApi extends RecallApi {
   @override
   Future<Map<int, ({int due, int neu})>> fetchDeckCounts() async {
     _requireOnline();
+    if (_empty) return const <int, ({int due, int neu})>{};
     final counts = <int, ({int due, int neu})>{};
     for (final deck in dataset.decks) {
       var due = 0;

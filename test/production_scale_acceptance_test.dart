@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
@@ -45,6 +46,12 @@ void main() {
     expect(
       data.reviews.last.at.difference(data.reviews.first.at).inDays,
       greaterThanOrEqualTo(189),
+    );
+    expect(
+      data.reviews
+          .where((review) => review.at.toUtc().isAfter(fixedNow))
+          .length,
+      5,
     );
     expect(
       List.generate(
@@ -97,6 +104,26 @@ void main() {
       () => AcceptanceScenario.parse('parital_stats_failure'),
       throwsArgumentError,
     );
+  });
+
+  test('empty scenario clears every learner-owned collection', () async {
+    final data = SanitizedRecallDataset.productionScale(now: fixedNow);
+    final api = SanitizedRecallApi(
+      dataset: data,
+      scenario: AcceptanceScenario.empty,
+    );
+    addTearDown(api.disposeFixture);
+
+    expect(await api.fetchDecks(), isEmpty);
+    expect(await api.fetchQueue(), isEmpty);
+    expect(await api.fetchContentRevalidationQueue(), isEmpty);
+    expect(await api.fetchAheadQueue(), isEmpty);
+    expect(await api.fetchReviewLog(), isEmpty);
+    expect(await api.fetchNoteTags(), isEmpty);
+    expect(await api.fetchConceptNodes(), isEmpty);
+    expect(await api.fetchConceptPages(), isEmpty);
+    expect(await api.fetchDueDates(), isEmpty);
+    expect(await api.fetchDeckCounts(), isEmpty);
   });
 
   test('sanitized cloud state is isolated between learner accounts', () async {
@@ -167,6 +194,7 @@ void main() {
   testWidgets('a learner can traverse and use the production-scale app', (
     tester,
   ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     tester.view.physicalSize = phoneSize;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -179,6 +207,7 @@ void main() {
     final api = dependencies.api as SanitizedRecallApi;
 
     await tester.pumpWidget(RecallApp(dependencies: dependencies));
+    debugDefaultTargetPlatformOverride = null;
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('recall_shell')), findsOneWidget);
@@ -282,7 +311,7 @@ void main() {
     await tester.tap(find.byTooltip('Settings'));
     await tester.pumpAndSettle();
     expect(find.text('Scheduling'), findsOneWidget);
-    expect(find.text('Daily reminder'), findsOneWidget);
+    expect(find.text('Daily reminder'), findsNothing);
     expect(find.byTooltip('Decrease New cards / day'), findsOneWidget);
     expect(find.byTooltip('Increase New cards / day'), findsOneWidget);
     final settingsScroll = find
