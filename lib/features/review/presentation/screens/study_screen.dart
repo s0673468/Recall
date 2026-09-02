@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:fsrs/fsrs.dart' show Rating;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../../../core/platform/recall_platform.dart';
@@ -31,6 +35,24 @@ class StudyScreen extends StatelessWidget {
     this.onOpenSettings,
     this.nativeIos,
   });
+
+  KeyEventResult _handleReviewKey(FocusNode _, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.space) {
+      controller.flip();
+    } else if (event.logicalKey == LogicalKeyboardKey.digit1) {
+      unawaited(controller.rate(Rating.again));
+    } else if (event.logicalKey == LogicalKeyboardKey.digit2) {
+      unawaited(controller.rate(Rating.hard));
+    } else if (event.logicalKey == LogicalKeyboardKey.digit3) {
+      unawaited(controller.rate(Rating.good));
+    } else if (event.logicalKey == LogicalKeyboardKey.digit4) {
+      unawaited(controller.rate(Rating.easy));
+    }
+    // Keep the event available to the focused control. In particular, Space
+    // must still activate a rating button reached through keyboard focus.
+    return KeyEventResult.ignored;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -149,11 +171,6 @@ class StudyScreen extends StatelessWidget {
                     onStart: controller.startCatchUp,
                     onShowAll: controller.showAll,
                   )
-                : s.catchUp.isActive
-                ? _CatchUpProgress(
-                    key: const ValueKey('study_catch_up_progress'),
-                    plan: s.catchUp,
-                  )
                 : const SizedBox(key: ValueKey('study_catch_up_hidden')),
           ),
         );
@@ -206,7 +223,7 @@ class StudyScreen extends StatelessWidget {
         final accessibleScroll =
             MediaQuery.textScalerOf(context).scale(1) > 1.3;
 
-        return RecallMotionSwap(
+        final body = RecallMotionSwap(
           child: accessibleScroll
               ? ListView(
                   key: ValueKey('study_card_${card.id}'),
@@ -232,6 +249,11 @@ class StudyScreen extends StatelessWidget {
                     actions,
                   ],
                 ),
+        );
+        return Focus(
+          autofocus: true,
+          onKeyEvent: _handleReviewKey,
+          child: body,
         );
       },
     );
@@ -295,26 +317,6 @@ class _CatchUpBanner extends StatelessWidget {
       ),
     );
   }
-}
-
-class _CatchUpProgress extends StatelessWidget {
-  final CatchUpView plan;
-
-  const _CatchUpProgress({super.key, required this.plan});
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: UiSpacing.sm),
-    child: Align(
-      alignment: Alignment.centerLeft,
-      child: Text(
-        'Catch-up · ${plan.completedToday}/${plan.dailyCap} today · '
-        '${plan.dueCount} due · about ${plan.estimatedDays} '
-        '${plan.estimatedDays == 1 ? 'day' : 'days'} left',
-        style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
-      ),
-    ),
-  );
 }
 
 class _Header extends StatelessWidget {

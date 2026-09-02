@@ -5,7 +5,8 @@ import 'dart:io';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show FontLoader, rootBundle;
+import 'package:flutter/services.dart'
+    show FontLoader, LogicalKeyboardKey, rootBundle;
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating, defaultParameters;
@@ -2793,6 +2794,57 @@ void main() {
       expect(find.textContaining('eramos'), findsOneWidget);
     });
 
+    testWidgets('StudyScreen supports review keyboard shortcuts', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([
+        for (var id = 1; id <= 4; id++)
+          _card(id: id, front: 'Question $id', back: 'Answer $id'),
+      ]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+      await tester.pumpAndSettle();
+      expect(api.applied, isEmpty);
+
+      final ratingKeys = [
+        LogicalKeyboardKey.digit1,
+        LogicalKeyboardKey.digit2,
+        LogicalKeyboardKey.digit3,
+        LogicalKeyboardKey.digit4,
+      ];
+      for (var index = 0; index < ratingKeys.length; index++) {
+        expect(find.text('Show answer'), findsOneWidget);
+        await tester.sendKeyEvent(LogicalKeyboardKey.space);
+        await tester.pump();
+        expect(find.text('Answer ${index + 1}'), findsOneWidget);
+
+        await tester.sendKeyEvent(ratingKeys[index]);
+        await tester.pumpAndSettle();
+      }
+
+      expect(api.applied.map((entry) => entry['rating']), [
+        Rating.again.value,
+        Rating.hard.value,
+        Rating.good.value,
+        Rating.easy.value,
+      ]);
+    });
+
     testWidgets('StudyScreen reparses revised content for the same card', (
       tester,
     ) async {
@@ -5028,9 +5080,7 @@ void main() {
       expect(find.textContaining('20 cards/day'), findsOneWidget);
     });
 
-    testWidgets('catch-up days left includes the partially used day', (
-      tester,
-    ) async {
+    testWidgets('active catch-up does not add a progress line', (tester) async {
       await _loadVisualFonts();
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -5077,9 +5127,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('2/20 today'), findsOneWidget);
-      expect(find.textContaining('about 5 days left'), findsOneWidget);
-      expect(find.textContaining('about 4 days left'), findsNothing);
+      expect(find.textContaining('Catch-up ·'), findsNothing);
+      expect(find.textContaining('2/20 today'), findsNothing);
+      expect(find.textContaining('about 5 days left'), findsNothing);
       await _captureVisual(tester, 'catch-up-partial-day');
     });
   });
