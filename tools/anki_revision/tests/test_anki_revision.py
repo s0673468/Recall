@@ -17,6 +17,7 @@ if str(TOOL_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOL_ROOT))
 
 import anki_apply  # noqa: E402
+import anki_restore_snapshot  # noqa: E402
 import anki_garden_score as garden  # noqa: E402
 import anki_lint  # noqa: E402
 import verify_compiled  # noqa: E402
@@ -88,9 +89,7 @@ class ApplyTest(unittest.TestCase):
                 {
                     "nid": 7,
                     "action": "keep",
-                    "cards": [
-                        {"front": "Old?", "back": "Old.", "tags_add": []}
-                    ],
+                    "cards": [{"front": "Old?", "back": "Old.", "tags_add": []}],
                 },
             )
             argv = [
@@ -104,8 +103,9 @@ class ApplyTest(unittest.TestCase):
                 "--tag",
                 "cli_path_test",
             ]
-            with mock.patch.object(sys, "argv", argv), contextlib.redirect_stdout(
-                io.StringIO()
+            with (
+                mock.patch.object(sys, "argv", argv),
+                contextlib.redirect_stdout(io.StringIO()),
             ):
                 self.assertEqual(anki_apply.main(), 0)
 
@@ -326,6 +326,157 @@ class ApplyTest(unittest.TestCase):
             with self.assertRaisesRegex(anki_apply.ApplyError, "keep does not match"):
                 anki_apply.execute_job(
                     job_dir=job, db_path=db, tag="pass::test", commit=False
+                )
+
+
+class SnapshotRestoreTest(unittest.TestCase):
+    def _collections(self, root: Path) -> tuple[Path, Path, Path]:
+        current = root / "current.anki2"
+        source = root / "source.anki2"
+        backup = root / "backup.anki2"
+        create_collection(source)
+        source_db = sqlite3.connect(source)
+        source_db.execute(
+            "UPDATE notes SET tags=' node::old ',flds='Claude?\x1fClaude.',"
+            "sfld='Claude?',csum=77 WHERE id=7"
+        )
+        source_db.execute(
+            "INSERT INTO notes VALUES "
+            "(9,'guid-9',1,1,0,' node::old ','Restored?\x1fRestored.',"
+            "'Restored?',99,0,'')"
+        )
+        source_db.execute(
+            "INSERT INTO cards VALUES (90,9,1,0,1,0,2,2,109,30,2500,15,2,0,0,0,0,'{}')"
+        )
+        source_db.commit()
+        source_db.close()
+
+        create_collection(current)
+        current_db = sqlite3.connect(current)
+        current_db.execute(
+            "UPDATE notes SET tags=' node::new technical::keep ',"
+            "flds='Codex?\x1fCodex.',sfld='Codex?',csum=88 WHERE id=7"
+        )
+        current_db.execute(
+            "INSERT INTO notes VALUES "
+            "(8,'guid-8',1,1,0,' node::new ','New?\x1fNew.',"
+            "'New?',88,0,'')"
+        )
+        current_db.execute(
+            "INSERT INTO cards VALUES (80,8,1,0,1,0,0,0,110,0,0,0,0,0,0,0,0,'{}')"
+        )
+        current_db.execute("INSERT INTO graves VALUES (9,1,-1)")
+        current_db.execute("INSERT INTO graves VALUES (90,0,-1)")
+        current_db.commit()
+        current_db.close()
+        shutil.copy2(current, backup)
+        return current, source, backup
+
+    def _reversals(self, root: Path) -> Path:
+        path = root / "reversals.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "recall.anki-tag-reversal/v1",
+                    "reversals": [
+                        {"guid": "guid-7", "from": "old", "to": "new"},
+                        {"guid": "guid-9", "from": "old", "to": "old"},
+                    ],
+                }
+            )
+        )
+        return path
+
+    def test_restore_preserves_common_card_and_original_restored_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            current, source, backup = self._collections(root)
+            reversals = self._reversals(root)
+            before_card = (
+                sqlite3.connect(current)
+                .execute("SELECT * FROM cards WHERE id=70")
+                .fetchone()
+            )
+            summary, dry_receipt = anki_restore_snapshot.execute_restore(
+                db_path=current,
+                source_path=source,
+                receipts_dir=root / "receipts",
+                pass_tag="content_rollback::claude",
+                marker="content_revalidate::20260902T120000Z",
+                tag_reversal_path=reversals,
+                commit=False,
+            )
+            self.assertEqual(summary["plan"]["content_edits"], 1)
+            self.assertEqual(summary["plan"]["delete_notes"], 1)
+            self.assertEqual(summary["plan"]["restore_notes"], 1)
+            applied, _ = anki_restore_snapshot.execute_restore(
+                db_path=current,
+                source_path=source,
+                receipts_dir=root / "receipts",
+                pass_tag="content_rollback::claude",
+                marker="content_revalidate::20260902T120000Z",
+                tag_reversal_path=reversals,
+                backup_path=backup,
+                dry_run_receipt=dry_receipt,
+                commit=True,
+            )
+            db = sqlite3.connect(current)
+            self.assertEqual(
+                db.execute("SELECT flds FROM notes WHERE id=7").fetchone()[0],
+                "Claude?\x1fClaude.",
+            )
+            self.assertIsNone(db.execute("SELECT 1 FROM notes WHERE id=8").fetchone())
+            self.assertEqual(
+                db.execute("SELECT guid FROM notes WHERE id=9").fetchone()[0],
+                "guid-9",
+            )
+            self.assertEqual(
+                db.execute("SELECT * FROM cards WHERE id=70").fetchone(), before_card
+            )
+            self.assertEqual(
+                db.execute("SELECT nid FROM cards WHERE id=90").fetchone()[0], 9
+            )
+            tags = db.execute("SELECT tags FROM notes WHERE id=7").fetchone()[0].split()
+            self.assertIn("node::old", tags)
+            self.assertNotIn("node::new", tags)
+            self.assertIn("technical::keep", tags)
+            self.assertEqual(
+                db.execute(
+                    "SELECT COUNT(*) FROM graves WHERE oid IN (9,90)"
+                ).fetchone()[0],
+                0,
+            )
+            db.close()
+            self.assertEqual(applied["scope_reversals_applied"], 2)
+
+    def test_restore_rejects_changed_source_after_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            current, source, backup = self._collections(root)
+            _, dry_receipt = anki_restore_snapshot.execute_restore(
+                db_path=current,
+                source_path=source,
+                receipts_dir=root / "receipts",
+                pass_tag="content_rollback::claude",
+                marker="content_revalidate::20260902T120000Z",
+                commit=False,
+            )
+            source_db = sqlite3.connect(source)
+            source_db.execute("UPDATE notes SET flds='Changed?\x1fChanged.' WHERE id=7")
+            source_db.commit()
+            source_db.close()
+            with self.assertRaisesRegex(
+                anki_restore_snapshot.RestoreError, "dry-run receipt restore_digest"
+            ):
+                anki_restore_snapshot.execute_restore(
+                    db_path=current,
+                    source_path=source,
+                    receipts_dir=root / "receipts",
+                    pass_tag="content_rollback::claude",
+                    marker="content_revalidate::20260902T120000Z",
+                    backup_path=backup,
+                    dry_run_receipt=dry_receipt,
+                    commit=True,
                 )
 
 
