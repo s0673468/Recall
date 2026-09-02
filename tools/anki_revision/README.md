@@ -61,6 +61,20 @@ External `recall.card-handoff/v1` jobs additionally require
 duplicate result carries `scope: full-catalog` plus a non-empty catalog digest,
 and the node result names `assigned-existing` or `proposed-new`.
 
+## Guarded historical snapshot restore
+
+`anki_restore_snapshot.py` is the narrower recovery path for an explicitly
+authorized whole-library rollback. It restores exact source fronts, backs, and
+stable Anki identities; preserves every current card row for notes that still
+exist; removes notes absent from the source; and restores deleted notes/cards
+under their original IDs. It never replaces the live collection wholesale.
+
+The command is dry-run first and emits a private immutable receipt. Apply then
+requires an independent exact backup, that receipt, and the literal
+`RESTORE_ANKI_SNAPSHOT` confirmation. A reviewed
+`recall.anki-tag-reversal/v1` artifact can reverse exact GUID-bound concept-tag
+migrations while preserving unrelated technical tags.
+
 The semantic compiler enforces the same contract: every reviewed `edit` or
 `split` declares `revision_kind`, and a material batch compiles only when given
 one canonical `--revision-at`. For the already-applied 2026-08 pass, use the
