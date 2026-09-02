@@ -143,6 +143,17 @@ def _replace_markers(tags: str, pass_tag: str, marker: str) -> str:
     return " " + " ".join(dict.fromkeys(tokens)) + " "
 
 
+def _node_tags(tags: str) -> set[str]:
+    return {token for token in tags.split() if token.startswith("node::")}
+
+
+def _restore_node_tags(current_tags: str, source_tags: str) -> str:
+    """Restore source ownership without removing unrelated current audit tags."""
+    tokens = [token for token in current_tags.split() if not token.startswith("node::")]
+    tokens.extend(token for token in source_tags.split() if token.startswith("node::"))
+    return " " + " ".join(dict.fromkeys(tokens)) + " "
+
+
 def _restore_tags(
     original: str,
     guid: str,
@@ -239,6 +250,11 @@ def _plan(
     return {
         "common_notes": len(common),
         "content_edits": len(content_changed),
+        "node_mapping_restores": sum(
+            _node_tags(str(current_notes[nid]["tags"]))
+            != _node_tags(str(source_notes[nid]["tags"]))
+            for nid in common
+        ),
         "delete_notes": len(current_only),
         "restore_notes": len(source_only),
         "scope_reversals": len(reversals),
@@ -438,7 +454,7 @@ def execute_restore(
             source_note = source_notes[nid]
             current_note = current_notes[nid]
             tags, did_reverse = _restore_tags(
-                str(current_note["tags"]),
+                _restore_node_tags(str(current_note["tags"]), str(source_note["tags"])),
                 str(current_note["guid"]),
                 reversals,
                 pass_tag,
@@ -514,6 +530,17 @@ def execute_restore(
                     raise RestoreError(
                         f"nid {nid}: restored {field} does not match source"
                     )
+            expected_tags, _ = _restore_tags(
+                str(source_note["tags"]),
+                str(source_note["guid"]),
+                reversals,
+                pass_tag,
+                marker,
+            )
+            if _node_tags(str(post["tags"])) != _node_tags(expected_tags):
+                raise RestoreError(
+                    f"nid {nid}: restored concept ownership differs from source"
+                )
         for nid, rows in original_common_cards.items():
             if post_cards[nid] != rows:
                 raise RestoreError(f"nid {nid}: current scheduling/card rows changed")

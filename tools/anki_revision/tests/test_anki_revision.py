@@ -337,7 +337,7 @@ class SnapshotRestoreTest(unittest.TestCase):
         create_collection(source)
         source_db = sqlite3.connect(source)
         source_db.execute(
-            "UPDATE notes SET tags=' node::old ',flds='Claude?\x1fClaude.',"
+            "UPDATE notes SET tags=' node::new ',flds='Claude?\x1fClaude.',"
             "sfld='Claude?',csum=77 WHERE id=7"
         )
         source_db.execute(
@@ -354,7 +354,7 @@ class SnapshotRestoreTest(unittest.TestCase):
         create_collection(current)
         current_db = sqlite3.connect(current)
         current_db.execute(
-            "UPDATE notes SET tags=' node::new technical::keep ',"
+            "UPDATE notes SET tags=' node::wrong technical::keep ',"
             "flds='Codex?\x1fCodex.',sfld='Codex?',csum=88 WHERE id=7"
         )
         current_db.execute(
