@@ -66,12 +66,12 @@ shared.
 | Queue strip | Due, New, and Done show the current filtered queue and reviewed-this-session count. | Zero; large backlog; direct deck; automatic stream; offline snapshot. |
 | Offline/sync pill | Offline is explicit. Pending review ratings show a bounded syncing count and disappear only after acknowledgement. Flag and preference outboxes have separate delivery rules. | Restart; reconnect; foreground sync; failed acknowledgement. |
 | Question card | Rich text is readable and scrollable. HTML, cloze, code, lists, LaTeX, missing media, and long content do not crash or clip. Meaningful image alt text is exposed once; authored empty alt stays decorative. | 320 px width; 2x text; malformed markup; revised content for the same card id; absent/empty/meaningful alt. |
-| Show answer | Reveals the current card's answer and replaces itself with ratings. It cannot rate or advance by tapping card content. | Repeated tap; long answer; content revalidation card. |
-| Again, Hard, Good, Easy | Each button has a predicted interval and accessible label. One visible card can record at most one rating, even under rapid taps. | Double tap; offline outbox; last card; sync failure; rating while undo runs. |
+| Show answer | Reveals the current card's answer and replaces itself with ratings. Space provides the same action for keyboard review. It cannot rate or advance by tapping card content. | Repeated tap or Space; long answer; content revalidation card. |
+| Again, Hard, Good, Easy | Each button has a predicted interval and accessible label. Keys 1–4 select the matching rating after the answer is visible. One visible card can record at most one rating, even under rapid input. | Double tap or key press; keyboard input before reveal; offline outbox; last card; sync failure; rating while undo runs. |
 | Undo last rating | Restores the immediately previous local card state and session count. Hidden when nothing is undoable and disabled while undo is running. | Last card; offline pending review; completed screen; second tap. |
 | Flag card | Opens a platform modal without advancing the card. Wrong, Confusing, Too long, and Duplicate enqueue the exact reason and confirm success. | Cancel; offline queue; flag sync failure; repeated open. |
 | Settings gear | Opens Settings without replacing or rating the current card. | Open before reveal; open after reveal; return with changed preferences. |
-| Catch-up: Start catch-up | Activates the bounded daily catch-up plan and shows progress. | Large backlog; persisted plan; daily cap; next-day reset. |
+| Catch-up: Start catch-up | Activates the bounded daily catch-up plan without adding a persistent progress line above every card. | Large backlog; persisted plan; daily cap; next-day reset. |
 | Catch-up: Show all | Dismisses the offer and preserves the full due queue. | Repeated action; restart; direct deck. |
 | Catch-up paused: Reload | Rechecks the queue after the daily cap. | Offline; next day; server error. |
 | Done: Keep going | Loads only bonus work inside the next-day horizon and preserves pending writes. | Empty ahead queue; offline; repeated exhaustion. |
