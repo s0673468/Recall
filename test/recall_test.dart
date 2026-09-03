@@ -2752,7 +2752,8 @@ void main() {
       );
       final studyDecoration = studyCard.decoration! as BoxDecoration;
       expect(studyDecoration.gradient, isNotNull);
-      expect(find.text('Question'), findsOneWidget);
+      expect(find.text('Question'), findsNothing);
+      expect(find.text('Answer'), findsNothing);
       expect(find.text('Tap to reveal'), findsNothing);
       expect(find.text('Show answer'), findsOneWidget);
       expect(find.textContaining('eramos'), findsNothing);
@@ -2764,6 +2765,8 @@ void main() {
       await tester.tap(find.text('Show answer'));
       await tester.pump();
       expect(find.textContaining('eramos'), findsOneWidget);
+      expect(find.text('Question'), findsNothing);
+      expect(find.text('Answer'), findsNothing);
     });
 
     testWidgets('StudyScreen supports review keyboard shortcuts', (

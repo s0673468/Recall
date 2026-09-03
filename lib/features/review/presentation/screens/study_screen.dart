@@ -352,15 +352,6 @@ class _CardPanel extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              'Question',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: UiColors.primary,
-                fontSize: 10,
-                letterSpacing: 1.1,
-              ),
-            ),
-            const SizedBox(height: UiSpacing.md),
             CardFace(
               html: card.front,
               hasLatex: card.hasLatex,
@@ -390,16 +381,6 @@ class _CardPanel extends StatelessWidget {
                             ),
                             child: Divider(color: UiColors.border, height: 1),
                           ),
-                          Text(
-                            'Answer',
-                            style: Theme.of(context).textTheme.labelLarge
-                                ?.copyWith(
-                                  color: UiColors.textMuted,
-                                  fontSize: 10,
-                                  letterSpacing: 1.1,
-                                ),
-                          ),
-                          const SizedBox(height: UiSpacing.md),
                           CardFace(
                             html: card.back,
                             hasLatex: card.hasLatex,
