@@ -212,10 +212,9 @@ void main() {
 
     expect(find.byKey(const ValueKey('recall_shell')), findsOneWidget);
     expect(find.byKey(const Key('recall_study_card')), findsOneWidget);
-    expect(find.byKey(const ValueKey('study_catch_up_offer')), findsOneWidget);
+    expect(find.byKey(const ValueKey('study_catch_up_offer')), findsNothing);
+    expect(find.text('Large due backlog'), findsNothing);
 
-    await tester.tap(find.text('Show all'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Show answer'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('study_rating_bar')), findsOneWidget);

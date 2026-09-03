@@ -2559,42 +2559,24 @@ void main() {
   });
 
   group('UI widgets', () {
-    test('rating intervals round future time up instead of shaving a unit', () {
-      expect(
-        humanizeRatingInterval(
-          const Duration(minutes: 10) - const Duration(milliseconds: 1),
-        ),
-        '10m',
-      );
-      expect(
-        humanizeRatingInterval(
-          const Duration(days: 6) - const Duration(milliseconds: 1),
-        ),
-        '6d',
-      );
-    });
-
-    testWidgets('rating buttons omit scheduling estimates', (
-      tester,
-    ) async {
-      final previewAt = DateTime.now().toUtc().subtract(
-        const Duration(minutes: 4),
-      );
-      final due = previewAt.add(const Duration(minutes: 10));
-
+    testWidgets('rating buttons omit scheduling estimates', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: RatingBar(
-              preview: {for (final r in Rating.values) r: due},
-              previewAt: previewAt,
-              onRate: (_) {},
-            ),
-          ),
+          home: Scaffold(body: RatingBar(onRate: (_) {})),
         ),
       );
 
-      expect(find.text('10m'), findsNothing);
+      expect(
+        tester
+            .widgetList<Text>(
+              find.descendant(
+                of: find.byType(RatingBar),
+                matching: find.byType(Text),
+              ),
+            )
+            .map((text) => text.data),
+        ['Again', 'Hard', 'Good', 'Easy'],
+      );
       expect(find.bySemanticsLabel('Again'), findsOneWidget);
       expect(find.bySemanticsLabel('Easy'), findsOneWidget);
     });
@@ -2603,19 +2585,10 @@ void main() {
       tester,
     ) async {
       Rating? tapped;
-      final now = DateTime.now().toUtc();
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(splashFactory: InkRipple.splashFactory),
-          home: Scaffold(
-            body: RatingBar(
-              preview: {
-                for (final r in Rating.values)
-                  r: now.add(Duration(days: r.value)),
-              },
-              onRate: (r) => tapped = r,
-            ),
-          ),
+          home: Scaffold(body: RatingBar(onRate: (r) => tapped = r)),
         ),
       );
       expect(find.text('Again'), findsOneWidget);
@@ -2623,14 +2596,20 @@ void main() {
       expect(find.text('Good'), findsOneWidget);
       expect(find.text('Easy'), findsOneWidget);
 
-      await tester.tap(find.text('Easy'));
-      expect(tapped, Rating.easy);
+      for (final (label, rating) in [
+        ('Again', Rating.again),
+        ('Hard', Rating.hard),
+        ('Good', Rating.good),
+        ('Easy', Rating.easy),
+      ]) {
+        await tester.tap(find.text(label));
+        expect(tapped, rating);
+      }
     });
 
     testWidgets('RatingBar adapts to a narrow large-text surface', (
       tester,
     ) async {
-      final now = DateTime.utc(2026, 8, 11, 12);
       await tester.binding.setSurfaceSize(const Size(320, 640));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -2641,16 +2620,7 @@ void main() {
               size: Size(320, 640),
               textScaler: TextScaler.linear(2),
             ),
-            child: Scaffold(
-              body: RatingBar(
-                preview: {
-                  for (final r in Rating.values)
-                    r: now.add(Duration(minutes: r.value)),
-                },
-                previewAt: now,
-                onRate: (_) {},
-              ),
-            ),
+            child: Scaffold(body: RatingBar(onRate: (_) {})),
           ),
         ),
       );
@@ -2664,8 +2634,8 @@ void main() {
       for (var i = 0; i < 4; i++) {
         expect(tester.getSize(buttons.at(i)).height, greaterThanOrEqualTo(48));
       }
-      expect(find.bySemanticsLabel(RegExp(r'Again, 1m')), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp(r'Easy, 4m')), findsOneWidget);
+      expect(find.bySemanticsLabel('Again'), findsOneWidget);
+      expect(find.bySemanticsLabel('Easy'), findsOneWidget);
     });
 
     testWidgets('CardFace renders plain text', (tester) async {
@@ -5086,13 +5056,17 @@ void main() {
       expect(find.text('Show answer'), findsOneWidget);
     });
 
-    testWidgets('completed catch-up uses a simple session message', (tester) async {
+    testWidgets('completed catch-up uses a simple session message', (
+      tester,
+    ) async {
       final store = LocalReviewStore();
-      await store.saveCatchUpState(const CatchUpLocalState(
-        mode: CatchUpMode.active,
-        dayKey: '2026-08-05',
-        completedToday: 20,
-      ));
+      await store.saveCatchUpState(
+        const CatchUpLocalState(
+          mode: CatchUpMode.active,
+          dayKey: '2026-08-05',
+          completedToday: 20,
+        ),
+      );
       final controller = ReviewController(
         api: _FakeRecallApi(_catchUpQueue(82)),
         engine: FsrsEngine(),
@@ -5104,9 +5078,11 @@ void main() {
       expect(controller.state.isDone, isTrue);
       expect(controller.state.catchUp.isActive, isTrue);
 
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: StudyScreen(controller: controller)),
-      ));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
 
       expect(find.text('Session complete'), findsOneWidget);
       expect(find.textContaining('catch-up'), findsNothing);

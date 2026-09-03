@@ -9,7 +9,6 @@ import '../../../../theme/ui_tokens.dart';
 import '../../../../core/platform/recall_platform.dart';
 import '../../../../core/widgets/recall_motion.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
-import '../../application/backlog_catch_up.dart';
 import '../../application/review_controller.dart';
 import '../../data/local_review_store.dart';
 import '../../data/models.dart';
@@ -86,16 +85,16 @@ class StudyScreen extends StatelessWidget {
         }
         if (s.isDone) {
           final n = s.reviewedThisSession;
+          final reviewedLine = n > 0
+              ? 'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session.'
+              : 'Nothing due right now.';
           if (s.catchUp.isActive && s.catchUp.dueCount > 0) {
             return RecallMotionSwap(
               child: _Message(
                 key: const ValueKey('study_catch_up_paused'),
                 icon: Icons.pause_circle_outline,
-                title: 'Catch-up paused',
-                subtitle:
-                    'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session. '
-                    'The daily catch-up limit is ${s.catchUp.dailyCap}. '
-                    'Resume tomorrow.',
+                title: 'Session complete',
+                subtitle: n > 0 ? reviewedLine : 'You’re done for now.',
                 action: 'Reload',
                 onAction: controller.refresh,
                 secondaryAction: undoable ? 'Undo last rating' : null,
@@ -103,17 +102,9 @@ class StudyScreen extends StatelessWidget {
               ),
             );
           }
-          final reviewedLine = n > 0
-              ? 'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session.'
-              : 'Nothing due right now.';
           // "Keep going" pulls a bonus batch (cards due in the next 24h +
           // unseen new cards). It hides once a fetch came back empty, and
           // needs a connection — the just-made ratings must sync first.
-          final subtitle = s.aheadExhausted
-              ? '$reviewedLine Nothing more within the next day.'
-              : s.offline
-              ? '$reviewedLine Bonus cards need a connection.'
-              : reviewedLine;
           final canKeepGoing = !s.aheadExhausted && !s.offline;
           return RecallMotionSwap(
             child: ListView(
@@ -124,7 +115,7 @@ class StudyScreen extends StatelessWidget {
                 _Message(
                   icon: Icons.check_circle_outline,
                   title: 'All caught up',
-                  subtitle: subtitle,
+                  subtitle: reviewedLine,
                   action: canKeepGoing ? 'Keep going' : 'Reload',
                   onAction: canKeepGoing
                       ? controller.keepGoing
@@ -158,22 +149,6 @@ class StudyScreen extends StatelessWidget {
           fontWeight: FontWeight.w400,
         );
 
-        final catchUp = AnimatedSize(
-          duration: RecallMotion.duration(context),
-          curve: RecallMotion.curve,
-          alignment: Alignment.topCenter,
-          child: RecallMotionSwap(
-            duration: RecallMotion.quick,
-            child: s.catchUp.shouldOffer
-                ? _CatchUpBanner(
-                    key: const ValueKey('study_catch_up_offer'),
-                    plan: s.catchUp,
-                    onStart: controller.startCatchUp,
-                    onShowAll: controller.showAll,
-                  )
-                : const SizedBox(key: ValueKey('study_catch_up_hidden')),
-          ),
-        );
         final header = _Header(
           due: s.dueRemaining,
           neu: s.newRemaining,
@@ -201,8 +176,6 @@ class StudyScreen extends StatelessWidget {
           child: s.showBack
               ? RatingBar(
                   key: const ValueKey('study_rating_bar'),
-                  preview: controller.previewCurrent(),
-                  previewAt: controller.previewCurrentAt,
                   onRate: controller.rate,
                   enabled: !controller.rateInFlight,
                 )
@@ -229,7 +202,6 @@ class StudyScreen extends StatelessWidget {
                   key: ValueKey('study_card_${card.id}'),
                   physics: const AlwaysScrollableScrollPhysics(),
                   children: [
-                    catchUp,
                     header,
                     const SizedBox(height: UiSpacing.sm),
                     SizedBox(height: 260, child: cardPanel),
@@ -241,7 +213,6 @@ class StudyScreen extends StatelessWidget {
               : Column(
                   key: ValueKey('study_card_${card.id}'),
                   children: [
-                    catchUp,
                     header,
                     const SizedBox(height: UiSpacing.sm),
                     Expanded(child: cardPanel),
@@ -256,65 +227,6 @@ class StudyScreen extends StatelessWidget {
           child: body,
         );
       },
-    );
-  }
-}
-
-class _CatchUpBanner extends StatelessWidget {
-  final CatchUpView plan;
-  final VoidCallback onStart;
-  final VoidCallback onShowAll;
-
-  const _CatchUpBanner({
-    super.key,
-    required this.plan,
-    required this.onStart,
-    required this.onShowAll,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: UiSpacing.sm),
-      child: RecallSectionCard(
-        key: const Key('recall_catch_up_banner'),
-        padding: const EdgeInsets.all(UiSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Large due backlog',
-              style: TextStyle(
-                color: UiColors.textPrimary,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: UiSpacing.xs),
-            Text(
-              '${plan.dueCount} due cards · ${plan.planLine}',
-              style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
-            ),
-            const SizedBox(height: UiSpacing.sm),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    onPressed: onStart,
-                    child: const Text('Start catch-up'),
-                  ),
-                ),
-                const SizedBox(width: UiSpacing.sm),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: onShowAll,
-                    child: const Text('Show all'),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
