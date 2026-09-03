@@ -2574,7 +2574,7 @@ void main() {
       );
     });
 
-    testWidgets('rating intervals stay anchored to the preview timestamp', (
+    testWidgets('rating buttons omit scheduling estimates', (
       tester,
     ) async {
       final previewAt = DateTime.now().toUtc().subtract(
@@ -2594,7 +2594,9 @@ void main() {
         ),
       );
 
-      expect(find.text('10m'), findsNWidgets(Rating.values.length));
+      expect(find.text('10m'), findsNothing);
+      expect(find.bySemanticsLabel('Again'), findsOneWidget);
+      expect(find.bySemanticsLabel('Easy'), findsOneWidget);
     });
 
     testWidgets('RatingBar shows all four ratings and reports taps', (
@@ -5056,7 +5058,7 @@ void main() {
       expect(controller.state.queue.map((card) => card.id), [902]);
     });
 
-    testWidgets('shows the plan banner before the user opts in', (
+    testWidgets('study omits backlog prompts before the user opts in', (
       tester,
     ) async {
       final controller = ReviewController(
@@ -5075,9 +5077,41 @@ void main() {
         ),
       );
 
-      expect(find.text('Start catch-up'), findsOneWidget);
-      expect(find.text('Show all'), findsOneWidget);
-      expect(find.textContaining('20 cards/day'), findsOneWidget);
+      expect(controller.state.catchUp.shouldOffer, isTrue);
+      expect(find.text('Large due backlog'), findsNothing);
+      expect(find.text('Start catch-up'), findsNothing);
+      expect(find.text('Show all'), findsNothing);
+      expect(find.textContaining('20 cards/day'), findsNothing);
+      expect(find.byKey(const Key('recall_study_card')), findsOneWidget);
+      expect(find.text('Show answer'), findsOneWidget);
+    });
+
+    testWidgets('completed catch-up uses a simple session message', (tester) async {
+      final store = LocalReviewStore();
+      await store.saveCatchUpState(const CatchUpLocalState(
+        mode: CatchUpMode.active,
+        dayKey: '2026-08-05',
+        completedToday: 20,
+      ));
+      final controller = ReviewController(
+        api: _FakeRecallApi(_catchUpQueue(82)),
+        engine: FsrsEngine(),
+        store: store,
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      expect(controller.state.isDone, isTrue);
+      expect(controller.state.catchUp.isActive, isTrue);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: StudyScreen(controller: controller)),
+      ));
+
+      expect(find.text('Session complete'), findsOneWidget);
+      expect(find.textContaining('catch-up'), findsNothing);
+      expect(find.textContaining('daily'), findsNothing);
+      expect(find.text('Reload'), findsOneWidget);
     });
 
     testWidgets('active catch-up does not add a progress line', (tester) async {
