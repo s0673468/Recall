@@ -13,7 +13,7 @@ spec = importlib.util.spec_from_file_location("run_ios_tests", SCRIPT)
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
-DEVICE_ID = "00000000-1111-4222-8333-444444444444"
+DEVICE_ID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
 RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-26-5"
 TYPE = "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
 PAYLOAD = {"devices": {RUNTIME: [{"name": "iPhone 17 Pro", "isAvailable": True,

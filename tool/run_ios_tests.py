@@ -62,7 +62,8 @@ def run_tests(arguments, device_name=None):
         created = subprocess.check_output(
             ["xcrun", "simctl", "create", f"XCTest-{uuid.uuid4()}", device_type, runtime],
             text=True).strip()
-        device_id = str(uuid.UUID(created))
+        uuid.UUID(created)  # Validate, but preserve Xcode's case-sensitive identifier.
+        device_id = created
         result = run_build([
             "xcodebuild", "test", *arguments,
             "-destination", f"platform=iOS Simulator,id={device_id}",
