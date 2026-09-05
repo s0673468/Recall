@@ -11,10 +11,22 @@ description: >-
 
 # Anki revision
 
-Recall owns the workflow and quality standard. Read
-`/Users/germanchernukhin/Code/Recall/docs/card-golden-standard.md`, then use the
-deterministic tools under
-`/Users/germanchernukhin/Code/Recall/tools/anki_revision`.
+Recall owns the workflow and quality standard. For ordinary learning work,
+use one checkout of the verified current merged Recall revision. Prefer
+`/Users/germanchernukhin/Code/Recall` when it has that source; if it holds
+different active work, use an isolated checkout without switching or rewriting
+the active branch. When the user explicitly asks to develop or review unmerged
+skill or tool behavior, use the selected development revision instead.
+
+Read `docs/card-golden-standard.md` and use the tools under `tools/anki_revision`
+from that same checkout. The applier hashes the standard in its own checkout.
+Reading a different revision can invalidate the handoff evidence.
+
+Before proposing mutations, distinguish semantic revision, technical repair,
+and read-only review. Check the current content owner, accepted wording, and
+any active content freeze against the requested scope. Technical-only repairs
+must preserve card fronts, backs, and primer text exactly. A quality concern
+outside that scope is a finding, not permission to rewrite accepted content.
 
 Reason freely about card quality and current knowledge. Keep the mutation seam
 deterministic: changes are reviewed JSON artifacts; agents do not edit the live

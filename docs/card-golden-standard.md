@@ -112,6 +112,12 @@ Score each card from 1 to 5 before and after:
 Only cards scoring 4 or 5 may remain after the pass. A `keep` record must preserve the original
 front and back exactly.
 
+Preserve an accepted voice when it meets these rules. For example, an accepted answer such as
+"A cache keeps a nearby copy so repeat reads can be faster" stays unchanged during a tag repair.
+Replacing it with "Caching optimizes data-access performance" would be an unrequested style
+change, not part of the technical repair. An authorized semantic pass may revise wording when
+it fixes a concrete clarity or correctness problem.
+
 ## Revision and gardening rules
 
 - Classify every edit or split as `revision_kind: wording` or `material`. Material means the
