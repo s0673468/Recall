@@ -128,7 +128,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('non-cloze/non-HTML card is byte-identical plain text', (
+    testWidgets('plain cards preserve text and the requested typography', (
       tester,
     ) async {
       await tester.pumpWidget(
@@ -144,7 +144,7 @@ void main() {
         find.byType(SelectableText),
       );
       expect(selectable.textSpan!.toPlainText(), 'What is backprop?');
-      expect(selectable.textSpan!.style?.fontFamily, 'Georgia');
+      expect(selectable.textSpan!.style?.fontFamily, 'Outfit');
       expect(tester.takeException(), isNull);
     });
   });

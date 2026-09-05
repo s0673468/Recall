@@ -5,7 +5,7 @@ import 'package:health_anki_flutter/core/widgets/recall_surfaces.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
 void main() {
-  testWidgets('benchmark hero is the elevated visual tier', (tester) async {
+  testWidgets('hero emphasis uses a flat surface', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildRecallTheme(),
@@ -25,7 +25,8 @@ void main() {
       ),
     );
     final decoration = container.decoration! as BoxDecoration;
-    expect(decoration.gradient, isNotNull);
+    expect(decoration.gradient, isNull);
+    expect(decoration.color, UiColors.panel);
     expect(decoration.borderRadius, BorderRadius.circular(UiRadii.hero));
     expect(decoration.boxShadow, isEmpty);
   });

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../theme/ui_tokens.dart';
 
-/// Recall's benchmark surface grammar.
+/// Recall's quiet surface grammar.
 ///
 /// A top-level screen gets at most one [RecallHeroPanel]. Supporting controls
 /// use [RecallSectionCard], repeated peers use [RecallMetricStrip] or
@@ -107,7 +107,7 @@ class RecallMetric {
   const RecallMetric(this.label, this.value, {this.color});
 }
 
-/// Compact peer metrics with the same ruled composition used by Track.
+/// Compact peer metrics separated by rules rather than individual cards.
 class RecallMetricStrip extends StatelessWidget {
   final List<RecallMetric> metrics;
 
@@ -160,7 +160,7 @@ class _MetricTile extends StatelessWidget {
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: metric.color ?? UiColors.textPrimary,
               fontSize: 22,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ),
@@ -193,30 +193,27 @@ class RecallStatusPill extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.12),
-      borderRadius: BorderRadius.circular(UiRadii.pill),
-      border: Border.all(color: color.withValues(alpha: 0.22)),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (icon != null) ...[
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 4),
-        ],
-        Text(
-          label,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: color,
-            fontWeight: FontWeight.w600,
-            fontSize: 11,
-          ),
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      if (icon != null) ...[
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 5),
+      ] else ...[
+        Container(
+          width: 5,
+          height: 5,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
+        const SizedBox(width: 6),
       ],
-    ),
+      Flexible(
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: color),
+        ),
+      ),
+    ],
   );
 }
 
@@ -227,8 +224,9 @@ class RecallListGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    decoration: buildPanelDecoration(),
-    clipBehavior: Clip.antiAlias,
+    decoration: const BoxDecoration(
+      border: Border.symmetric(horizontal: BorderSide(color: UiColors.border)),
+    ),
     child: Column(
       children: [
         for (var i = 0; i < children.length; i++) ...[
@@ -241,7 +239,7 @@ class RecallListGroup extends StatelessWidget {
 }
 
 class RecallListRow extends StatelessWidget {
-  final IconData icon;
+  final IconData? icon;
   final Color iconColor;
   final String title;
   final String? subtitle;
@@ -250,7 +248,7 @@ class RecallListRow extends StatelessWidget {
 
   const RecallListRow({
     super.key,
-    required this.icon,
+    this.icon,
     this.iconColor = UiColors.textMuted,
     required this.title,
     this.subtitle,
@@ -267,21 +265,15 @@ class RecallListRow extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 60),
         child: Padding(
           padding: const EdgeInsets.symmetric(
-            horizontal: UiSpacing.md,
+            horizontal: 0,
             vertical: UiSpacing.sm,
           ),
           child: Row(
             children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: iconColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(UiRadius.md),
-                ),
-                child: Icon(icon, color: iconColor, size: 18),
-              ),
-              const SizedBox(width: UiSpacing.md),
+              if (icon != null) ...[
+                Icon(icon, color: iconColor, size: 20),
+                const SizedBox(width: UiSpacing.sm),
+              ],
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -289,19 +281,16 @@ class RecallListRow extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: UiColors.textPrimary,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
                     if (subtitle != null) ...[
                       const SizedBox(height: 2),
                       Text(
                         subtitle!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: UiColors.textMuted,
                         ),

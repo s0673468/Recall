@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_anki_flutter/core/platform/recall_platform.dart';
 import 'package:health_anki_flutter/navigation/app_shell.dart';
-import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
 void main() {
   test('native iOS detection excludes the web build', () {
@@ -62,33 +61,34 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
   });
 
-  testWidgets('Material navigation uses the shared active destination wash', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          bottomNavigationBar: RecallBottomNavigation(
-            selectedIndex: 0,
-            onDestinationSelected: (_) {},
-            nativeIos: false,
+  testWidgets(
+    'Material navigation highlights the destination without a filled pill',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            bottomNavigationBar: RecallBottomNavigation(
+              selectedIndex: 0,
+              onDestinationSelected: (_) {},
+              nativeIos: false,
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
-    expect(bar.destinations, hasLength(4));
-    expect(find.text('Read'), findsOneWidget);
-    expect(find.byType(CupertinoTabBar), findsNothing);
-    final theme = tester.widget<NavigationBarTheme>(
-      find.ancestor(
-        of: find.byType(NavigationBar),
-        matching: find.byType(NavigationBarTheme),
-      ),
-    );
-    expect(theme.data.indicatorColor, UiColors.primaryMuted);
-  });
+      final bar = tester.widget<NavigationBar>(find.byType(NavigationBar));
+      expect(bar.destinations, hasLength(4));
+      expect(find.text('Read'), findsOneWidget);
+      expect(find.byType(CupertinoTabBar), findsNothing);
+      final theme = tester.widget<NavigationBarTheme>(
+        find.ancestor(
+          of: find.byType(NavigationBar),
+          matching: find.byType(NavigationBarTheme),
+        ),
+      );
+      expect(theme.data.indicatorColor, Colors.transparent);
+    },
+  );
 
   testWidgets('wide Android surfaces use an adaptive navigation rail', (
     tester,
@@ -113,7 +113,7 @@ void main() {
     expect(rail.destinations, hasLength(4));
     expect(find.text('Study'), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
-    expect(rail.indicatorColor, UiColors.primaryMuted);
+    expect(rail.indicatorColor, Colors.transparent);
   });
 
   test('settings navigation uses the platform-appropriate transition', () {

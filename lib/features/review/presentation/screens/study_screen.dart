@@ -22,7 +22,7 @@ class StudyScreen extends StatelessWidget {
   final RecallApi? api;
   final LocalReviewStore? store;
 
-  /// Opens the settings screen from the header gear. Null hides the gear.
+  /// Opens settings from the secondary-actions menu.
   final VoidCallback? onOpenSettings;
   final bool? nativeIos;
 
@@ -52,6 +52,35 @@ class StudyScreen extends StatelessWidget {
     // must still activate a rating button reached through keyboard focus.
     return KeyEventResult.ignored;
   }
+
+  Widget _completed(BuildContext context, Widget child) => Column(
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Study',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'More options',
+            icon: const Icon(Icons.more_horiz),
+            onPressed: () => _showStudyOptions(
+              context,
+              controller,
+              nativeIos: nativeIos ?? recallRunsAsNativeIos(),
+              onOpenSettings: onOpenSettings,
+            ),
+          ),
+        ],
+      ),
+      Expanded(child: child),
+    ],
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -89,16 +118,19 @@ class StudyScreen extends StatelessWidget {
               ? 'Reviewed $n ${n == 1 ? 'card' : 'cards'} this session.'
               : 'Nothing due right now.';
           if (s.catchUp.isActive && s.catchUp.dueCount > 0) {
-            return RecallMotionSwap(
-              child: _Message(
-                key: const ValueKey('study_catch_up_paused'),
-                icon: Icons.pause_circle_outline,
-                title: 'Session complete',
-                subtitle: n > 0 ? reviewedLine : 'You’re done for now.',
-                action: 'Reload',
-                onAction: controller.refresh,
-                secondaryAction: undoable ? 'Undo last rating' : null,
-                onSecondaryAction: undoable ? controller.undo : null,
+            return _completed(
+              context,
+              RecallMotionSwap(
+                child: _Message(
+                  key: const ValueKey('study_catch_up_paused'),
+                  icon: Icons.pause_circle_outline,
+                  title: 'Session complete',
+                  subtitle: n > 0 ? reviewedLine : 'You’re done for now.',
+                  action: 'Reload',
+                  onAction: controller.refresh,
+                  secondaryAction: undoable ? 'Undo last rating' : null,
+                  onSecondaryAction: undoable ? controller.undo : null,
+                ),
               ),
             );
           }
@@ -106,38 +138,41 @@ class StudyScreen extends StatelessWidget {
           // unseen new cards). It hides once a fetch came back empty, and
           // needs a connection — the just-made ratings must sync first.
           final canKeepGoing = !s.aheadExhausted && !s.offline;
-          return RecallMotionSwap(
-            child: ListView(
-              key: const ValueKey('study_done'),
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(UiSpacing.lg),
-              children: [
-                _Message(
-                  icon: Icons.check_circle_outline,
-                  title: 'All caught up',
-                  subtitle: reviewedLine,
-                  action: canKeepGoing ? 'Keep going' : 'Reload',
-                  onAction: canKeepGoing
-                      ? controller.keepGoing
-                      : controller.refresh,
-                  // A mis-tap on the session's last card lands here — keep it
-                  // recoverable (undo survives until the queue is reloaded).
-                  secondaryAction: undoable
-                      ? 'Undo last rating'
-                      : (canKeepGoing ? 'Reload' : null),
-                  onSecondaryAction: undoable
-                      ? controller.undo
-                      : (canKeepGoing ? controller.refresh : null),
-                ),
-                if (api != null && store != null) ...[
-                  const SizedBox(height: UiSpacing.lg),
-                  RemediationSection(
-                    api: api!,
-                    store: store!,
-                    revision: controller.remediationRevision,
+          return _completed(
+            context,
+            RecallMotionSwap(
+              child: ListView(
+                key: const ValueKey('study_done'),
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(UiSpacing.lg),
+                children: [
+                  _Message(
+                    icon: Icons.check_circle_outline,
+                    title: 'All caught up',
+                    subtitle: reviewedLine,
+                    action: canKeepGoing ? 'Keep going' : 'Reload',
+                    onAction: canKeepGoing
+                        ? controller.keepGoing
+                        : controller.refresh,
+                    // A mis-tap on the session's last card lands here — keep it
+                    // recoverable (undo survives until the queue is reloaded).
+                    secondaryAction: undoable
+                        ? 'Undo last rating'
+                        : (canKeepGoing ? 'Reload' : null),
+                    onSecondaryAction: undoable
+                        ? controller.undo
+                        : (canKeepGoing ? controller.refresh : null),
                   ),
+                  if (api != null && store != null) ...[
+                    const SizedBox(height: UiSpacing.lg),
+                    RemediationSection(
+                      api: api!,
+                      store: store!,
+                      revision: controller.remediationRevision,
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           );
         }
@@ -145,25 +180,34 @@ class StudyScreen extends StatelessWidget {
         final card = s.current!;
         final style = Theme.of(context).textTheme.titleLarge!.copyWith(
           color: UiColors.textPrimary,
-          height: 1.4,
+          fontSize: 24,
+          height: 1.45,
           fontWeight: FontWeight.w400,
         );
 
+        String? selectedDeck;
+        for (final deck in s.decks) {
+          if (deck.deckId == s.deckFilter) selectedDeck = deck.name;
+        }
         final header = _Header(
+          title: selectedDeck?.replaceAll('::', ' › ') ?? 'Study',
           due: s.dueRemaining,
           neu: s.newRemaining,
           session: s.reviewedThisSession,
           offline: s.offline,
           pendingSync: s.pendingSync,
           onUndo: undoable ? controller.undo : null,
-          // Flagging is independent of the review flow and of undo — it only
-          // reports the current card, so it is live whenever a card is shown.
-          onFlag: () => _showFlagSheet(
+          onMore: () => _showStudyOptions(
+            context,
+            controller,
+            nativeIos: nativeIos ?? recallRunsAsNativeIos(),
+            onOpenSettings: onOpenSettings,
+          ),
+          onSession: () => _showSessionOptions(
             context,
             controller,
             nativeIos: nativeIos ?? recallRunsAsNativeIos(),
           ),
-          onOpenSettings: onOpenSettings,
         );
         final cardPanel = _CardPanel(
           card: card,
@@ -218,6 +262,7 @@ class StudyScreen extends StatelessWidget {
                     Expanded(child: cardPanel),
                     const SizedBox(height: UiSpacing.md),
                     actions,
+                    const SizedBox(height: UiSpacing.sm),
                   ],
                 ),
         );
@@ -232,102 +277,255 @@ class StudyScreen extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
+  final String title;
   final int due;
   final int neu;
   final int session;
   final bool offline;
   final int pendingSync;
-
-  /// Reverts the last rating; null hides the undo button (nothing undoable).
   final VoidCallback? onUndo;
-
-  /// Opens the flag-card sheet; null hides the flag button.
-  final VoidCallback? onFlag;
-  final VoidCallback? onOpenSettings;
+  final VoidCallback onMore;
+  final VoidCallback onSession;
   const _Header({
+    required this.title,
     required this.due,
     required this.neu,
     required this.session,
     required this.offline,
     required this.pendingSync,
+    required this.onMore,
+    required this.onSession,
     this.onUndo,
-    this.onFlag,
-    this.onOpenSettings,
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              'Study',
-              style: Theme.of(
-                context,
-              ).textTheme.titleLarge?.copyWith(fontSize: 24),
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            if (offline || pendingSync > 0) ...[
-              const SizedBox(width: UiSpacing.sm),
-              RecallStatusPill(
-                label: offline ? 'Offline' : '$pendingSync syncing',
-                icon: offline ? Icons.cloud_off_outlined : Icons.sync,
-              ),
-            ],
-            const Spacer(),
-            if (onUndo != null)
-              IconButton(
-                tooltip: 'Undo last rating',
-                icon: const Icon(
-                  Icons.undo,
-                  size: 20,
-                  color: UiColors.textMuted,
+          ),
+          if (onUndo != null)
+            IconButton(
+              tooltip: 'Undo last rating',
+              icon: const Icon(Icons.undo, size: 20),
+              onPressed: onUndo,
+            ),
+          IconButton(
+            tooltip: 'More options',
+            icon: const Icon(Icons.more_horiz, size: 22),
+            onPressed: onMore,
+          ),
+        ],
+      ),
+      Row(
+        key: const Key('recall_queue_strip'),
+        children: [
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Tooltip(
+                message: 'Session options',
+                child: TextButton.icon(
+                  onPressed: onSession,
+                  icon: const Icon(Icons.keyboard_arrow_down, size: 15),
+                  iconAlignment: IconAlignment.end,
+                  label: Text(
+                    '$due due · $neu new',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: UiColors.textSecondary,
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 8,
+                      horizontal: 2,
+                    ),
+                  ),
                 ),
-                onPressed: onUndo,
               ),
-            if (onFlag != null)
-              IconButton(
-                tooltip: 'Flag card',
-                icon: const Icon(
-                  Icons.flag_outlined,
-                  size: 20,
-                  color: UiColors.textMuted,
-                ),
-                onPressed: onFlag,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$session done',
+            style: const TextStyle(fontSize: 13, color: UiColors.textMuted),
+          ),
+        ],
+      ),
+      if (offline || pendingSync > 0)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Semantics(
+            liveRegion: true,
+            child: Text(
+              offline
+                  ? (pendingSync > 0
+                        ? 'Offline · $pendingSync waiting to sync'
+                        : 'Offline')
+                  : '$pendingSync syncing',
+              style: const TextStyle(
+                color: UiColors.textSecondary,
+                fontSize: 12,
               ),
-            if (onOpenSettings != null)
-              IconButton(
-                tooltip: 'Settings',
-                icon: const Icon(
-                  Icons.settings_outlined,
-                  size: 20,
-                  color: UiColors.textMuted,
-                ),
-                onPressed: onOpenSettings,
+            ),
+          ),
+        ),
+    ],
+  );
+}
+
+Future<String?> _studySheet(
+  BuildContext context, {
+  required bool nativeIos,
+  required String title,
+  String? message,
+  required List<({String value, String label, IconData icon})> actions,
+}) {
+  if (nativeIos) {
+    return showCupertinoModalPopup<String>(
+      context: context,
+      builder: (sheetContext) => CupertinoTheme(
+        data: CupertinoTheme.of(
+          context,
+        ).copyWith(brightness: Brightness.dark, primaryColor: UiColors.primary),
+        child: CupertinoActionSheet(
+          title: Text(title),
+          message: message == null ? null : Text(message),
+          actions: [
+            for (final action in actions)
+              CupertinoActionSheetAction(
+                onPressed: () => Navigator.pop(sheetContext, action.value),
+                child: Text(action.label),
               ),
           ],
+          cancelButton: CupertinoActionSheetAction(
+            onPressed: () => Navigator.pop(sheetContext),
+            child: const Text('Cancel'),
+          ),
         ),
-        RecallMetricStrip(
-          key: const Key('recall_queue_strip'),
-          metrics: [
-            RecallMetric(
-              'Due',
-              '$due',
-              color: due > 0 ? UiColors.primary : null,
-            ),
-            RecallMetric(
-              'New',
-              '$neu',
-              color: neu > 0 ? UiColors.chartBlue : null,
-            ),
-            RecallMetric('Done', '$session'),
-          ],
-        ),
-      ],
+      ),
     );
   }
+  return showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (sheetContext) => SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .8,
+        ),
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(title, style: Theme.of(context).textTheme.titleLarge),
+                if (message != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10, bottom: 8),
+                    child: Text(
+                      message,
+                      style: const TextStyle(color: UiColors.textSecondary),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                for (final action in actions)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      action.icon,
+                      size: 20,
+                      color: UiColors.textMuted,
+                    ),
+                    title: Text(action.label),
+                    onTap: () => Navigator.pop(sheetContext, action.value),
+                  ),
+                TextButton(
+                  onPressed: () => Navigator.pop(sheetContext),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Future<void> _showStudyOptions(
+  BuildContext context,
+  ReviewController controller, {
+  required bool nativeIos,
+  VoidCallback? onOpenSettings,
+}) async {
+  final choice = await _studySheet(
+    context,
+    nativeIos: nativeIos,
+    title: 'Options',
+    actions: [
+      (value: 'session', label: 'Session options', icon: Icons.tune),
+      if (controller.state.current != null)
+        (value: 'flag', label: 'Flag card', icon: Icons.flag_outlined),
+      if (onOpenSettings != null)
+        (value: 'settings', label: 'Settings', icon: Icons.settings_outlined),
+    ],
+  );
+  if (!context.mounted) return;
+  switch (choice) {
+    case 'session':
+      await _showSessionOptions(context, controller, nativeIos: nativeIos);
+    case 'flag':
+      _showFlagSheet(context, controller, nativeIos: nativeIos);
+    case 'settings':
+      onOpenSettings?.call();
+  }
+}
+
+Future<void> _showSessionOptions(
+  BuildContext context,
+  ReviewController controller, {
+  required bool nativeIos,
+}) async {
+  final state = controller.state;
+  final plan = state.catchUp;
+  final choice = await _studySheet(
+    context,
+    nativeIos: nativeIos,
+    title: 'Your session',
+    message: plan.isActive
+        ? 'Catch-up · ${plan.remainingToday} cards left today.'
+        : '${state.dueRemaining} due cards · ${state.newRemaining} new',
+    actions: [
+      if (plan.isEligible && !plan.isActive)
+        (
+          value: 'catchup',
+          label: 'Start catch-up',
+          icon: Icons.play_arrow_outlined,
+        ),
+      if (plan.isActive || plan.isEligible)
+        (
+          value: 'all',
+          label: 'Review all due cards',
+          icon: Icons.all_inclusive,
+        ),
+    ],
+  );
+  if (!context.mounted) return;
+  if (choice == 'catchup') await controller.startCatchUp();
+  if (choice == 'all') await controller.showAll();
 }
 
 class _CardPanel extends StatelessWidget {
@@ -354,6 +552,7 @@ class _CardPanel extends StatelessWidget {
           children: [
             CardFace(
               html: card.front,
+              textAlign: TextAlign.start,
               hasLatex: card.hasLatex,
               latexSvg: card.latexSvg,
               cacheKey: '${card.id}:front',
@@ -390,6 +589,8 @@ class _CardPanel extends StatelessWidget {
                             textAlign: TextAlign.start,
                             style: style.copyWith(
                               color: UiColors.textSecondary,
+                              fontSize: 18,
+                              height: 1.6,
                               fontWeight: FontWeight.w400,
                             ),
                             // The answer face reveals any cloze deletions it carries.

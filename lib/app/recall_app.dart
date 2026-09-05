@@ -143,7 +143,7 @@ class _Loading extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     body: Container(
-      decoration: const BoxDecoration(gradient: scaffoldGradient),
+      decoration: const BoxDecoration(color: UiColors.canvas),
       child: const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -178,7 +178,7 @@ class _StartupError extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(gradient: scaffoldGradient),
+        decoration: const BoxDecoration(color: UiColors.canvas),
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(UiSpacing.lg),

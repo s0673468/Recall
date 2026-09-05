@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/platform/recall_platform.dart';
-import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
 import 'primer_screen.dart';
 
-/// Read-only library of every available primer, grouped by concept module.
+/// Read-only library of every available primer, ordered by concept module.
 class PrimerLibraryScreen extends StatelessWidget {
   final List<ConceptPage> pages;
   final List<ConceptNodeInfo> conceptNodes;
@@ -22,47 +21,44 @@ class PrimerLibraryScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: UiColors.canvas,
-    appBar: AppBar(
-      backgroundColor: UiColors.canvas,
-      foregroundColor: UiColors.textPrimary,
-      elevation: 0,
-      title: const Text('Concept primers'),
-    ),
-    body: ColoredBox(
-      color: UiColors.canvas,
-      child: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            UiSpacing.md,
-            UiSpacing.lg,
-            UiSpacing.md,
-            UiSpacing.xl,
-          ),
-          children: [
-            const RecallPageHeader(
-              eyebrow: 'Learning',
-              title: 'Concept primers',
-              subtitle:
-                  'Readable explanations for the ideas behind your cards.',
+    appBar: AppBar(title: const Text('Concept primers')),
+    body: SafeArea(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.xl,
             ),
-            const SizedBox(height: UiSpacing.lg),
-            PrimerLibraryContent(pages: pages, conceptNodes: conceptNodes),
-          ],
+            children: [
+              PrimerLibraryContent(pages: pages, conceptNodes: conceptNodes),
+            ],
+          ),
         ),
       ),
     ),
   );
 }
 
-/// Reusable grouped primer rows for the standalone library and Read tab.
+/// The full library remains searchable even when the Read tab omits concepts
+/// already shown above it from the default browse list.
 class PrimerLibraryContent extends StatefulWidget {
   final List<ConceptPage> pages;
   final List<ConceptNodeInfo> conceptNodes;
+  final Set<String> browseExcludedNodeIds;
+  final ValueChanged<String>? onQueryChanged;
 
   const PrimerLibraryContent({
     super.key,
     required this.pages,
     required this.conceptNodes,
+    this.browseExcludedNodeIds = const {},
+    this.onQueryChanged,
   });
 
   @override
@@ -79,104 +75,82 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
     super.dispose();
   }
 
+  void _setQuery(String value) {
+    setState(() => _query = value);
+    widget.onQueryChanged?.call(value);
+  }
+
   @override
   Widget build(BuildContext context) {
     final moduleByNode = {
       for (final node in widget.conceptNodes) node.nodeId: node.module,
     };
     final query = _query.trim().toLowerCase();
-    final pages = query.isEmpty
-        ? widget.pages
-        : widget.pages.where((page) {
-            final module = moduleByNode[page.nodeId] ?? '';
-            return page.title.toLowerCase().contains(query) ||
-                module.toLowerCase().contains(query);
-          });
-    final grouped = <String, List<ConceptPage>>{};
-    for (final page in pages) {
-      final module = moduleByNode[page.nodeId];
-      (grouped[module == null || module.isEmpty ? 'Other' : module] ??= []).add(
-        page,
-      );
-    }
-    final modules = grouped.keys.toList()
-      ..sort((a, b) {
-        if (a == 'Other') return 1;
-        if (b == 'Other') return -1;
-        return a.compareTo(b);
-      });
-    for (final group in grouped.values) {
-      group.sort((a, b) => a.title.compareTo(b.title));
-    }
+    final pages =
+        widget.pages.where((page) {
+          if (query.isEmpty) {
+            return !widget.browseExcludedNodeIds.contains(page.nodeId);
+          }
+          final module = moduleByNode[page.nodeId] ?? '';
+          return page.title.toLowerCase().contains(query) ||
+              module.toLowerCase().contains(query);
+        }).toList()..sort((a, b) {
+          final moduleA = moduleByNode[a.nodeId] ?? '';
+          final moduleB = moduleByNode[b.nodeId] ?? '';
+          if (moduleA.isEmpty != moduleB.isEmpty) {
+            return moduleA.isEmpty ? 1 : -1;
+          }
+          final moduleOrder = moduleA.compareTo(moduleB);
+          return moduleOrder == 0 ? a.title.compareTo(b.title) : moduleOrder;
+        });
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            UiSpacing.sm,
-            UiSpacing.sm,
-            UiSpacing.sm,
-            UiSpacing.xs,
-          ),
-          child: Material(
-            color: Colors.transparent,
-            child: TextField(
-              key: const Key('recall_primer_search'),
-              controller: _searchController,
-              autocorrect: false,
-              textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                labelText: 'Search primers',
-                hintText: 'Title or module',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: query.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: 'Clear search',
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _query = '');
-                        },
-                        icon: const Icon(Icons.close),
-                      ),
-              ),
-              onChanged: (value) => setState(() => _query = value),
+        Material(
+          color: Colors.transparent,
+          child: TextField(
+            key: const Key('recall_primer_search'),
+            controller: _searchController,
+            autocorrect: false,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Find a concept',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              suffixIcon: query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        _searchController.clear();
+                        _setQuery('');
+                      },
+                      icon: const Icon(Icons.close, size: 20),
+                    ),
             ),
+            onChanged: _setQuery,
           ),
         ),
-        if (modules.isEmpty)
+        const SizedBox(height: UiSpacing.sm),
+        if (pages.isEmpty)
           Padding(
-            padding: const EdgeInsets.all(UiSpacing.md),
+            padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
             child: Text(
-              query.isEmpty
+              query.isNotEmpty
+                  ? 'No primers match your search.'
+                  : widget.pages.isEmpty
                   ? 'No primers available.'
-                  : 'No primers match your search.',
+                  : 'All available primers are shown above.',
               style: const TextStyle(color: UiColors.textMuted),
             ),
-          ),
-        for (final module in modules) ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              UiSpacing.sm,
-              UiSpacing.md,
-              UiSpacing.sm,
-              UiSpacing.xs,
-            ),
-            child: Text(
-              module,
-              style: const TextStyle(
-                color: UiColors.textMuted,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
+          )
+        else
           RecallListGroup(
             children: [
-              for (final page in grouped[module]!)
+              for (final page in pages)
                 PrimerRow(
                   page: page,
+                  module: moduleByNode[page.nodeId],
                   onTap: () => Navigator.of(context).push(
                     buildRecallPageRoute<void>(
                       nativeIos: recallRunsAsNativeIos(),
@@ -189,7 +163,6 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
                 ),
             ],
           ),
-        ],
       ],
     );
   }
@@ -197,16 +170,22 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
 
 class PrimerRow extends StatelessWidget {
   final ConceptPage page;
+  final String? module;
   final VoidCallback onTap;
 
-  const PrimerRow({super.key, required this.page, required this.onTap});
+  const PrimerRow({
+    super.key,
+    required this.page,
+    this.module,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) => KeyedSubtree(
     key: ValueKey('recall_primer_row_${page.nodeId}'),
     child: RecallListRow(
-      icon: Icons.menu_book_outlined,
       title: page.title,
+      subtitle: module?.isNotEmpty == true ? module : null,
       onTap: onTap,
     ),
   );

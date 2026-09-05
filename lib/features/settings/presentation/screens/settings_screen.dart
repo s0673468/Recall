@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
-    show SectionCard, SignOutButton, SignOutButtonVariant;
+    show SignOutButton, SignOutButtonVariant;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../../review/application/fsrs_engine.dart';
@@ -102,30 +102,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         elevation: 0,
         title: const Text('Settings'),
       ),
-      body: ColoredBox(
+      body: Material(
         color: UiColors.canvas,
         child: SafeArea(
           child: ListenableBuilder(
             listenable: widget.prefs,
-            builder: (context, _) => ListView(
-              padding: const EdgeInsets.fromLTRB(
-                UiSpacing.md,
-                UiSpacing.md,
-                UiSpacing.md,
-                UiSpacing.xl,
+            builder: (context, _) => Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(
+                    UiSpacing.md,
+                    UiSpacing.md,
+                    UiSpacing.md,
+                    UiSpacing.xl,
+                  ),
+                  children: [
+                    _schedulingCard(context),
+                    if (widget.reminder != null) ...[
+                      const SizedBox(height: UiSpacing.lg),
+                      _reminderCard(context, widget.reminder!),
+                    ],
+                    const SizedBox(height: UiSpacing.lg),
+                    _perDeckCard(context),
+                    const SizedBox(height: UiSpacing.lg),
+                    _accountCard(context),
+                    const SizedBox(height: UiSpacing.xl),
+                  ],
+                ),
               ),
-              children: [
-                _schedulingCard(context),
-                if (widget.reminder != null) ...[
-                  const SizedBox(height: UiSpacing.lg),
-                  _reminderCard(context, widget.reminder!),
-                ],
-                const SizedBox(height: UiSpacing.lg),
-                _perDeckCard(context),
-                const SizedBox(height: UiSpacing.lg),
-                _accountCard(context),
-                const SizedBox(height: UiSpacing.xl),
-              ],
             ),
           ),
         ),
@@ -133,33 +139,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Widget _section({
+    required String title,
+    String? subtitle,
+    required Widget child,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(title, style: Theme.of(context).textTheme.titleMedium),
+      if (subtitle != null) ...[
+        const SizedBox(height: UiSpacing.xs),
+        Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+      ],
+      const SizedBox(height: UiSpacing.md),
+      child,
+    ],
+  );
+
   // ── Scheduling ──
 
   Widget _schedulingCard(BuildContext context) {
     final retention = _dragRetention ?? _prefs.desiredRetention;
     final mult = retentionWorkloadMultiplier(retention);
-    return SectionCard(
-      hero: true,
+    return _section(
       title: 'Scheduling',
       subtitle: 'How Recall paces reviews and introduces new cards.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FsrsOptimizerStatusLine(
-            engine: widget.controller.engine,
-            changes: widget.controller,
-          ),
-          const Divider(color: UiColors.border, height: UiSpacing.md),
           Row(
             children: [
-              const Text(
-                'Desired retention',
-                style: TextStyle(
-                  color: UiColors.textPrimary,
-                  fontWeight: FontWeight.w600,
+              const Expanded(
+                child: Text(
+                  'Desired retention',
+                  style: TextStyle(
+                    color: UiColors.textPrimary,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: UiSpacing.sm),
               Text(
                 '${(retention * 100).round()}%',
                 style: const TextStyle(
@@ -207,18 +226,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: UiSpacing.xs),
-          SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<NewOrder>(
-              segments: [
-                for (final o in NewOrder.values)
-                  ButtonSegment(value: o, label: Text(o.label)),
-              ],
-              selected: {_prefs.newOrder},
-              showSelectedIcon: false,
-              onSelectionChanged: (s) =>
-                  _apply(_prefs.copyWith(newOrder: s.first)),
-            ),
+          Wrap(
+            spacing: UiSpacing.xs,
+            runSpacing: UiSpacing.xs,
+            children: [
+              for (final order in NewOrder.values)
+                ChoiceChip(
+                  label: Text(order.label),
+                  selected: _prefs.newOrder == order,
+                  showCheckmark: false,
+                  onSelected: (selected) {
+                    if (selected) _apply(_prefs.copyWith(newOrder: order));
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: UiSpacing.lg),
+          ExpansionTile(
+            title: const Text('Scheduler details'),
+            children: [
+              FsrsOptimizerStatusLine(
+                engine: widget.controller.engine,
+                changes: widget.controller,
+              ),
+            ],
           ),
         ],
       ),
@@ -232,7 +263,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       listenable: reminder,
       builder: (context, _) {
         final settings = reminder.value;
-        return SectionCard(
+        return _section(
           title: 'Study reminder',
           subtitle: 'One gentle daily nudge, delivered by this device.',
           child: Column(
@@ -354,21 +385,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       listenable: widget.controller,
       builder: (context, _) {
         final decks = widget.controller.state.decks;
-        return SectionCard(
-          title: 'Per-deck new-card limits',
-          subtitle: decks.isEmpty
-              ? 'Deck list loads after your first sync.'
-              : 'Override the daily new-card limit for a specific deck.',
-          child: Column(
-            children: [
-              for (final deck in decks)
-                _deckOverrideRow(
-                  name: deck.name.replaceAll('::', '  ›  '),
-                  override: _prefs.perDeck[deck.deckId],
-                  onSet: (v) => _apply(_prefs.withDeckOverride(deck.deckId, v)),
-                ),
-            ],
+        return ExpansionTile(
+          title: const Text('Per-deck new-card limits'),
+          subtitle: Text(
+            decks.isEmpty
+                ? 'Deck list loads after your first sync.'
+                : '${_prefs.perDeck.length} overrides · ${_prefs.newLimitDefault} new cards per day by default',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
+          children: [
+            for (var i = 0; i < decks.length; i++) ...[
+              if (i > 0) const Divider(height: UiSpacing.lg),
+              _deckOverrideRow(
+                name: decks[i].name.replaceAll('::', '  ›  '),
+                override: _prefs.perDeck[decks[i].deckId],
+                onSet: (v) =>
+                    _apply(_prefs.withDeckOverride(decks[i].deckId, v)),
+              ),
+            ],
+          ],
         );
       },
     );
@@ -382,27 +417,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final active = override != null;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Text(
-              name,
-              style: const TextStyle(color: UiColors.textPrimary, fontSize: 14),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (active) ...[
-            _stepper(label: name, value: override, onChanged: (v) => onSet(v)),
-            IconButton(
-              tooltip: 'Use default',
-              icon: const Icon(
-                Icons.close,
-                size: 18,
-                color: UiColors.textMuted,
-              ),
-              onPressed: () => onSet(null),
-            ),
-          ] else
+          Text(name, style: Theme.of(context).textTheme.bodyMedium),
+          if (active)
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: UiSpacing.xs,
+              children: [
+                _stepper(
+                  label: name,
+                  value: override,
+                  onChanged: (v) => onSet(v),
+                ),
+                TextButton(
+                  onPressed: () => onSet(null),
+                  child: const Text('Use default'),
+                ),
+              ],
+            )
+          else
             TextButton(
               onPressed: () => onSet(_prefs.newLimitDefault),
               child: const Text('Set override'),
@@ -415,8 +450,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ── Account ──
 
   Widget _accountCard(BuildContext context) {
-    return SectionCard(
+    return _section(
       title: 'Account',
+      subtitle: widget.controller.currentUser?.email,
       child: Align(
         alignment: Alignment.centerLeft,
         child: SignOutButton(
@@ -432,7 +468,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               }
             }
           },
-          email: widget.controller.currentUser?.email,
           variant: SignOutButtonVariant.text,
         ),
       ),
@@ -446,19 +481,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required int value,
     required ValueChanged<int> onChanged,
   }) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: const TextStyle(
-              color: UiColors.textPrimary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        _stepper(label: label, value: value, onChanged: onChanged),
-      ],
+    final title = Text(
+      label,
+      style: const TextStyle(
+        color: UiColors.textPrimary,
+        fontWeight: FontWeight.w500,
+      ),
+    );
+    final control = _stepper(label: label, value: value, onChanged: onChanged);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final largeType = MediaQuery.textScalerOf(context).scale(14) > 18;
+        if (constraints.maxWidth < 360 || largeType) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              title,
+              const SizedBox(height: UiSpacing.xs),
+              control,
+            ],
+          );
+        }
+        return Row(
+          children: [
+            Expanded(child: title),
+            control,
+          ],
+        );
+      },
     );
   }
 
@@ -478,8 +528,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ? null
               : () => onChanged((value - 1).clamp(0, RecallPrefs.maxNewLimit)),
         ),
-        SizedBox(
-          width: 32,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs),
           child: Text(
             '$value',
             textAlign: TextAlign.center,

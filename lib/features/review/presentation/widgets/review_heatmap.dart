@@ -5,8 +5,7 @@ import '../../domain/stats_models.dart';
 
 /// GitHub-style review-count heatmap. Days arrive Sunday-aligned in
 /// chronological order (see [StatsService.buildHeatmap]), so column = index ~/ 7
-/// and row = index % 7 forms the grid. Intensity shades are derived from the
-/// Recall accent at runtime (no literal colours → token parity stays intact).
+/// and row = index % 7 forms the grid. Intensity shades use the shared muted activity colour.
 class ReviewHeatmap extends StatelessWidget {
   final List<HeatmapDay> days;
   const ReviewHeatmap({super.key, required this.days});
@@ -17,30 +16,26 @@ class ReviewHeatmap extends StatelessWidget {
   Color _levelColor(int level) {
     if (level <= 0) return UiColors.border.withValues(alpha: 0.6);
     const alphas = [0.28, 0.5, 0.72, 1.0];
-    return UiColors.primary.withValues(alpha: alphas[(level - 1).clamp(0, 3)]);
+    return UiColors.chartTeal.withValues(
+      alpha: alphas[(level - 1).clamp(0, 3)],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final total = days.fold(0, (a, d) => a + d.count);
     final weeks = (days.length / 7).ceil();
-    return Container(
-      padding: const EdgeInsets.all(UiSpacing.md),
-      decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: UiColors.borderSubtle),
-          bottom: BorderSide(color: UiColors.borderSubtle),
-        ),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Reviews · last 26 weeks  ($total)',
+            '$total reviews over the last 26 weeks',
             style: const TextStyle(
               color: UiColors.textSecondary,
               fontSize: 13,
-              fontWeight: FontWeight.w600,
+              height: 1.5,
             ),
           ),
           const SizedBox(height: UiSpacing.md),
@@ -93,8 +88,10 @@ class ReviewHeatmap extends StatelessWidget {
   }
 
   Widget _legend() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
+    return Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      runSpacing: UiSpacing.xs,
       children: [
         const Text(
           'Less',

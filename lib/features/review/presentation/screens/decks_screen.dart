@@ -28,11 +28,20 @@ class DecksScreen extends StatefulWidget {
 
 class DecksScreenState extends State<DecksScreen> {
   late Future<Map<int, ({int due, int neu})>> _counts;
+  final _searchController = TextEditingController();
+  String _query = '';
+  bool _optionalExpanded = false;
 
   @override
   void initState() {
     super.initState();
     _counts = widget.api.fetchDeckCounts();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> reload() async {
@@ -49,10 +58,15 @@ class DecksScreenState extends State<DecksScreen> {
       builder: (context, _) {
         final decks = widget.controller.state.decks;
         final automaticDeckIds = automaticReviewDeckIds(decks);
-        final coreDecks = decks
+        final query = _query.trim().toLowerCase().replaceAll('::', ' ');
+        final matches = decks.where(
+          (deck) =>
+              deck.name.replaceAll('::', ' ').toLowerCase().contains(query),
+        );
+        final coreDecks = matches
             .where((deck) => automaticDeckIds.contains(deck.deckId))
             .toList();
-        final optionalDecks = decks
+        final optionalDecks = matches
             .where((deck) => !automaticDeckIds.contains(deck.deckId))
             .toList();
         return RefreshIndicator(
@@ -78,6 +92,9 @@ class DecksScreenState extends State<DecksScreen> {
                         : 0),
               );
               return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: const EdgeInsets.fromLTRB(
                   UiSpacing.md,
                   UiSpacing.md,
@@ -85,54 +102,93 @@ class DecksScreenState extends State<DecksScreen> {
                   UiSpacing.xl,
                 ),
                 children: [
-                  const RecallPageHeader(
-                    eyebrow: 'Library',
-                    title: 'Decks',
-                    subtitle:
-                        'Core learning flows into one review. Optional '
-                        'curricula stay available when you choose them.',
+                  const RecallPageHeader(title: 'Decks'),
+                  const SizedBox(height: UiSpacing.lg),
+                  TextField(
+                    key: const Key('recall_deck_search'),
+                    controller: _searchController,
+                    autocorrect: false,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText: 'Find a deck',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: query.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'Clear search',
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _query = '');
+                              },
+                              icon: const Icon(Icons.close, size: 20),
+                            ),
+                    ),
+                    onChanged: (value) => setState(() => _query = value),
                   ),
                   const SizedBox(height: UiSpacing.lg),
                   RecallMotionSwap(
                     child: snap.hasError
                         ? _CountError(onRetry: _retry)
                         : snap.connectionState == ConnectionState.done
-                        ? const SizedBox(
+                        ? const SizedBox.shrink(
                             key: ValueKey('deck_counts_ready'),
-                            height: UiSpacing.xs,
                           )
                         : const Padding(
                             key: ValueKey('deck_counts_loading'),
-                            padding: EdgeInsets.symmetric(
-                              horizontal: UiSpacing.sm,
-                            ),
+                            padding: EdgeInsets.only(bottom: UiSpacing.sm),
                             child: LinearProgressIndicator(minHeight: 2),
                           ),
                   ),
-                  _automaticHero(
-                    due: totalDue,
-                    neu: totalNew,
-                    onTap: () => widget.onStudyDeck(null),
-                  ),
+                  if (query.isEmpty)
+                    _automaticHero(
+                      due: totalDue,
+                      neu: totalNew,
+                      onTap: () => widget.onStudyDeck(null),
+                    ),
                   if (coreDecks.isNotEmpty) ...[
-                    const SizedBox(height: UiSpacing.xl),
-                    const RecallSectionLabel(
-                      title: 'Core decks',
-                      subtitle: 'Included in automatic review.',
+                    const SizedBox(height: UiSpacing.lg),
+                    const Text(
+                      'Included in automatic review',
+                      style: TextStyle(fontSize: 12, color: UiColors.textMuted),
                     ),
                     const SizedBox(height: UiSpacing.sm),
-                    _deckGroup(coreDecks, counts, manualOnly: false),
+                    _deckGroup(coreDecks, counts),
                   ],
                   if (optionalDecks.isNotEmpty) ...[
-                    const SizedBox(height: UiSpacing.xl),
-                    const RecallSectionLabel(
-                      title: 'Optional curricula',
-                      subtitle:
-                          'Open one explicitly when you want to study it.',
+                    const SizedBox(height: UiSpacing.lg),
+                    ExpansionTile(
+                      key: ValueKey(
+                        'recall_optional_decks_${query.isNotEmpty}',
+                      ),
+                      initiallyExpanded: query.isNotEmpty || _optionalExpanded,
+                      onExpansionChanged: (expanded) {
+                        if (query.isEmpty) _optionalExpanded = expanded;
+                      },
+                      tilePadding: const EdgeInsets.symmetric(
+                        horizontal: UiSpacing.xs,
+                      ),
+                      childrenPadding: EdgeInsets.zero,
+                      title: Row(
+                        children: [
+                          const Expanded(child: Text('Optional curricula')),
+                          const SizedBox(width: UiSpacing.sm),
+                          Text(
+                            '${optionalDecks.length}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                      children: [_deckGroup(optionalDecks, counts)],
                     ),
-                    const SizedBox(height: UiSpacing.sm),
-                    _deckGroup(optionalDecks, counts, manualOnly: true),
                   ],
+                  if (query.isNotEmpty && matches.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: UiSpacing.lg),
+                      child: Text(
+                        'No matching decks.',
+                        style: TextStyle(color: UiColors.textMuted),
+                      ),
+                    ),
                 ],
               );
             },
@@ -155,62 +211,23 @@ class DecksScreenState extends State<DecksScreen> {
         key: const Key('recall_deck_hero'),
         onTap: onTap,
         semanticsLabel: 'Start automatic review',
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                color: UiColors.primaryMuted,
-                borderRadius: BorderRadius.circular(UiRadius.lg),
-              ),
-              child: const Icon(
-                Icons.all_inclusive,
-                color: UiColors.primary,
-                size: 25,
-              ),
+            Text(
+              'Automatic review',
+              style: Theme.of(context).textTheme.titleLarge,
             ),
-            const SizedBox(width: UiSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Automatic review',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: UiSpacing.xs),
-                  Text(
-                    'Your core topics, mixed into the next useful session.',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodySmall?.copyWith(color: UiColors.textMuted),
-                  ),
-                  const SizedBox(height: UiSpacing.md),
-                  Wrap(
-                    spacing: UiSpacing.sm,
-                    runSpacing: UiSpacing.xs,
-                    children: [
-                      RecallStatusPill(
-                        label: '$dueLabel due',
-                        color: UiColors.primary,
-                      ),
-                      RecallStatusPill(
-                        label: '$newLabel new',
-                        color: UiColors.chartBlue,
-                      ),
-                    ],
-                  ),
-                ],
+            const SizedBox(height: UiSpacing.sm),
+            Text(
+              'Your core decks · $dueLabel due · $newLabel new',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: UiColors.textMuted,
+                height: 1.5,
               ),
             ),
-            const SizedBox(width: UiSpacing.sm),
-            const Icon(
-              Icons.arrow_forward_rounded,
-              color: UiColors.primary,
-              size: 22,
-            ),
+            const SizedBox(height: UiSpacing.lg),
+            FilledButton(onPressed: onTap, child: const Text('Start review')),
           ],
         ),
       ),
@@ -219,17 +236,14 @@ class DecksScreenState extends State<DecksScreen> {
 
   Widget _deckGroup(
     List<DeckRow> decks,
-    Map<int, ({int due, int neu})>? counts, {
-    required bool manualOnly,
-  }) => RecallListGroup(
+    Map<int, ({int due, int neu})>? counts,
+  ) => RecallListGroup(
     children: [
       for (final deck in decks)
         _tile(
           label: deck.name.replaceAll('::', '  ›  '),
-          icon: manualOnly ? Icons.touch_app_outlined : Icons.folder_outlined,
           due: counts?[deck.deckId]?.due,
           neu: counts?[deck.deckId]?.neu,
-          manualOnly: manualOnly,
           onTap: () => widget.onStudyDeck(deck.deckId),
         ),
     ],
@@ -237,36 +251,46 @@ class DecksScreenState extends State<DecksScreen> {
 
   Widget _tile({
     required String label,
-    required IconData icon,
     required int? due,
     required int? neu,
-    bool manualOnly = false,
     required VoidCallback onTap,
   }) {
+    final labels = [
+      if (due != null) '$due due',
+      if (neu != null && neu > 0) '$neu new',
+    ];
     return KeyedSubtree(
       key: ValueKey('recall_deck_row_$label'),
-      child: RecallListRow(
-        icon: icon,
-        iconColor: manualOnly ? UiColors.chartBlue : UiColors.textSecondary,
-        title: label,
-        subtitle: manualOnly ? 'Open manually' : 'Part of automatic review',
-        trailing: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            if (due != null && due > 0) _count('$due due', UiColors.primary),
-            if (neu != null && neu > 0) _count('$neu new', UiColors.chartBlue),
-          ],
-        ),
-        onTap: onTap,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final stackCounts =
+              constraints.maxWidth < 300 ||
+              MediaQuery.textScalerOf(context).scale(14) > 18;
+          return RecallListRow(
+            title: label,
+            subtitle: stackCounts && labels.isNotEmpty
+                ? labels.join(' · ')
+                : null,
+            trailing: stackCounts || labels.isEmpty
+                ? null
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      for (final label in labels)
+                        Text(
+                          label,
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: UiColors.textMuted),
+                        ),
+                    ],
+                  ),
+            onTap: onTap,
+          );
+        },
       ),
     );
   }
-
-  Widget _count(String n, Color color) => Text(
-    n,
-    style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
-  );
 
   void _retry() {
     setState(() {
@@ -283,12 +307,7 @@ class _CountError extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     key: const ValueKey('deck_counts_error'),
-    padding: const EdgeInsets.fromLTRB(
-      UiSpacing.sm,
-      UiSpacing.xs,
-      UiSpacing.sm,
-      UiSpacing.sm,
-    ),
+    padding: const EdgeInsets.only(bottom: UiSpacing.sm),
     child: Row(
       children: [
         const Expanded(

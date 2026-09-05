@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
-    show UiScore;
 
 import '../../../../core/platform/recall_platform.dart';
 import '../../../../navigation/recall_page_route.dart';
@@ -9,15 +7,8 @@ import '../../domain/stats_models.dart';
 import '../screens/primer_library_screen.dart';
 import '../screens/primer_screen.dart';
 
-/// The Stats "Concepts" section: the weakest METIS concept nodes by Again-rate
-/// over the last fortnight, mirroring `metis recall-signal`. Shows the top-5
-/// weakest ranked nodes, a coverage line, and graceful empty states.
-///
-/// The caller passes an already-computed [ranked] list (weakest first),
-/// [notEnoughData] (nodes seen but below the rank floor), [coveredNodeCount]
-/// (nodes with any review this fortnight) and [totalConcepts] (the graph size,
-/// i.e. the resolved `concept_nodes` count). When [totalConcepts] is 0 the table
-/// hasn't synced yet — the coverage denominator falls back to what we can see.
+/// The five weakest ranked concepts over the last fortnight, with coverage and
+/// read-only links to the matching real primers.
 class ConceptRetentionPanel extends StatelessWidget {
   final List<NodeRetention> ranked;
   final int notEnoughData;
@@ -36,33 +27,18 @@ class ConceptRetentionPanel extends StatelessWidget {
     this.conceptNodes = const [],
   });
 
-  /// How many weakest nodes to surface.
   static const int _topN = 5;
 
   @override
   Widget build(BuildContext context) {
     final hasAnyData = coveredNodeCount > 0 || notEnoughData > 0;
     final pagesByNode = {for (final page in conceptPages) page.nodeId: page};
-    return Container(
+    return Padding(
       key: const Key('recall_concepts_panel'),
-      padding: const EdgeInsets.all(UiSpacing.md),
-      decoration: BoxDecoration(
-        color: UiColors.panel,
-        borderRadius: BorderRadius.circular(UiRadii.group),
-        border: Border.all(color: UiColors.border),
-      ),
+      padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Concepts',
-            style: TextStyle(
-              color: UiColors.textSecondary,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: UiSpacing.md),
           if (!hasAnyData)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: UiSpacing.md),
@@ -77,7 +53,7 @@ class ConceptRetentionPanel extends StatelessWidget {
                 padding: EdgeInsets.only(bottom: UiSpacing.sm),
                 child: Text(
                   'Not enough reviews yet to rank any concept.',
-                  style: TextStyle(color: UiColors.textMuted, fontSize: 12),
+                  style: TextStyle(color: UiColors.textMuted),
                 ),
               )
             else
@@ -101,7 +77,7 @@ class ConceptRetentionPanel extends StatelessWidget {
                     ),
                   ),
                 ),
-                icon: const Icon(Icons.menu_book_outlined, size: 16),
+                icon: const Icon(Icons.menu_book_outlined, size: 18),
                 label: const Text('Browse concept primers'),
               ),
             ),
@@ -112,13 +88,11 @@ class ConceptRetentionPanel extends StatelessWidget {
   }
 
   Widget _row(BuildContext context, NodeRetention node, ConceptPage? page) {
-    final row = _rowContent(node, showPrimerAffordance: page != null);
-    if (page == null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: UiSpacing.xs),
-        child: row,
-      );
-    }
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
+      child: _rowContent(context, node, showPrimerAffordance: page != null),
+    );
+    if (page == null) return row;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -130,83 +104,45 @@ class ConceptRetentionPanel extends StatelessWidget {
                 PrimerScreen(page: page, conceptNodes: conceptNodes),
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: UiSpacing.xs),
-          child: row,
-        ),
+        child: row,
       ),
     );
   }
 
-  Widget _rowContent(NodeRetention node, {required bool showPrimerAffordance}) {
-    final color = UiScore.ratioTier(1 - node.againRate); // high again = poor
-    final label = node.title ?? node.nodeId; // raw id is human-legible
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: UiColors.textPrimary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (node.module != null && node.module!.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                _moduleChip(node.module!),
-              ],
-            ],
-          ),
-        ),
-        const SizedBox(width: UiSpacing.sm),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
+  Widget _rowContent(
+    BuildContext context,
+    NodeRetention node, {
+    required bool showPrimerAffordance,
+  }) => Row(
+    children: [
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${(node.againRate * 100).round()}%',
-              style: TextStyle(
-                color: color,
-                fontFamily: 'monospace',
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-              ),
+              node.title ?? node.nodeId,
+              style: Theme.of(context).textTheme.bodyLarge,
             ),
+            if (node.module?.isNotEmpty == true) ...[
+              const SizedBox(height: UiSpacing.xs),
+              Text(node.module!, style: Theme.of(context).textTheme.bodySmall),
+            ],
+            const SizedBox(height: UiSpacing.xs),
             Text(
-              'again · ${node.reviews} rev',
-              style: const TextStyle(color: UiColors.textMuted, fontSize: 10),
+              '${(node.againRate * 100).round()}% again · ${node.reviews} reviews',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
         ),
-        if (showPrimerAffordance) ...[
-          const SizedBox(width: UiSpacing.xs),
-          const Icon(Icons.chevron_right, color: UiColors.textMuted, size: 18),
-        ],
+      ),
+      if (showPrimerAffordance) ...[
+        const SizedBox(width: UiSpacing.sm),
+        const Icon(Icons.chevron_right, color: UiColors.textMuted, size: 20),
       ],
-    );
-  }
-
-  Widget _moduleChip(String module) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs, vertical: 2),
-    decoration: BoxDecoration(
-      color: UiColors.secondary,
-      borderRadius: BorderRadius.circular(UiRadii.pill),
-    ),
-    child: Text(
-      module,
-      style: const TextStyle(color: UiColors.textMuted, fontSize: 10),
-    ),
+    ],
   );
 
   Widget _coverageLine() {
-    // Denominator = the graph size when the concept_nodes table has synced;
-    // otherwise fall back to what we actually saw reviews for.
     final total = totalConcepts > 0 ? totalConcepts : coveredNodeCount;
     final parts = <String>[
       '$coveredNodeCount of $total concepts have review data this fortnight',
@@ -216,7 +152,11 @@ class ConceptRetentionPanel extends StatelessWidget {
     }
     return Text(
       parts.join(' · '),
-      style: const TextStyle(color: UiColors.textMuted, fontSize: 11),
+      style: const TextStyle(
+        color: UiColors.textMuted,
+        fontSize: 12,
+        height: 1.6,
+      ),
     );
   }
 }

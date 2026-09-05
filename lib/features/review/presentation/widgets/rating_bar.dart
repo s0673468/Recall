@@ -60,19 +60,17 @@ class RatingBar extends StatelessWidget {
         onPressed: enabled ? () => onRate(rating) : null,
         style: FilledButton.styleFrom(
           minimumSize: const Size(0, 48),
-          backgroundColor: primary
-              ? UiColors.primary
-              : color.withValues(alpha: 0.14),
+          backgroundColor: primary ? UiColors.primary : UiColors.panel,
           foregroundColor: primary ? UiColors.canvas : color,
           padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(UiRadius.md),
             side: BorderSide(
-              color: primary ? UiColors.primary : color.withValues(alpha: 0.3),
+              color: primary ? UiColors.primary : UiColors.border,
             ),
           ),
         ),
-        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
       ),
     );
   }

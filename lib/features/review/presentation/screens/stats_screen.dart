@@ -96,167 +96,158 @@ class StatsScreenState extends State<StatsScreen> {
     final today = DateTime.now();
     return RefreshIndicator(
       onRefresh: reload,
-      child: ListView(
+      // Eagerly build the small set of sections. Together with maintainState,
+      // this attaches every FutureBuilder while its disclosure is closed, so
+      // an independent fetch failure always has a listener.
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(
           UiSpacing.md,
           UiSpacing.md,
           UiSpacing.md,
           UiSpacing.lg,
         ),
-        children: [
-          const RecallPageHeader(
-            eyebrow: 'Progress',
-            title: 'Stats',
-            subtitle: 'What is sticking, what is due, and where to focus next.',
-          ),
-          const SizedBox(height: UiSpacing.lg),
-
-          // Retention is the one screen hero: the most meaningful learning
-          // outcome, ahead of workload and activity telemetry.
-          _asyncSection<List<ReviewLogEntry>>(
-            future: _reviewLog,
-            label: 'retention',
-            builder: (log) => RetentionPanel(
-              key: const Key('recall_retention_hero'),
-              hero: true,
-              summary: StatsService.computeRetention(
-                log,
-                now: today,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const RecallPageHeader(title: 'Stats'),
+            const SizedBox(height: UiSpacing.lg),
+            _asyncSection<List<ReviewLogEntry>>(
+              future: _reviewLog,
+              label: 'retention',
+              builder: (log) => RetentionPanel(
+                key: const Key('recall_retention_hero'),
+                hero: true,
+                summary: StatsService.computeRetention(
+                  log,
+                  now: today,
+                  windowDays: _retentionWindow,
+                ),
                 windowDays: _retentionWindow,
+                onWindowChanged: (w) => setState(() => _retentionWindow = w),
               ),
-              windowDays: _retentionWindow,
-              onWindowChanged: (w) => setState(() => _retentionWindow = w),
             ),
-          ),
-          const SizedBox(height: UiSpacing.xl),
-
-          const RecallSectionLabel(
-            title: 'Current session',
-            subtitle: 'The work immediately in front of you.',
-          ),
-          const SizedBox(height: UiSpacing.sm),
-
-          // Session tiles (live from the controller).
-          ListenableBuilder(
-            listenable: widget.controller,
-            builder: (context, _) {
-              final s = widget.controller.state;
-              return RecallMetricStrip(
-                key: const Key('recall_stats_session_strip'),
-                metrics: [
-                  RecallMetric('Reviewed', '${s.reviewedThisSession}'),
-                  RecallMetric(
-                    'Due now',
-                    '${s.dueRemaining}',
-                    color: s.dueRemaining > 0 ? UiColors.primary : null,
-                  ),
-                  RecallMetric(
-                    'New left',
-                    '${s.newRemaining}',
-                    color: s.newRemaining > 0 ? UiColors.chartBlue : null,
-                  ),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: UiSpacing.xl),
-
-          const RecallSectionLabel(
-            title: 'Last 30 days',
-            subtitle: 'Recall quality and consistency over time.',
-          ),
-          const SizedBox(height: UiSpacing.sm),
-
-          // Recall / streak / count tiles (from the review log).
-          _asyncSection<List<ReviewLogEntry>>(
-            future: _reviewLog,
-            builder: (log) {
-              final t = StatsService.tileStats(log, today: today);
-              return RecallMetricStrip(
-                key: const Key('recall_stats_history_strip'),
-                metrics: [
-                  RecallMetric('Recall', t.recall),
-                  RecallMetric(
-                    'Streak',
-                    '${t.streak}${t.streak == 1 ? ' day' : ' days'}',
-                  ),
-                  RecallMetric('Reviews', '${t.reviews}'),
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: UiSpacing.xl),
-
-          const RecallSectionLabel(
-            title: 'Activity',
-            subtitle: 'Your review rhythm across the last 26 weeks.',
-          ),
-          const SizedBox(height: UiSpacing.sm),
-
-          // Heatmap.
-          _asyncSection<List<ReviewLogEntry>>(
-            future: _reviewLog,
-            label: 'heatmap',
-            builder: (log) => ReviewHeatmap(
-              days: StatsService.buildHeatmap(log, today: today),
+            const SizedBox(height: UiSpacing.lg),
+            _asyncSection<List<ReviewLogEntry>>(
+              future: _reviewLog,
+              label: 'history',
+              builder: (log) {
+                final t = StatsService.tileStats(log, today: today);
+                return RecallMetricStrip(
+                  key: const Key('recall_stats_history_strip'),
+                  metrics: [
+                    RecallMetric(
+                      'Streak',
+                      '${t.streak}${t.streak == 1 ? ' day' : ' days'}',
+                    ),
+                    RecallMetric('Reviews · 30 days', '${t.reviews}'),
+                  ],
+                );
+              },
             ),
-          ),
-          const SizedBox(height: UiSpacing.xl),
-
-          const RecallSectionLabel(
-            title: 'Work ahead',
-            subtitle: 'The review load scheduled over the next two weeks.',
-          ),
-          const SizedBox(height: UiSpacing.sm),
-
-          // Due forecast (independent query).
-          _asyncSection<List<DateTime>>(
-            future: _dueDates,
-            label: 'forecast',
-            builder: (due) => DueForecastChart(
-              days: StatsService.buildForecast(due, today: today),
+            const SizedBox(height: UiSpacing.md),
+            _disclosure(
+              id: 'activity',
+              title: 'Activity',
+              child: _asyncSection<List<ReviewLogEntry>>(
+                future: _reviewLog,
+                label: 'heatmap',
+                builder: (log) {
+                  final t = StatsService.tileStats(log, today: today);
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Recall over the last 30 days: ${t.recall}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: UiSpacing.md),
+                      ReviewHeatmap(
+                        days: StatsService.buildHeatmap(log, today: today),
+                      ),
+                    ],
+                  );
+                },
+              ),
             ),
-          ),
-          const SizedBox(height: UiSpacing.xl),
-
-          const RecallSectionLabel(
-            title: 'Concepts to reinforce',
-            subtitle: 'Weak signals surfaced from your recent answers.',
-          ),
-          const SizedBox(height: UiSpacing.sm),
-
-          // Concepts — METIS node retention (weakest-first Again-rate).
-          _asyncSection<_ConceptInputs>(
-            future: _conceptData,
-            label: 'concepts',
-            builder: (data) {
-              final result = StatsService.computeNodeRetention(
-                reviewLog: data.log,
-                noteTags: data.tags,
-                conceptNodes: data.nodes,
-                now: today,
-              );
-              return ConceptRetentionPanel(
-                ranked: result.ranked,
-                notEnoughData: result.notEnoughData,
-                coveredNodeCount: result.coveredNodeCount,
-                totalConcepts: data.nodes.length,
-                conceptPages: data.pages,
-                conceptNodes: data.nodes,
-              );
-            },
-          ),
-          const SizedBox(height: UiSpacing.xl),
-
-          if (AppSwitcher.isSupported)
-            const AppSwitcher(
-              current: HealthWebApp.recall,
-              alignment: WrapAlignment.center,
+            _disclosure(
+              id: 'forecast',
+              title: 'Work ahead',
+              child: _asyncSection<List<DateTime>>(
+                future: _dueDates,
+                label: 'forecast',
+                builder: (due) => DueForecastChart(
+                  days: StatsService.buildForecast(due, today: today),
+                ),
+              ),
             ),
-        ],
+            _disclosure(
+              id: 'concepts',
+              title: 'Concepts to reinforce',
+              child: _asyncSection<_ConceptInputs>(
+                future: _conceptData,
+                label: 'concepts',
+                builder: (data) {
+                  final result = StatsService.computeNodeRetention(
+                    reviewLog: data.log,
+                    noteTags: data.tags,
+                    conceptNodes: data.nodes,
+                    now: today,
+                  );
+                  return ConceptRetentionPanel(
+                    ranked: result.ranked,
+                    notEnoughData: result.notEnoughData,
+                    coveredNodeCount: result.coveredNodeCount,
+                    totalConcepts: data.nodes.length,
+                    conceptPages: data.pages,
+                    conceptNodes: data.nodes,
+                  );
+                },
+              ),
+            ),
+            _disclosure(
+              id: 'session',
+              title: 'Current session',
+              child: ListenableBuilder(
+                listenable: widget.controller,
+                builder: (context, _) {
+                  final s = widget.controller.state;
+                  return RecallMetricStrip(
+                    key: const Key('recall_stats_session_strip'),
+                    metrics: [
+                      RecallMetric('Reviewed', '${s.reviewedThisSession}'),
+                      RecallMetric('Due now', '${s.dueRemaining}'),
+                      RecallMetric('New left', '${s.newRemaining}'),
+                    ],
+                  );
+                },
+              ),
+            ),
+            if (AppSwitcher.isSupported) ...[
+              const SizedBox(height: UiSpacing.lg),
+              const AppSwitcher(
+                current: HealthWebApp.recall,
+                alignment: WrapAlignment.center,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
+
+  Widget _disclosure({
+    required String id,
+    required String title,
+    required Widget child,
+  }) => ExpansionTile(
+    key: PageStorageKey('recall_stats_disclosure_$id'),
+    maintainState: true,
+    tilePadding: EdgeInsets.zero,
+    childrenPadding: const EdgeInsets.only(bottom: UiSpacing.lg),
+    title: Text(title),
+    children: [child],
+  );
 
   /// A section that resolves its own future with isolated loading + error
   /// states, so one failing query can't blank the others.

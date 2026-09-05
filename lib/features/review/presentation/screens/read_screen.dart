@@ -41,6 +41,7 @@ class ReadScreen extends StatefulWidget {
 class ReadScreenState extends State<ReadScreen> {
   late final StatsService _service = StatsService(widget.api);
   late Future<_ReadData> _data;
+  bool _searching = false;
 
   @override
   void initState() {
@@ -49,6 +50,7 @@ class ReadScreenState extends State<ReadScreen> {
   }
 
   void _fetch() {
+    _searching = false;
     _data = () async {
       final results = await Future.wait<Object>([
         _service.loadReviewLog(),
@@ -124,12 +126,7 @@ class ReadScreenState extends State<ReadScreen> {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(UiSpacing.md),
             children: const [
-              RecallPageHeader(
-                eyebrow: 'Learning',
-                title: 'Read',
-                subtitle:
-                    'Revisit today’s concepts or browse the full library.',
-              ),
+              RecallPageHeader(title: 'Read'),
               SizedBox(height: UiSpacing.xl),
               RecallStatePanel(
                 icon: Icons.cloud_off_outlined,
@@ -152,8 +149,12 @@ class ReadScreenState extends State<ReadScreen> {
             conceptPages: data.conceptPages,
             readTodayPages: todayPages,
           );
+          final moduleByNode = {
+            for (final node in data.conceptNodes) node.nodeId: node.module,
+          };
           content = ListView(
             key: const ValueKey('read_content'),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(
               UiSpacing.md,
@@ -162,51 +163,22 @@ class ReadScreenState extends State<ReadScreen> {
               UiSpacing.xl,
             ),
             children: [
-              const RecallPageHeader(
-                eyebrow: 'Learning',
-                title: 'Read',
-                subtitle:
-                    'Revisit today’s concepts or browse the full library.',
-              ),
+              const RecallPageHeader(title: 'Read'),
               const SizedBox(height: UiSpacing.lg),
-              RecallHeroPanel(
-                key: const Key('recall_read_today_hero'),
+              Visibility(
+                visible: !_searching,
+                maintainState: true,
                 child: Column(
+                  key: const Key('recall_read_today_hero'),
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 38,
-                          height: 38,
-                          decoration: BoxDecoration(
-                            color: UiColors.primaryMuted,
-                            borderRadius: BorderRadius.circular(UiRadius.md),
-                          ),
-                          child: const Icon(
-                            Icons.auto_stories_outlined,
-                            size: 20,
-                            color: UiColors.primary,
-                          ),
-                        ),
-                        const SizedBox(width: UiSpacing.md),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Today’s reading',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
-                              Text(
-                                'Concepts connected to what you reviewed.',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(color: UiColors.textMuted),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                    const RecallSectionLabel(title: 'Today’s reading'),
+                    const SizedBox(height: UiSpacing.xs),
+                    Text(
+                      'Connected to your recent reviews.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: UiColors.textMuted,
+                      ),
                     ),
                     const SizedBox(height: UiSpacing.md),
                     if (rereadPages.isNotEmpty)
@@ -228,24 +200,39 @@ class ReadScreenState extends State<ReadScreen> {
                         style: TextStyle(color: UiColors.textMuted),
                       ),
                     if (todayPages.isNotEmpty)
-                      for (final page in todayPages)
-                        PrimerRow(
-                          page: page,
-                          onTap: () =>
-                              unawaited(_openPrimer(page, data.conceptNodes)),
-                        ),
+                      RecallListGroup(
+                        children: [
+                          for (final page in todayPages)
+                            PrimerRow(
+                              page: page,
+                              module: moduleByNode[page.nodeId],
+                              onTap: () => unawaited(
+                                _openPrimer(page, data.conceptNodes),
+                              ),
+                            ),
+                        ],
+                      ),
+                    const SizedBox(height: UiSpacing.xl),
                   ],
                 ),
               ),
-              const SizedBox(height: UiSpacing.xl),
-              const RecallSectionLabel(
-                title: 'Primer library',
-                subtitle: 'Browse the complete concept collection.',
+              RecallSectionLabel(
+                title: _searching ? 'Library' : 'More from the library',
               ),
-              const SizedBox(height: UiSpacing.xs),
+              const SizedBox(height: UiSpacing.md),
               PrimerLibraryContent(
                 pages: data.conceptPages,
                 conceptNodes: data.conceptNodes,
+                browseExcludedNodeIds: {
+                  for (final page in todayPages) page.nodeId,
+                  for (final page in rereadPages) page.nodeId,
+                },
+                onQueryChanged: (query) {
+                  final searching = query.trim().isNotEmpty;
+                  if (searching != _searching) {
+                    setState(() => _searching = searching);
+                  }
+                },
               ),
             ],
           );

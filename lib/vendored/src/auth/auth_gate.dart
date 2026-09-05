@@ -72,10 +72,9 @@ class AuthGateModel extends Listenable {
 /// The one login screen every app shares.
 ///
 /// Brand text comes from [appName]/[subtitle]; the accent comes from the ambient
-/// theme (`colorScheme.primary`), so it's emerald on the dashboard and indigo on
-/// Recall/Lift automatically. Behaviour comes entirely from [model]. The navy
-/// [scaffoldGradient] backdrop and the panel card are baked in so all three look
-/// identical down to the pixel.
+/// theme (`colorScheme.primary`). Behaviour comes entirely from [model].
+/// Surfaces and text follow the ambient theme without replacing the shared
+/// form or authentication interactions.
 class AuthGate extends StatefulWidget {
   const AuthGate({
     super.key,
@@ -139,7 +138,11 @@ class _AuthGateState extends State<AuthGate> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Center(
-              child: _BrandMark(accent: accent, letter: initial),
+              child: _BrandMark(
+                accent: accent,
+                letter: initial,
+                foregroundColor: theme.colorScheme.onPrimary,
+              ),
             ),
             const SizedBox(height: UiSpacing.md),
             Text(
@@ -153,14 +156,22 @@ class _AuthGateState extends State<AuthGate> {
                 widget.subtitle!,
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyLarge?.copyWith(
-                  color: UiColors.textMuted,
+                  color: theme.textTheme.bodySmall?.color,
                 ),
               ),
             ],
             const SizedBox(height: UiSpacing.xl),
             Container(
               padding: const EdgeInsets.all(UiSpacing.lg),
-              decoration: buildPanelDecoration(),
+              decoration: ShapeDecoration(
+                color: theme.cardTheme.color ?? theme.colorScheme.surface,
+                shape:
+                    theme.cardTheme.shape ??
+                    RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(UiRadii.group),
+                      side: BorderSide(color: theme.colorScheme.outline),
+                    ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -194,14 +205,14 @@ class _AuthGateState extends State<AuthGate> {
                     const SizedBox(height: UiSpacing.md),
                     _Message(
                       text: error,
-                      color: UiColors.danger,
+                      color: theme.colorScheme.error,
                       icon: Icons.error_outline,
                     ),
                   ] else if (notice != null) ...[
                     const SizedBox(height: UiSpacing.md),
                     _Message(
                       text: notice,
-                      color: UiColors.scoreGood,
+                      color: theme.colorScheme.tertiary,
                       icon: Icons.check_circle_outline,
                     ),
                   ],
@@ -229,7 +240,7 @@ class _AuthGateState extends State<AuthGate> {
 
     return Scaffold(
       body: DecoratedBox(
-        decoration: const BoxDecoration(gradient: scaffoldGradient),
+        decoration: BoxDecoration(color: theme.scaffoldBackgroundColor),
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -249,10 +260,15 @@ class _AuthGateState extends State<AuthGate> {
 /// Accent rounded-square with the app initial — same dark-ink-on-accent look as
 /// the home-screen icons, so the login reads as "this app".
 class _BrandMark extends StatelessWidget {
-  const _BrandMark({required this.accent, required this.letter});
+  const _BrandMark({
+    required this.accent,
+    required this.letter,
+    required this.foregroundColor,
+  });
 
   final Color accent;
   final String letter;
+  final Color foregroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -261,24 +277,13 @@ class _BrandMark extends StatelessWidget {
       height: 60,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(UiRadii.input),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [accent, Color.lerp(accent, UiColors.canvas, 0.32)!],
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: UiShadows.deep,
-            blurRadius: 16,
-            offset: Offset(0, 6),
-          ),
-        ],
+        color: accent,
       ),
       alignment: Alignment.center,
       child: Text(
         letter,
-        style: const TextStyle(
-          color: UiColors.canvas,
+        style: TextStyle(
+          color: foregroundColor,
           fontSize: 30,
           fontWeight: FontWeight.w800,
           height: 1,
