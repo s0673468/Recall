@@ -167,37 +167,9 @@ jobs:
           ./tool/flutterw build ios --debug --simulator --config-only --no-codesign
           --no-pub
 
-      - name: Select an available iPhone simulator
-        id: simulator
-        shell: bash
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import re
-          import subprocess
-
-          payload = json.loads(
-              subprocess.check_output(
-                  ["xcrun", "simctl", "list", "devices", "available", "--json"],
-                  text=True,
-              )
-          )
-          runtimes = sorted(
-              payload["devices"],
-              key=lambda value: tuple(int(part) for part in re.findall(r"\d+", value)),
-              reverse=True,
-          )
-          for runtime in runtimes:
-              for device in payload["devices"][runtime]:
-                  if device["name"].startswith("iPhone"):
-                      print(f"id={device['udid']}")
-                      raise SystemExit(0)
-          raise SystemExit("No available iPhone simulator was found")
-          PY
-
       - name: Run native iOS tests
         run: >-
-          xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner
+          python3 tool/run_ios_tests.py --
+          -workspace ios/Runner.xcworkspace -scheme Runner
           -configuration Debug
-          -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}"
           CODE_SIGNING_ALLOWED=NO
