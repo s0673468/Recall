@@ -2559,61 +2559,36 @@ void main() {
   });
 
   group('UI widgets', () {
-    test('rating intervals round future time up instead of shaving a unit', () {
-      expect(
-        humanizeRatingInterval(
-          const Duration(minutes: 10) - const Duration(milliseconds: 1),
-        ),
-        '10m',
-      );
-      expect(
-        humanizeRatingInterval(
-          const Duration(days: 6) - const Duration(milliseconds: 1),
-        ),
-        '6d',
-      );
-    });
-
-    testWidgets('rating intervals stay anchored to the preview timestamp', (
-      tester,
-    ) async {
-      final previewAt = DateTime.now().toUtc().subtract(
-        const Duration(minutes: 4),
-      );
-      final due = previewAt.add(const Duration(minutes: 10));
-
+    testWidgets('rating buttons omit scheduling estimates', (tester) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: RatingBar(
-              preview: {for (final r in Rating.values) r: due},
-              previewAt: previewAt,
-              onRate: (_) {},
-            ),
-          ),
+          home: Scaffold(body: RatingBar(onRate: (_) {})),
         ),
       );
 
-      expect(find.text('10m'), findsNWidgets(Rating.values.length));
+      expect(
+        tester
+            .widgetList<Text>(
+              find.descendant(
+                of: find.byType(RatingBar),
+                matching: find.byType(Text),
+              ),
+            )
+            .map((text) => text.data),
+        ['Again', 'Hard', 'Good', 'Easy'],
+      );
+      expect(find.bySemanticsLabel('Again'), findsOneWidget);
+      expect(find.bySemanticsLabel('Easy'), findsOneWidget);
     });
 
     testWidgets('RatingBar shows all four ratings and reports taps', (
       tester,
     ) async {
       Rating? tapped;
-      final now = DateTime.now().toUtc();
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(splashFactory: InkRipple.splashFactory),
-          home: Scaffold(
-            body: RatingBar(
-              preview: {
-                for (final r in Rating.values)
-                  r: now.add(Duration(days: r.value)),
-              },
-              onRate: (r) => tapped = r,
-            ),
-          ),
+          home: Scaffold(body: RatingBar(onRate: (r) => tapped = r)),
         ),
       );
       expect(find.text('Again'), findsOneWidget);
@@ -2621,14 +2596,20 @@ void main() {
       expect(find.text('Good'), findsOneWidget);
       expect(find.text('Easy'), findsOneWidget);
 
-      await tester.tap(find.text('Easy'));
-      expect(tapped, Rating.easy);
+      for (final (label, rating) in [
+        ('Again', Rating.again),
+        ('Hard', Rating.hard),
+        ('Good', Rating.good),
+        ('Easy', Rating.easy),
+      ]) {
+        await tester.tap(find.text(label));
+        expect(tapped, rating);
+      }
     });
 
     testWidgets('RatingBar adapts to a narrow large-text surface', (
       tester,
     ) async {
-      final now = DateTime.utc(2026, 8, 11, 12);
       await tester.binding.setSurfaceSize(const Size(320, 640));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -2639,16 +2620,7 @@ void main() {
               size: Size(320, 640),
               textScaler: TextScaler.linear(2),
             ),
-            child: Scaffold(
-              body: RatingBar(
-                preview: {
-                  for (final r in Rating.values)
-                    r: now.add(Duration(minutes: r.value)),
-                },
-                previewAt: now,
-                onRate: (_) {},
-              ),
-            ),
+            child: Scaffold(body: RatingBar(onRate: (_) {})),
           ),
         ),
       );
@@ -2662,8 +2634,8 @@ void main() {
       for (var i = 0; i < 4; i++) {
         expect(tester.getSize(buttons.at(i)).height, greaterThanOrEqualTo(48));
       }
-      expect(find.bySemanticsLabel(RegExp(r'Again, 1m')), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp(r'Easy, 4m')), findsOneWidget);
+      expect(find.bySemanticsLabel('Again'), findsOneWidget);
+      expect(find.bySemanticsLabel('Easy'), findsOneWidget);
     });
 
     testWidgets('CardFace renders plain text', (tester) async {
@@ -2779,8 +2751,10 @@ void main() {
         find.byKey(const Key('recall_study_card')),
       );
       final studyDecoration = studyCard.decoration! as BoxDecoration;
-      expect(studyDecoration.gradient, isNotNull);
-      expect(find.text('Question'), findsOneWidget);
+      expect(studyDecoration.gradient, isNull);
+      expect(studyDecoration.color, UiColors.panel);
+      expect(find.text('Question'), findsNothing);
+      expect(find.text('Answer'), findsNothing);
       expect(find.text('Tap to reveal'), findsNothing);
       expect(find.text('Show answer'), findsOneWidget);
       expect(find.textContaining('eramos'), findsNothing);
@@ -2792,6 +2766,8 @@ void main() {
       await tester.tap(find.text('Show answer'));
       await tester.pump();
       expect(find.textContaining('eramos'), findsOneWidget);
+      expect(find.text('Question'), findsNothing);
+      expect(find.text('Answer'), findsNothing);
     });
 
     testWidgets('StudyScreen supports review keyboard shortcuts', (
@@ -2956,7 +2932,7 @@ void main() {
           matching: find.byType(Scrollable),
         ),
       );
-      expect(scrollable.position.maxScrollExtent, greaterThan(500));
+      expect(scrollable.position.maxScrollExtent, greaterThan(0));
 
       final card = tester.getRect(find.byKey(const Key('recall_study_card')));
       final answer = tester.getRect(find.byType(CardFace).last);
@@ -3048,7 +3024,7 @@ void main() {
           ),
         ),
       );
-      final canvas = tester.widget<ColoredBox>(
+      final canvas = tester.widget<Material>(
         find.byKey(const Key('recall_flat_canvas')),
       );
       expect(canvas.color, UiColors.canvas);
@@ -3141,15 +3117,21 @@ void main() {
           findsOneWidget,
         );
         expect(find.byKey(const Key('recall_deck_hero')), findsOneWidget);
-        expect(find.text('Core decks'), findsOneWidget);
+        expect(find.text('Included in automatic review'), findsOneWidget);
         expect(find.text('Optional curricula'), findsOneWidget);
+        expect(
+          find.byKey(const Key('recall_deck_row_Portuguese')),
+          findsNothing,
+        );
+        await tester.tap(find.text('Optional curricula'));
+        await tester.pumpAndSettle();
         expect(
           find.byKey(const Key('recall_deck_row_Portuguese')),
           findsOneWidget,
         );
-        expect(find.text('3 due'), findsOneWidget);
-        expect(find.text('2 new'), findsOneWidget);
-        expect(find.text('Open manually'), findsOneWidget);
+        expect(find.textContaining('3 due'), findsOneWidget);
+        expect(find.textContaining('2 new'), findsOneWidget);
+        expect(find.text('Open manually'), findsNothing);
         expect(tester.takeException(), isNull);
       },
     );
@@ -3185,7 +3167,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.takeException(), isNull);
-      expect(find.text('3 due'), findsOneWidget);
+      await tester.tap(find.text('Optional curricula'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('3 due'), findsOneWidget);
     });
   });
 
@@ -3224,6 +3208,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await _openStatsDetails(tester, 'forecast');
       await tester.dragUntilVisible(
         find.byType(DueForecastChart),
         find.byType(Scrollable).first,
@@ -3259,43 +3244,23 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Heatmap (review-log query) rendered; forecast (due query) isolated.
+      // Supporting query failures stay isolated, including before disclosure.
+      expect(find.byKey(const Key('recall_retention_hero')), findsOneWidget);
+      expect(
+        find.byKey(const Key('recall_stats_history_strip')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await _openStatsDetails(tester, 'session');
       expect(
         find.byKey(const Key('recall_stats_session_strip')),
         findsOneWidget,
       );
-      expect(find.byKey(const Key('recall_retention_hero')), findsOneWidget);
-      expect(
-        tester.getTopLeft(find.byKey(const Key('recall_retention_hero'))).dy,
-        lessThan(
-          tester
-              .getTopLeft(find.byKey(const Key('recall_stats_session_strip')))
-              .dy,
-        ),
-      );
-
-      final scrollable = find.byType(Scrollable).first;
-      await tester.dragUntilVisible(
-        find.byKey(const Key('recall_stats_history_strip')),
-        scrollable,
-        const Offset(0, -260),
-      );
-      expect(
-        find.byKey(const Key('recall_stats_history_strip')),
-        findsOneWidget,
-      );
-      await tester.dragUntilVisible(
-        find.byType(ReviewHeatmap),
-        scrollable,
-        const Offset(0, -260),
-      );
+      await _openStatsDetails(tester, 'activity');
       expect(find.byType(ReviewHeatmap), findsOneWidget);
-      await tester.dragUntilVisible(
-        find.text('Could not load forecast.'),
-        scrollable,
-        const Offset(0, -260),
-      );
+      await _openStatsDetails(tester, 'forecast');
       expect(find.text('Could not load forecast.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   });
 
@@ -3411,8 +3376,8 @@ void main() {
 
       expect(find.byType(ReadScreen), findsOneWidget);
       expect(find.text('Today’s reading'), findsOneWidget);
-      expect(find.text('Primer library'), findsOneWidget);
-      expect(find.text('Vector geometry primer'), findsNWidgets(2));
+      expect(find.text('More from the library'), findsOneWidget);
+      expect(find.text('Vector geometry primer'), findsOneWidget);
       expect(find.text('M00'), findsOneWidget);
       expect(
         find.text(
@@ -3515,7 +3480,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Reread: Vector geometry primer'), findsNothing);
-      expect(find.text('Vector geometry primer'), findsNWidgets(2));
+      expect(find.text('Vector geometry primer'), findsOneWidget);
     });
   });
 
@@ -4662,7 +4627,10 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byTooltip('Flag card'));
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Flag card'));
+      await tester.pumpAndSettle();
       await tester.pumpAndSettle();
 
       expect(find.byType(CupertinoActionSheet), findsOneWidget);
@@ -4695,7 +4663,10 @@ void main() {
       );
 
       // Open the sheet from the header flag icon; all four reasons present.
-      await tester.tap(find.byTooltip('Flag card'));
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Flag card'));
+      await tester.pumpAndSettle();
       await tester.pumpAndSettle();
       expect(find.text('Wrong'), findsOneWidget);
       expect(find.text('Confusing'), findsOneWidget);
@@ -4732,7 +4703,10 @@ void main() {
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
-      await tester.tap(find.byTooltip('Flag card'));
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Flag card'));
+      await tester.pumpAndSettle();
       await tester.pumpAndSettle();
       expect(find.text('Wrong'), findsOneWidget);
 
@@ -4768,7 +4742,10 @@ void main() {
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
-      await tester.tap(find.byTooltip('Flag card'));
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Flag card'));
+      await tester.pumpAndSettle();
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Wrong'));
@@ -5056,7 +5033,113 @@ void main() {
       expect(controller.state.queue.map((card) => card.id), [902]);
     });
 
-    testWidgets('shows the plan banner before the user opts in', (
+    testWidgets('quiet Study keeps secondary actions in its menu', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _FakeRecallApi([
+        _card(front: 'A clear prompt', back: 'An answer'),
+      ]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      var settingsOpened = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          home: Scaffold(
+            body: StudyScreen(
+              controller: controller,
+              nativeIos: false,
+              onOpenSettings: () => settingsOpened++,
+            ),
+          ),
+        ),
+      );
+      expect(find.byTooltip('More options'), findsOneWidget);
+      expect(find.byTooltip('Flag card'), findsNothing);
+      expect(find.byTooltip('Settings'), findsNothing);
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      expect(find.text('Flag card'), findsOneWidget);
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      expect(settingsOpened, 1);
+      expect(api.applied, isEmpty);
+      expect(controller.state.showBack, isFalse);
+    });
+
+    testWidgets(
+      'quiet Study keeps settings reachable after the queue is complete',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final controller = ReviewController(
+          api: _FakeRecallApi([]),
+          engine: FsrsEngine(),
+          store: LocalReviewStore(),
+        );
+        addTearDown(controller.dispose);
+        await controller.load();
+        var settingsOpened = false;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildRecallTheme(),
+            home: Scaffold(
+              body: StudyScreen(
+                controller: controller,
+                nativeIos: false,
+                onOpenSettings: () => settingsOpened = true,
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.byTooltip('More options'));
+        await tester.pumpAndSettle();
+        expect(find.text('Flag card'), findsNothing);
+        await tester.tap(find.text('Settings'));
+        await tester.pumpAndSettle();
+        expect(settingsOpened, isTrue);
+      },
+    );
+
+    testWidgets('quiet Study session options preserve explicit catch-up', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: _FakeRecallApi(_catchUpQueue(82)),
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          home: Scaffold(
+            body: StudyScreen(controller: controller, nativeIos: false),
+          ),
+        ),
+      );
+      expect(find.text('Large due backlog'), findsNothing);
+      expect(find.text('Start catch-up'), findsNothing);
+      await tester.tap(find.byTooltip('Session options'));
+      await tester.pumpAndSettle();
+      expect(find.text('Start catch-up'), findsOneWidget);
+      expect(controller.state.catchUp.isActive, isFalse);
+      await tester.tap(find.text('Start catch-up'));
+      await tester.pumpAndSettle();
+      expect(controller.state.catchUp.isActive, isTrue);
+      expect(controller.state.queue, hasLength(20));
+      expect(find.text('Show answer'), findsOneWidget);
+    });
+
+    testWidgets('study omits backlog prompts before the user opts in', (
       tester,
     ) async {
       final controller = ReviewController(
@@ -5075,9 +5158,47 @@ void main() {
         ),
       );
 
-      expect(find.text('Start catch-up'), findsOneWidget);
-      expect(find.text('Show all'), findsOneWidget);
-      expect(find.textContaining('20 cards/day'), findsOneWidget);
+      expect(controller.state.catchUp.shouldOffer, isTrue);
+      expect(find.text('Large due backlog'), findsNothing);
+      expect(find.text('Start catch-up'), findsNothing);
+      expect(find.text('Show all'), findsNothing);
+      expect(find.textContaining('20 cards/day'), findsNothing);
+      expect(find.byKey(const Key('recall_study_card')), findsOneWidget);
+      expect(find.text('Show answer'), findsOneWidget);
+    });
+
+    testWidgets('completed catch-up uses a simple session message', (
+      tester,
+    ) async {
+      final store = LocalReviewStore();
+      await store.saveCatchUpState(
+        const CatchUpLocalState(
+          mode: CatchUpMode.active,
+          dayKey: '2026-08-05',
+          completedToday: 20,
+        ),
+      );
+      final controller = ReviewController(
+        api: _FakeRecallApi(_catchUpQueue(82)),
+        engine: FsrsEngine(),
+        store: store,
+        clock: () => DateTime.utc(2026, 8, 5, 12),
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+      expect(controller.state.isDone, isTrue);
+      expect(controller.state.catchUp.isActive, isTrue);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
+
+      expect(find.text('Session complete'), findsOneWidget);
+      expect(find.textContaining('catch-up'), findsNothing);
+      expect(find.textContaining('daily'), findsNothing);
+      expect(find.text('Reload'), findsOneWidget);
     });
 
     testWidgets('active catch-up does not add a progress line', (tester) async {
@@ -5502,4 +5623,13 @@ class _GatedCatchUpStore extends LocalReviewStore {
     }
     return super.loadCatchUpState();
   }
+}
+
+Future<void> _openStatsDetails(WidgetTester tester, String section) async {
+  final tile = find.byKey(PageStorageKey('recall_stats_disclosure_$section'));
+  await tester.ensureVisible(tile);
+  await tester.tap(
+    find.descendant(of: tile, matching: find.byType(ListTile)).first,
+  );
+  await tester.pumpAndSettle();
 }

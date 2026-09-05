@@ -24,7 +24,7 @@ class RemediationRows extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Reread'),
+        Text('Reread', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: UiSpacing.xs),
         for (final page in pages)
           RereadRow(page: page, onTap: () => onTap(page)),
@@ -47,7 +47,10 @@ class RereadRow extends StatelessWidget {
       child: Container(
         key: ValueKey('recall_reread_row_${page.nodeId}'),
         constraints: const BoxConstraints(minHeight: 52),
-        padding: const EdgeInsets.symmetric(horizontal: UiSpacing.sm),
+        padding: const EdgeInsets.symmetric(
+          horizontal: UiSpacing.sm,
+          vertical: UiSpacing.md,
+        ),
         decoration: const BoxDecoration(
           border: Border(bottom: BorderSide(color: UiColors.borderSubtle)),
         ),
@@ -64,7 +67,8 @@ class RereadRow extends StatelessWidget {
                 'Reread: ${page.title}',
                 style: const TextStyle(
                   color: UiColors.textPrimary,
-                  fontSize: 14,
+                  fontSize: 16,
+                  height: 1.45,
                   fontWeight: FontWeight.w500,
                 ),
               ),

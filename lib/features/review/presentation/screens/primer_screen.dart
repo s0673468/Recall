@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
 import '../widgets/card_face.dart';
@@ -28,9 +27,10 @@ class PrimerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final module = _module;
-    final bodyStyle = Theme.of(context).textTheme.titleLarge!.copyWith(
-      color: UiColors.textPrimary,
-      height: 1.4,
+    final bodyStyle = Theme.of(context).textTheme.bodyLarge!.copyWith(
+      color: UiColors.textSecondary,
+      fontSize: 18,
+      height: 1.75,
       fontWeight: FontWeight.w400,
     );
 
@@ -40,7 +40,7 @@ class PrimerScreen extends StatelessWidget {
         backgroundColor: UiColors.canvas,
         foregroundColor: UiColors.textPrimary,
         elevation: 0,
-        title: const Text('Primer'),
+        title: const Text('Read'),
       ),
       body: ColoredBox(
         color: UiColors.canvas,
@@ -48,25 +48,30 @@ class PrimerScreen extends StatelessWidget {
           child: Align(
             alignment: Alignment.topCenter,
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
+              constraints: const BoxConstraints(maxWidth: 720),
               child: ListView(
                 padding: const EdgeInsets.all(UiSpacing.lg),
                 children: [
-                  if (module != null && module.isNotEmpty) ...[
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: _ModuleChip(module: module),
-                    ),
-                    const SizedBox(height: UiSpacing.sm),
-                  ],
                   Text(
                     page.title,
                     style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                       color: UiColors.textPrimary,
+                      fontSize: 28,
+                      height: 1.25,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
-                  const SizedBox(height: UiSpacing.lg),
-                  RecallHeroPanel(
+                  if (module != null && module.isNotEmpty) ...[
+                    const SizedBox(height: UiSpacing.sm),
+                    Text(
+                      module,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: UiColors.textMuted,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: UiSpacing.xl),
+                  KeyedSubtree(
                     key: const Key('recall_primer_hero'),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -117,30 +122,4 @@ class PrimerScreen extends StatelessWidget {
       ),
     );
   }
-}
-
-class _ModuleChip extends StatelessWidget {
-  final String module;
-
-  const _ModuleChip({required this.module});
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(
-      horizontal: UiSpacing.sm,
-      vertical: UiSpacing.xs,
-    ),
-    decoration: BoxDecoration(
-      color: UiColors.primaryMuted,
-      borderRadius: BorderRadius.circular(UiRadii.pill),
-    ),
-    child: Text(
-      module,
-      style: const TextStyle(
-        color: UiColors.primary,
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
-      ),
-    ),
-  );
 }

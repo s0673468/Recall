@@ -212,15 +212,16 @@ void main() {
 
     expect(find.byKey(const ValueKey('recall_shell')), findsOneWidget);
     expect(find.byKey(const Key('recall_study_card')), findsOneWidget);
-    expect(find.byKey(const ValueKey('study_catch_up_offer')), findsOneWidget);
+    expect(find.byKey(const ValueKey('study_catch_up_offer')), findsNothing);
+    expect(find.text('Large due backlog'), findsNothing);
 
-    await tester.tap(find.text('Show all'));
-    await tester.pumpAndSettle();
     await tester.tap(find.text('Show answer'));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('study_rating_bar')), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Flag card'));
+    await tester.tap(find.byTooltip('More options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Flag card'));
     await tester.pumpAndSettle();
     expect(find.text('Flag this card'), findsOneWidget);
     await tester.tap(find.text('Confusing'));
@@ -241,6 +242,11 @@ void main() {
     await tester.tap(navigationLabel('Decks'));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('recall_deck_hero')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('recall_deck_search')),
+      'Portuguese',
+    );
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const ValueKey('recall_deck_row_Portuguese')),
       500,
@@ -266,6 +272,20 @@ void main() {
           matching: find.byType(Scrollable),
         )
         .first;
+    await tester.ensureVisible(
+      find.byKey(const PageStorageKey('recall_stats_disclosure_forecast')),
+    );
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byKey(
+              const PageStorageKey('recall_stats_disclosure_forecast'),
+            ),
+            matching: find.byType(ListTile),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const ValueKey('stats_section_content_forecast')),
       500,
@@ -275,6 +295,20 @@ void main() {
       find.byKey(const ValueKey('stats_section_content_forecast')),
       findsOneWidget,
     );
+    await tester.ensureVisible(
+      find.byKey(const PageStorageKey('recall_stats_disclosure_concepts')),
+    );
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byKey(
+              const PageStorageKey('recall_stats_disclosure_concepts'),
+            ),
+            matching: find.byType(ListTile),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
       find.byKey(const Key('recall_concepts_panel')),
       500,
@@ -308,7 +342,9 @@ void main() {
 
     await tester.tap(navigationLabel('Study'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Settings'));
+    await tester.tap(find.byTooltip('More options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     expect(find.text('Scheduling'), findsOneWidget);
     expect(find.text('Daily reminder'), findsNothing);
@@ -407,6 +443,16 @@ void main() {
             matching: find.byType(Scrollable),
           )
           .first;
+      final forecastDisclosure = find.byKey(
+        const PageStorageKey('recall_stats_disclosure_forecast'),
+      );
+      await tester.ensureVisible(forecastDisclosure);
+      await tester.tap(
+        find
+            .descendant(of: forecastDisclosure, matching: find.byType(ListTile))
+            .first,
+      );
+      await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.byKey(const ValueKey('stats_section_error_forecast')),
         500,
@@ -416,6 +462,16 @@ void main() {
         find.byKey(const ValueKey('stats_section_error_forecast')),
         findsOneWidget,
       );
+      final conceptsDisclosure = find.byKey(
+        const PageStorageKey('recall_stats_disclosure_concepts'),
+      );
+      await tester.ensureVisible(conceptsDisclosure);
+      await tester.tap(
+        find
+            .descendant(of: conceptsDisclosure, matching: find.byType(ListTile))
+            .first,
+      );
+      await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
         find.byKey(const Key('recall_concepts_panel')),
         500,

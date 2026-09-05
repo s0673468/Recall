@@ -4,12 +4,13 @@
 /// Health @ 39caf0d2 — full history preserved in this repo's `main` via
 /// `git subtree split`, and in Health under tag `pre-slim2-2026-07`). It used to
 /// depend on the sibling `health_flutter_shared` path package for ~8–10 generic
-/// UI/auth symbols. Those source files are copied verbatim under
+/// UI/auth symbols. Those source files are retained under
 /// `lib/vendored/src/` and re-exported here so the app builds with ZERO
 /// dependency on any Health repo package.
 ///
 /// Only the symbols Recall actually imported are surfaced. If you need to pull a
-/// fix from upstream Health, re-copy the matching file under `src/` — the
+/// fix from upstream Health, preserve Recall’s local theme integration in the
+/// auth presentation while updating the matching file under `src/` — the
 /// relative structure mirrors the original package.
 library;
 

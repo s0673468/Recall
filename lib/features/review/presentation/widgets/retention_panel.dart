@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
-    show UiScore;
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
 
-/// True-retention panel with a 30/90-day window toggle and, when the log
-/// carries enough interval data, a young vs mature split.
+/// True retention over a chosen window, with the interval cohorts available
+/// when the reader wants the underlying detail.
 class RetentionPanel extends StatelessWidget {
   final RetentionSummary summary;
   final int windowDays;
@@ -22,163 +20,165 @@ class RetentionPanel extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(hero ? UiSpacing.lg : UiSpacing.md),
-      decoration: hero ? buildHeroPanelDecoration() : buildPanelDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'True retention',
-                  style: TextStyle(
-                    color: UiColors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              SegmentedButton<int>(
-                segments: const [
-                  ButtonSegment(value: 30, label: Text('30d')),
-                  ButtonSegment(value: 90, label: Text('90d')),
-                ],
-                selected: {windowDays},
-                showSelectedIcon: false,
-                style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                onSelectionChanged: (s) => onWindowChanged(s.first),
-              ),
-            ],
-          ),
-          const SizedBox(height: UiSpacing.md),
-          if (summary.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: UiSpacing.md),
-              child: Text(
-                'No reviews in this window yet.',
-                style: TextStyle(color: UiColors.textMuted),
-              ),
-            )
-          else ...[
-            _overall(),
-            if (summary.hasCohorts) ...[
-              const SizedBox(height: UiSpacing.md),
-              Row(
-                children: [
-                  Expanded(
-                    child: _cohort(
-                      'Young',
-                      summary.youngRate,
-                      summary.youngTotal,
-                    ),
-                  ),
-                  const SizedBox(
-                    height: 56,
-                    child: VerticalDivider(color: UiColors.borderSubtle),
-                  ),
-                  Expanded(
-                    child: _cohort(
-                      'Mature',
-                      summary.matureRate,
-                      summary.matureTotal,
-                    ),
-                  ),
-                ],
-              ),
-            ] else
-              const Padding(
-                padding: EdgeInsets.only(top: UiSpacing.sm),
-                child: Text(
-                  'Young/mature split needs more interval history.',
-                  style: TextStyle(color: UiColors.textMuted, fontSize: 11),
-                ),
-              ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _overall() {
-    final rate = summary.overallRate ?? 0;
-    final color = UiScore.ratioTier(rate);
-    return Column(
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
+    child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: UiSpacing.md,
+          runSpacing: UiSpacing.xs,
           children: [
             Text(
-              '${(rate * 100).round()}%',
-              style: TextStyle(
-                color: color,
-                fontSize: hero ? 44 : 34,
-                fontWeight: FontWeight.w700,
-              ),
+              'True retention',
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
-            const SizedBox(width: UiSpacing.sm),
-            Expanded(
-              child: Text(
-                'recalled · ${summary.passed}/${summary.total} reviews',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
-              ),
+            DropdownButton<int>(
+              key: const Key('recall_retention_window'),
+              value: windowDays,
+              underline: const SizedBox.shrink(),
+              borderRadius: BorderRadius.circular(UiRadius.md),
+              style: Theme.of(context).textTheme.bodySmall,
+              items: const [
+                DropdownMenuItem(value: 30, child: Text('30 days')),
+                DropdownMenuItem(value: 90, child: Text('90 days')),
+              ],
+              onChanged: (window) {
+                if (window != null) onWindowChanged(window);
+              },
             ),
           ],
         ),
+        const SizedBox(height: UiSpacing.md),
+        if (summary.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: UiSpacing.md),
+            child: Text(
+              'No reviews in this window yet.',
+              style: TextStyle(color: UiColors.textMuted),
+            ),
+          )
+        else ...[
+          _overall(context),
+          const SizedBox(height: UiSpacing.sm),
+          ExpansionTile(
+            key: const PageStorageKey('recall_retention_cohorts'),
+            maintainState: true,
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.only(bottom: UiSpacing.sm),
+            title: Text(
+              'Young and mature cards',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            children: [
+              if (summary.hasCohorts)
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    final narrow =
+                        constraints.maxWidth < 320 ||
+                        MediaQuery.textScalerOf(context).scale(14) > 18;
+                    final cohorts = [
+                      _cohort(
+                        context,
+                        'Young',
+                        summary.youngRate,
+                        summary.youngTotal,
+                      ),
+                      _cohort(
+                        context,
+                        'Mature',
+                        summary.matureRate,
+                        summary.matureTotal,
+                      ),
+                    ];
+                    if (narrow) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: cohorts,
+                      );
+                    }
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final cohort in cohorts) Expanded(child: cohort),
+                      ],
+                    );
+                  },
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.only(bottom: UiSpacing.sm),
+                  child: Text(
+                    'Young/mature split needs more interval history.',
+                    style: TextStyle(color: UiColors.textMuted),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
+    ),
+  );
+
+  Widget _overall(BuildContext context) {
+    final rate = summary.overallRate ?? 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            '${(rate * 100).round()}%',
+            style: TextStyle(
+              color: UiColors.textPrimary,
+              fontSize: hero ? 64 : 40,
+              fontWeight: FontWeight.w400,
+              height: 1.1,
+              letterSpacing: -1.5,
+            ),
+          ),
+        ),
         const SizedBox(height: UiSpacing.sm),
+        Text(
+          '${summary.passed} of ${summary.total} scheduled reviews remembered.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.6),
+        ),
+        const SizedBox(height: UiSpacing.lg),
         ClipRRect(
           borderRadius: BorderRadius.circular(UiRadii.pill),
           child: LinearProgressIndicator(
             key: const Key('recall_retention_meter'),
             value: rate.clamp(0, 1),
-            minHeight: 6,
-            backgroundColor: UiColors.secondary,
-            color: color,
+            minHeight: 4,
+            backgroundColor: UiColors.border,
+            color: UiColors.chartTeal,
+            semanticsLabel: 'True retention',
           ),
         ),
       ],
     );
   }
 
-  Widget _cohort(String label, double? rate, int total) {
-    final value = rate == null ? '—' : '${(rate * 100).round()}%';
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        vertical: UiSpacing.sm,
-        horizontal: UiSpacing.md,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: TextStyle(
-              color: rate == null
-                  ? UiColors.textMuted
-                  : UiScore.ratioTier(rate),
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
+  Widget _cohort(BuildContext context, String label, double? rate, int total) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: UiSpacing.xs),
+            Text(
+              rate == null ? '—' : '${(rate * 100).round()}%',
+              style: Theme.of(context).textTheme.titleLarge,
             ),
-          ),
-          Text(
-            '$total reviews',
-            style: const TextStyle(color: UiColors.textMuted, fontSize: 10),
-          ),
-        ],
-      ),
-    );
-  }
+            Text(
+              '$total reviews',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      );
 }

@@ -74,9 +74,11 @@ struct RecallDueProvider: TimelineProvider {
 struct RecallDueWidgetView: View {
   let entry: RecallDueEntry
 
-  private let navy = Color(red: 0.07, green: 0.08, blue: 0.16)
-  private let yellow = Color(red: 0.99, green: 0.88, blue: 0.28)
-  private let muted = Color(red: 0.66, green: 0.67, blue: 0.75)
+  private let canvas = Color(red: 24 / 255, green: 26 / 255, blue: 28 / 255)
+  private let panel = Color(red: 32 / 255, green: 35 / 255, blue: 37 / 255)
+  private let yellow = Color(red: 212 / 255, green: 193 / 255, blue: 141 / 255)
+  private let text = Color(red: 235 / 255, green: 234 / 255, blue: 230 / 255)
+  private let muted = Color(red: 160 / 255, green: 166 / 255, blue: 169 / 255)
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
@@ -97,7 +99,7 @@ struct RecallDueWidgetView: View {
       if let dueCount = entry.dueCount {
         Text("\(dueCount)")
           .font(.system(size: 38, weight: .bold, design: .rounded))
-          .foregroundStyle(.white)
+          .foregroundStyle(text)
           .contentTransition(.numericText())
         Text(dueCount == 1 ? "card due" : "cards due")
           .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -105,7 +107,7 @@ struct RecallDueWidgetView: View {
       } else {
         Text("Open Recall")
           .font(.system(size: 21, weight: .bold, design: .rounded))
-          .foregroundStyle(.white)
+          .foregroundStyle(text)
         Text("to load your due count")
           .font(.caption)
           .foregroundStyle(muted)
@@ -119,7 +121,7 @@ struct RecallDueWidgetView: View {
       .buttonStyle(.borderedProminent)
       .controlSize(.small)
       .tint(yellow)
-      .foregroundStyle(navy)
+      .foregroundStyle(canvas)
 
       if let updatedAt = entry.updatedAt {
         HStack(spacing: 3) {
@@ -131,7 +133,7 @@ struct RecallDueWidgetView: View {
         .lineLimit(1)
       }
     }
-    .containerBackground(navy, for: .widget)
+    .containerBackground(panel, for: .widget)
     .widgetURL(URL(string: "recall://study"))
   }
 }

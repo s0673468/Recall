@@ -21,7 +21,7 @@
        being clipped under the notch / home indicator. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="Recall — spaced-repetition review across all your devices.">
-  <meta name="theme-color" content="#1B1B29">
+  <meta name="theme-color" content="#181A1C">
 
   <!-- Preload the app bundle + CanvasKit engine so they download in parallel
        with the boot script instead of serially after it. `preload` (not
@@ -62,7 +62,7 @@
           d = document.createElement('pre');
           d.id = '__bootErr';
           d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;margin:0;' +
-            'padding:16px;background:#1B1B29;color:#FB923C;' +
+            'padding:16px;background:#181A1C;color:#EBEAE6;' +
             'font:12px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;' +
             'overflow:auto;-webkit-overflow-scrolling:touch;';
           (document.body || document.documentElement).appendChild(d);
@@ -89,12 +89,12 @@
        screen while CanvasKit + fonts load. Removed on Flutter's first frame
        (with a timeout fallback so it can never get stuck). -->
   <style>
-    html, body { height: 100%; margin: 0; background: #1B1B29; }
+    html, body { height: 100%; margin: 0; background: #181A1C; }
     #splash {
       position: fixed; inset: 0; z-index: 1000;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 20px;
-      background: #1B1B29;
+      background: #181A1C;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       opacity: 1; transition: opacity .35s ease;
     }
@@ -102,18 +102,15 @@
     #splash .mark {
       width: 56px; height: 56px; border-radius: 16px;
       display: flex; align-items: center; justify-content: center;
-      background:
-        repeating-linear-gradient(transparent 0 3px, rgba(255,255,255,.02) 3px 4px),
-        linear-gradient(135deg, #1F1E3B, #252540);
-      border: 1px solid #33345A;
-      box-shadow: 0 10px 34px #FDE04738;
+      background: #202325;
+      border: 1px solid #363A3D;
     }
     #splash .ring {
       width: 28px; height: 28px; border-radius: 50%;
-      border: 3px solid rgba(255,255,255,.12); border-top-color: #8A90FF;
+      border: 3px solid #363A3D; border-top-color: #D4C18D;
       animation: splash-spin .8s linear infinite;
     }
-    #splash .label { color: #95919E; font-size: 13px; letter-spacing: .2px; }
+    #splash .label { color: #A0A6A9; font-size: 13px; letter-spacing: .2px; }
     @keyframes splash-spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -121,7 +118,7 @@
   <div id="splash" aria-hidden="true">
     <div class="mark">
       <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
-           stroke="#FDE047" stroke-width="2.4" stroke-linecap="round"
+           stroke="#D4C18D" stroke-width="2.4" stroke-linecap="round"
            stroke-linejoin="round">
         <path d="M12 2 2 7l10 5 10-5-10-5Z"/>
         <path d="m2 17 10 5 10-5"/>

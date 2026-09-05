@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../theme/shared_ui_tokens.dart';
-
 /// The one "are you sure?" dialog every app shows before signing out. Returns
 /// true only if the user confirmed.
 Future<bool> confirmSignOut(BuildContext context) async {
   final out = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(
-      backgroundColor: UiColors.panel,
       title: const Text('Sign out?'),
       content: const Text('You can sign back in any time.'),
       actions: [
@@ -63,7 +60,9 @@ class SignOutButton extends StatelessWidget {
       case SignOutButtonVariant.text:
         return TextButton.icon(
           onPressed: () => _handle(context),
-          style: TextButton.styleFrom(foregroundColor: UiColors.textMuted),
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).textTheme.bodySmall?.color,
+          ),
           icon: icon,
           label: Text(label),
         );

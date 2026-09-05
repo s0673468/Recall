@@ -75,7 +75,7 @@ class CardFace extends StatelessWidget {
     dotAll: true,
   );
 
-  TextStyle get _readingStyle => style.merge(uiReadingSerif());
+  TextStyle get _readingStyle => style;
 
   @override
   Widget build(BuildContext context) {

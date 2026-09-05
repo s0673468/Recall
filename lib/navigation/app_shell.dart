@@ -228,9 +228,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       child: Align(
                         alignment: Alignment.topCenter,
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(
-                            maxWidth: UiLayout.maxContent,
-                          ),
+                          constraints: const BoxConstraints(maxWidth: 820),
                           child: SizedBox.expand(
                             child: RecallAnimatedIndexedStack(
                               index: _index,
@@ -245,7 +243,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               );
               return Scaffold(
                 backgroundColor: UiColors.canvas,
-                body: ColoredBox(
+                body: Material(
                   key: const Key('recall_flat_canvas'),
                   color: UiColors.canvas,
                   child: SafeArea(
@@ -351,7 +349,7 @@ class RecallBottomNavigation extends StatelessWidget {
         onTap: onDestinationSelected,
         activeColor: accent,
         inactiveColor: UiColors.textSecondary,
-        backgroundColor: UiColors.sidebar.withValues(alpha: 0.82),
+        backgroundColor: UiColors.canvas.withValues(alpha: 0.94),
         border: const Border(
           top: BorderSide(color: UiColors.borderSubtle, width: 0.5),
         ),
@@ -360,13 +358,13 @@ class RecallBottomNavigation extends StatelessWidget {
     }
     return DecoratedBox(
       decoration: const BoxDecoration(
-        color: UiColors.sidebar,
+        color: UiColors.canvas,
         border: Border(top: BorderSide(color: UiColors.borderSubtle)),
       ),
       child: NavigationBarTheme(
         data: NavigationBarThemeData(
           backgroundColor: Colors.transparent,
-          indicatorColor: UiColors.primaryMuted,
+          indicatorColor: Colors.transparent,
           iconTheme: WidgetStateProperty.resolveWith((states) {
             return IconThemeData(
               color: states.contains(WidgetState.selected)
@@ -380,12 +378,13 @@ class RecallBottomNavigation extends StatelessWidget {
                   ? accent
                   : UiColors.textMuted,
               fontWeight: states.contains(WidgetState.selected)
-                  ? FontWeight.w700
+                  ? FontWeight.w600
                   : FontWeight.w500,
             );
           }),
         ),
         child: NavigationBar(
+          height: 68,
           animationDuration: RecallMotion.duration(context),
           selectedIndex: selectedIndex,
           onDestinationSelected: onDestinationSelected,
@@ -436,7 +435,7 @@ class RecallNavigationRail extends StatelessWidget {
       onDestinationSelected: onDestinationSelected,
       labelType: NavigationRailLabelType.all,
       backgroundColor: UiColors.sidebar,
-      indicatorColor: UiColors.primaryMuted,
+      indicatorColor: Colors.transparent,
       selectedIconTheme: IconThemeData(color: accent),
       unselectedIconTheme: const IconThemeData(color: UiColors.textMuted),
       selectedLabelTextStyle: TextStyle(

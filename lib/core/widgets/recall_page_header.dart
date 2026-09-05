@@ -5,14 +5,14 @@ import '../../theme/ui_tokens.dart';
 /// A consistent, quickly scannable heading for Recall's top-level tabs.
 class RecallPageHeader extends StatelessWidget {
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final String? eyebrow;
   final Widget? trailing;
 
   const RecallPageHeader({
     super.key,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     this.eyebrow,
     this.trailing,
   });
@@ -27,29 +27,25 @@ class RecallPageHeader extends StatelessWidget {
           children: [
             if (eyebrow != null) ...[
               Text(
-                eyebrow!.toUpperCase(),
+                eyebrow!,
                 style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: UiColors.primary,
-                  letterSpacing: 1.1,
-                  fontSize: 10,
+                  color: UiColors.textMuted,
+                  fontSize: 12,
                 ),
               ),
               const SizedBox(height: UiSpacing.xs),
             ],
-            Text(
-              title,
-              style: Theme.of(
-                context,
-              ).textTheme.headlineMedium?.copyWith(fontSize: 28, height: 1.05),
-            ),
-            const SizedBox(height: UiSpacing.sm),
-            Text(
-              subtitle,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: UiColors.textMuted,
-                height: 1.4,
+            Text(title, style: Theme.of(context).textTheme.headlineMedium),
+            if (subtitle != null) ...[
+              const SizedBox(height: UiSpacing.xs),
+              Text(
+                subtitle!,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: UiColors.textMuted,
+                  height: 1.5,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

@@ -43,6 +43,19 @@ class StatsService {
 
   static DateTime dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
+  // A local calendar day can span 23 or 25 hours at a daylight-saving change.
+  // Construct dates from their components so chart buckets and streaks still
+  // advance one calendar date. UTC is only used for counting calendar dates;
+  // every date exposed to the UI remains local.
+  static DateTime _shiftDay(DateTime day, int offset) =>
+      DateTime(day.year, day.month, day.day + offset);
+
+  static int _calendarDaysBetween(DateTime from, DateTime to) => DateTime.utc(
+    to.year,
+    to.month,
+    to.day,
+  ).difference(DateTime.utc(from.year, from.month, from.day)).inDays;
+
   // ── Heatmap ──
 
   /// A GitHub-style grid of daily review counts for the last [weeks] weeks,
@@ -56,8 +69,8 @@ class StatsService {
     final todayDay = dayOnly(today);
     // Sunday index (0=Sun … 6=Sat) — DateTime.weekday is 1=Mon … 7=Sun.
     final sundayOffset = todayDay.weekday % 7;
-    final startOfWeek = todayDay.subtract(Duration(days: sundayOffset));
-    final gridStart = startOfWeek.subtract(Duration(days: (weeks - 1) * 7));
+    final startOfWeek = _shiftDay(todayDay, -sundayOffset);
+    final gridStart = _shiftDay(startOfWeek, -(weeks - 1) * 7);
     final totalDays = weeks * 7;
 
     final counts = <DateTime, int>{};
@@ -71,7 +84,7 @@ class StatsService {
     return [
       for (var i = 0; i < totalDays; i++)
         () {
-          final date = gridStart.add(Duration(days: i));
+          final date = _shiftDay(gridStart, i);
           final count = counts[date] ?? 0;
           return HeatmapDay(
             date: date,
@@ -103,18 +116,14 @@ class StatsService {
     final todayDay = dayOnly(today);
     final counts = List<int>.filled(days, 0);
     for (final due in dueDates) {
-      var index = dayOnly(due).difference(todayDay).inDays;
+      var index = _calendarDaysBetween(todayDay, due);
       if (index < 0) index = 0; // overdue → today's bucket
       if (index >= days) continue; // beyond the horizon
       counts[index] += 1;
     }
     return [
       for (var i = 0; i < days; i++)
-        ForecastDay(
-          date: todayDay.add(Duration(days: i)),
-          index: i,
-          count: counts[i],
-        ),
+        ForecastDay(date: _shiftDay(todayDay, i), index: i, count: counts[i]),
     ];
   }
 
@@ -129,7 +138,7 @@ class StatsService {
     int windowDays = 30,
   }) {
     final todayDay = dayOnly(now);
-    final cutoff = todayDay.subtract(Duration(days: windowDays));
+    final cutoff = _shiftDay(todayDay, -windowDays);
     var total = 0, passed = 0;
     var youngTotal = 0, youngPassed = 0;
     var matureTotal = 0, maturePassed = 0;
@@ -223,7 +232,7 @@ class StatsService {
     int minReviews = conceptMinReviews,
   }) {
     final todayDay = dayOnly(now);
-    final cutoff = todayDay.subtract(Duration(days: window - 1));
+    final cutoff = _shiftDay(todayDay, -(window - 1));
 
     // guid -> node ids, parsed once from the tag strings.
     final guidNodes = <String, List<String>>{};
@@ -287,7 +296,7 @@ class StatsService {
     int windowDays = 30,
   }) {
     final todayDay = dayOnly(today);
-    final cutoff = todayDay.subtract(Duration(days: windowDays));
+    final cutoff = _shiftDay(todayDay, -windowDays);
     final throughToday = reviews.where((r) => !dayOnly(r.at).isAfter(todayDay));
     final windowed = throughToday.where((r) => !dayOnly(r.at).isBefore(cutoff));
     final total = windowed.length;
@@ -302,14 +311,12 @@ class StatsService {
   static int _streak(Set<DateTime> days, DateTime today) {
     if (days.isEmpty) return 0;
     final todayDay = dayOnly(today);
-    var cursor = days.contains(todayDay)
-        ? todayDay
-        : todayDay.subtract(const Duration(days: 1));
+    var cursor = days.contains(todayDay) ? todayDay : _shiftDay(todayDay, -1);
     if (!days.contains(cursor)) return 0;
     var n = 0;
     while (days.contains(cursor)) {
       n++;
-      cursor = cursor.subtract(const Duration(days: 1));
+      cursor = _shiftDay(cursor, -1);
     }
     return n;
   }

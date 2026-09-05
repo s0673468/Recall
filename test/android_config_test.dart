@@ -112,7 +112,7 @@ void main() {
   });
 
   test('Android launch and Flutter window share the graphite canvas', () {
-    expect(colors.readAsStringSync(), contains('#111319'));
+    expect(colors.readAsStringSync(), contains('#181A1C'));
     for (final path in [
       'android/app/src/main/res/values/styles.xml',
       'android/app/src/main/res/values-night/styles.xml',
