@@ -48,7 +48,7 @@ void main() {
       'python -m unittest discover -s tools/flag_report/tests',
       'python -m unittest discover -s scripts/tests',
       'python -m unittest discover -s tools/fsrs_optimize/tests',
-      'xcodebuild test',
+      'python3 tool/run_ios_tests.py --',
       './tool/flutterw build web --release',
     ]) {
       expect(workflow, contains(command));
