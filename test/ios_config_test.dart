@@ -68,9 +68,9 @@ void main() {
   test('iOS launch and Flutter root share the graphite canvas', () {
     for (final storyboard in [launchStoryboard, mainStoryboard]) {
       final xml = storyboard.readAsStringSync();
-      expect(xml, contains('red="0.06666666667"'));
-      expect(xml, contains('green="0.07450980392"'));
-      expect(xml, contains('blue="0.09803921569"'));
+      expect(xml, contains('red="0.09411764706"'));
+      expect(xml, contains('green="0.10196078431"'));
+      expect(xml, contains('blue="0.10980392157"'));
     }
   });
 

@@ -15,7 +15,7 @@
         android:fontFamily="sans-serif-medium"
         android:letterSpacing="0.12"
         android:text="RECALL"
-        android:textColor="#FDE047"
+        android:textColor="#D4C18D"
         android:textSize="11sp" />
 
     <TextView
@@ -24,7 +24,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:fontFamily="sans-serif"
-        android:textColor="#FFFFFF"
+        android:textColor="#EBEAE6"
         android:textSize="34sp"
         android:textStyle="bold" />
 
@@ -32,7 +32,7 @@
         android:id="@+id/recall_widget_label"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textColor="#C7C5D2"
+        android:textColor="#A0A6A9"
         android:textSize="13sp" />
 
     <TextView
@@ -44,7 +44,7 @@
         android:contentDescription="@string/widget_start_study"
         android:gravity="center"
         android:text="@string/widget_start_study"
-        android:textColor="#202038"
+        android:textColor="#181A1C"
         android:textSize="13sp"
         android:textStyle="bold" />
 
@@ -54,6 +54,6 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:maxLines="1"
-        android:textColor="#A9A7B5"
+        android:textColor="#A0A6A9"
         android:textSize="10sp" />
 </LinearLayout>
