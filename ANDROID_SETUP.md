@@ -45,15 +45,27 @@ the repository root:
   --dart-define-from-file=config/supabase.local.json
 ```
 
-Run the native JVM and instrumentation build checks with the checked-in,
+Run the native JVM, Android lint and instrumentation build checks with the checked-in,
 checksum-validated Gradle wrapper. Flutter writes only the ignored local SDK
 path when needed.
 
 ```bash
 cd android
-JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew :app:testDebugUnitTest
+JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew :app:testDebugUnitTest :app:lintDebug
 JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
 ```
+
+These analysis, unit-test, lint and build commands do not need a phone or GitHub
+Actions minutes. Run compatible local work on quiet ger-z through fleet-compute;
+use M1 for Apple-only checks. The public repository runs all seven required CI
+jobs on standard GitHub-hosted runners, with explicit job timeouts. A timeout
+or unavailable runner is a failed or blocked check, never a test pass.
+
+The instrumentation APK above is compiled only. Execute instrumentation tests on
+an explicitly selected disposable emulator with synthetic data, not on your
+daily phone. A successful CI debug APK is not a signed in-place update. Preserve
+the application ID, retained signing identity and local runtime configuration
+when building a personal release.
 
 Use the profile build for on-device frame and startup measurements:
 
