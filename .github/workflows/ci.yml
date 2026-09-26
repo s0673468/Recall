@@ -106,6 +106,15 @@ jobs:
           ./gradlew :app:testDebugUnitTest :app:lintDebug
           :app:assembleDebugAndroidTest --no-daemon --max-workers=2
 
+      - name: Print Android lint findings on failure
+        if: failure()
+        shell: bash
+        run: |
+          report="build/app/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
+          if [[ -f "$report" ]]; then
+            cat "$report"
+          fi
+
   flag-report:
     timeout-minutes: 10
     runs-on: ubuntu-latest
