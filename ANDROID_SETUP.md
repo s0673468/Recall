@@ -5,9 +5,9 @@ scheduler, offline snapshot, durable review and flag outboxes, reminders,
 settings, and statistics as iOS and web. The checked-in Android target is host
 and platform integration code; scheduling and data ownership stay in Dart.
 
-Android is currently a maintained build target, not an active personal release
-target. Routine release and physical-device acceptance are iOS-only; perform
-the Android device steps below only when Android use is explicitly resumed.
+Android is an active personal release target. Keep updates on the existing
+package and signing identity, preserve app data, and perform the device steps
+below only for an explicitly requested installation.
 
 ## Target
 
@@ -103,6 +103,39 @@ a different certificate cannot update an existing installation.
 ./tool/flutterw build apk --release --no-pub \
   --dart-define-from-file=config/supabase.local.json
 ```
+
+### Compile remotely without moving the signing key
+
+For an explicitly staged unsigned artifact, use the same normal release entrypoint
+and existing private runtime configuration on the admitted compute host:
+
+```bash
+ORG_GRADLE_PROJECT_recallUnsignedRelease=true ./tool/flutterw build apk \
+  --release --no-pub --dart-define-from-file=config/supabase.local.json
+```
+
+This opt-in skips signing configuration, keeps the release non-debuggable and
+never falls back to a host debug key. It does not make an installable update.
+Without the opt-in, a release still fails closed when signing is unconfigured.
+Only `true` and `false` are accepted property values. CI runs
+`python3 tool/check_android_release_policy.py` against an unprovisioned checkout
+to exercise both refusal paths and the actual unsigned release configuration.
+Do not use a fixture target,
+change the application ID, generate a key, or transfer the retained keystore.
+
+Tie the artifact to the exact source, declared build number, build command and
+private configuration checksum. On the existing signing host, align that APK
+with the installed Android build tools, sign it with the retained identity,
+then verify the result with `apksigner`. Never distribute or install the unsigned
+intermediate. Run `android-apk-preflight` from the installed Android delivery
+skill, and separately verify minimum SDK, ABI and the requested device behavior.
+Signing and metadata compatibility do not prove session or data preservation.
+
+The tracked build number must exceed the currently installed build. Historical
+builds 2008 and 2009 used CLI overrides while source still declared 2007; build
+2010 reconciles source metadata without dropping their merged application code.
+Future routine releases should advance `pubspec.yaml` instead of hiding drift
+with an undocumented override.
 
 Never uninstall an existing Recall app to work around a signing mismatch: first
 prove its durable review and flag outboxes are empty or safely replayed.
