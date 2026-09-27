@@ -6,11 +6,21 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Staging on a compute host must never provision or fall back to a signing key.
+// The resulting APK needs the retained identity and preflight before delivery.
+val unsignedReleaseArtifact = providers.gradleProperty("recallUnsignedRelease").orNull.let {
+    when (it) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException("recallUnsignedRelease must be true or false")
+    }
+}
+
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 val hasSigningProperties = keystorePropertiesFile.exists()
 
-if (hasSigningProperties) {
+if (hasSigningProperties && !unsignedReleaseArtifact) {
     keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
 }
 
@@ -39,7 +49,8 @@ val usesPrivateReleaseKey =
 val hasReleaseSigning = usesHistoricalContinuityKey || usesPrivateReleaseKey
 
 gradle.taskGraph.whenReady {
-    if (!hasReleaseSigning && allTasks.any { it.name.contains("Release") }) {
+    if (!unsignedReleaseArtifact && !hasReleaseSigning &&
+        allTasks.any { it.name.contains("Release") }) {
         throw GradleException(
             "Release signing requires android/key.properties. " +
                 "Select a complete private keystore or the provisioned " +
@@ -93,10 +104,12 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (usesPrivateReleaseKey) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            isDebuggable = false
+            signingConfig = when {
+                unsignedReleaseArtifact -> null
+                usesPrivateReleaseKey -> signingConfigs.getByName("release")
+                usesHistoricalContinuityKey -> signingConfigs.getByName("debug")
+                else -> null // The task-graph guard refuses an unconfigured release.
             }
         }
     }

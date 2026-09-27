@@ -100,6 +100,9 @@ jobs:
       - name: Compile Android debug host
         run: ./tool/flutterw build apk --debug --no-pub
 
+      - name: Check signed-release refusal and unsigned staging policy
+        run: python3 tool/check_android_release_policy.py
+
       - name: Android unit, lint and instrumentation build checks
         working-directory: android
         run: >-
