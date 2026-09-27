@@ -10,7 +10,10 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = """
 gradle.projectsEvaluated {
-    def app = gradle.rootProject.project(':app')
+    def app = gradle.rootProject.findProject(':app')
+    if (app == null || !app.plugins.hasPlugin('com.android.application')) {
+        return // Init scripts also run in Flutter's included Gradle tooling build.
+    }
     app.tasks.register('probeReleaseStagingPolicy') {
         doLast {
             def release = app.extensions.getByName('android').buildTypes.getByName('release')
