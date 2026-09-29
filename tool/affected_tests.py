@@ -18,6 +18,11 @@ PYTHON_SUITES = (
     "tools/fsrs_optimize/tests",
 )
 NOTICE = "Iteration checks only; not a merge gate. Run the complete required CI on the final head."
+PYTHON_WRAPPERS = {
+    "tools/semantic_review/tests": "test/semantic_review_tool_test.dart",
+    "tools/flag_report/tests": "test/flag_report_test.dart",
+    "scripts/tests": "test/testflight_build_script_test.dart",
+}
 
 
 def changed_files(root, base):
@@ -44,7 +49,7 @@ def dart_tests(root, changed):
             name = path.relative_to(root).as_posix()
             source = path.read_text()
             graph[name] = set()
-            if "dart:io" in source and name in tests:
+            if "dart:io" in source and name in tests and name not in PYTHON_WRAPPERS.values():
                 contracts.add(name)  # File-based contracts don't have Dart import edges.
             # Include every URI in import/export/part directives, including conditional
             # imports. False positives broaden selection; they cannot omit a consumer.
@@ -128,11 +133,8 @@ def commands(selection, lane, concurrency):
             ])
         # These Python suites are already run by their Dart wrapper in a broad
         # Flutter run. Keep standalone suites only when the wrapper is absent.
-        wrappers = {"tools/semantic_review/tests": "test/semantic_review_tool_test.dart",
-                    "tools/flag_report/tests": "test/flag_report_test.dart",
-                    "scripts/tests": "test/testflight_build_script_test.dart"}
         for suite in selection["python_suites"]:
-            if suite in wrappers and (selection["flutter_tests"] == ["test"] or wrappers[suite] in selection["flutter_tests"]):
+            if suite in PYTHON_WRAPPERS and (selection["flutter_tests"] == ["test"] or PYTHON_WRAPPERS[suite] in selection["flutter_tests"]):
                 continue
             steps.append([sys.executable, "-m", "unittest", "discover", "-s", suite, "-p", "test_*.py"])
         if selection["web_build"]:

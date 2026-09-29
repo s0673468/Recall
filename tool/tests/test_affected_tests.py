@@ -77,6 +77,11 @@ class SelectionTests(unittest.TestCase):
         self.write("lib/b.dart", "import 'c.dart' if (dart.library.io) 'a.dart';")
         self.assertIn("test/a_test.dart", selector.plan(self.root, ["lib/a.dart"])["flutter_tests"])
 
+    def test_pure_python_wrapper_is_not_a_dart_file_contract(self):
+        self.write("test/flag_report_test.dart", "import 'dart:io';")
+        self.assertNotIn("test/flag_report_test.dart", selector.plan(self.root, ["lib/a.dart"])["flutter_tests"])
+        self.assertIn("test/flag_report_test.dart", selector.plan(self.root, ["test/flag_report_test.dart"])["flutter_tests"])
+
     def test_no_change_is_explicit_not_a_full_pass(self):
         result = selector.plan(self.root, [])
         self.assertFalse(result["full"])
