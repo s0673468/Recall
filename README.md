@@ -197,6 +197,10 @@ sandbox; web builds perform no export. There is no network telemetry path.
 
 ## Local commands
 
+For conservative checks selected from branch and working-tree changes, see
+[Local test feedback](docs/testing.md). `python3 tool/affected_tests.py --base
+origin/main` prints a plan without executing it; add `--run` for the portable lane.
+
 ```bash
 ./tool/bootstrap_flutter
 ./tool/flutterw pub get
