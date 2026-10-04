@@ -4,6 +4,7 @@ import '../../../../core/platform/recall_platform.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
+import '../../domain/concept_attribution.dart';
 import '../../domain/stats_models.dart';
 import 'primer_screen.dart';
 
@@ -100,6 +101,11 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
           if (moduleA.isEmpty != moduleB.isEmpty) {
             return moduleA.isEmpty ? 1 : -1;
           }
+          // Chat syntheses follow the curriculum modules.
+          final chatA = moduleA == ConceptAttribution.chatModule;
+          final chatB = moduleB == ConceptAttribution.chatModule;
+          if (chatA != chatB) return chatA ? 1 : -1;
+          if (chatA) return b.updatedAt.compareTo(a.updatedAt);
           final moduleOrder = moduleA.compareTo(moduleB);
           return moduleOrder == 0 ? a.title.compareTo(b.title) : moduleOrder;
         });

@@ -3468,6 +3468,38 @@ void main() {
       );
     });
 
+    testWidgets('shows recent chat syntheses in their own section', (
+      tester,
+    ) async {
+      const chatNode = ConceptNodeInfo(
+        nodeId: 'chat-2026-w40-entropy',
+        title: 'Entropy, from your chats',
+        module: 'From your chats',
+      );
+      final chatPage = ConceptPage(
+        nodeId: chatNode.nodeId,
+        title: 'Entropy, from your chats',
+        bodyHtml: '<p>Entropy</p>',
+        updatedAt: DateTime.now().toUtc(),
+      );
+      final primer = ConceptPage(
+        nodeId: node.nodeId,
+        title: 'Vector geometry primer',
+        bodyHtml: 'Projection',
+        updatedAt: DateTime.utc(2026, 7, 29),
+      );
+      final api = _FakeRecallApi([_card()])
+        ..conceptNodes = const [node, chatNode]
+        ..conceptPages = [primer, chatPage];
+
+      await pumpShell(tester, api);
+
+      expect(find.text('From your chats'), findsWidgets);
+      expect(find.byKey(const Key('recall_read_chats')), findsOneWidget);
+      expect(find.text('Entropy, from your chats'), findsOneWidget);
+      expect(find.text('Vector geometry primer'), findsOneWidget);
+    });
+
     testWidgets('shows the empty-today line while keeping the library', (
       tester,
     ) async {

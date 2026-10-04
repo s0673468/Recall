@@ -154,6 +154,10 @@ class ReadScreenState extends State<ReadScreen> {
           final moduleByNode = {
             for (final node in data.conceptNodes) node.nodeId: node.module,
           };
+          final chatPages = ConceptAttribution.recentChatPages(
+            conceptPages: data.conceptPages,
+            now: DateTime.now(),
+          );
           content = ListView(
             key: const ValueKey('read_content'),
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -215,6 +219,31 @@ class ReadScreenState extends State<ReadScreen> {
                         ],
                       ),
                     const SizedBox(height: UiSpacing.xl),
+                    if (chatPages.isNotEmpty) ...[
+                      const RecallSectionLabel(title: 'From your chats'),
+                      const SizedBox(height: UiSpacing.xs),
+                      Text(
+                        'Weekly notes from your ChatGPT and Claude study discussions.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: UiColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: UiSpacing.md),
+                      RecallListGroup(
+                        key: const Key('recall_read_chats'),
+                        children: [
+                          for (final page in chatPages)
+                            PrimerRow(
+                              page: page,
+                              module: moduleByNode[page.nodeId],
+                              onTap: () => unawaited(
+                                _openPrimer(page, data.conceptNodes),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: UiSpacing.xl),
+                    ],
                   ],
                 ),
               ),
@@ -228,6 +257,7 @@ class ReadScreenState extends State<ReadScreen> {
                 browseExcludedNodeIds: {
                   for (final page in todayPages) page.nodeId,
                   for (final page in rereadPages) page.nodeId,
+                  for (final page in chatPages) page.nodeId,
                 },
                 onQueryChanged: (query) {
                   final searching = query.trim().isNotEmpty;

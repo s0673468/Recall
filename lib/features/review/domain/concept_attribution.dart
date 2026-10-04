@@ -11,6 +11,27 @@ abstract final class ConceptAttribution {
   static const String _nodeNoneSentinel = 'none';
   static final RegExp _whitespace = RegExp(r'\s+');
 
+  /// Module of the reading pages the weekly review synthesizes from German's
+  /// ChatGPT and Claude study discussions. Their node ids start with
+  /// [chatNodePrefix]; they carry no card tags.
+  static const String chatModule = 'From your chats';
+  static const String chatNodePrefix = 'chat-';
+
+  /// Chat syntheses updated within the last [days], newest first.
+  static List<ConceptPage> recentChatPages({
+    required List<ConceptPage> conceptPages,
+    required DateTime now,
+    int days = 14,
+  }) {
+    final since = now.subtract(Duration(days: days));
+    return [
+      for (final page in conceptPages)
+        if (page.nodeId.startsWith(chatNodePrefix) &&
+            page.updatedAt.isAfter(since))
+          page,
+    ]..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  }
+
   /// Concept-node ids from a space-delimited `notes.tags` string,
   /// order-preserving and deduplicated, excluding the `node::none` sentinel.
   /// Mirrors `recall_signal.py`'s `node_tags` contract.

@@ -120,4 +120,30 @@ void main() {
       expect(pages.map((p) => p.nodeId), ['m00-a', 'm01-b']);
     });
   });
+
+  group('recentChatPages', () {
+    test('keeps recent chat syntheses, newest first', () {
+      final now = DateTime.utc(2026, 10, 4, 12);
+      ConceptPage page(String id, DateTime updated) => ConceptPage(
+        nodeId: id,
+        title: id,
+        bodyHtml: id,
+        updatedAt: updated,
+      );
+      final pages = ConceptAttribution.recentChatPages(
+        conceptPages: [
+          page('chat-2026-w39-attention', DateTime.utc(2026, 9, 28)),
+          page('chat-2026-w40-entropy', DateTime.utc(2026, 10, 4, 10)),
+          page('chat-2026-w36-old', DateTime.utc(2026, 9, 10)),
+          page('m00-vectors', DateTime.utc(2026, 10, 4)),
+        ],
+        now: now,
+      );
+
+      expect(pages.map((p) => p.nodeId), [
+        'chat-2026-w40-entropy',
+        'chat-2026-w39-attention',
+      ]);
+    });
+  });
 }
