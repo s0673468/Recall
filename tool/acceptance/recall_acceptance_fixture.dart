@@ -36,6 +36,7 @@ class SanitizedRecallDataset {
   static const cardCount = 1600;
   static const reviewCount = 12000;
   static const conceptCount = 72;
+  static const chatNodeId = 'chat-2026-w40-sanitized';
 
   final DateTime now;
   final List<DeckRow> decks;
@@ -125,6 +126,11 @@ class SanitizedRecallDataset {
     ]..sort((a, b) => a.at.compareTo(b.at));
 
     final nodes = <ConceptNodeInfo>[
+      const ConceptNodeInfo(
+        nodeId: chatNodeId,
+        title: 'Sanitized chat synthesis',
+        module: 'From your chats',
+      ),
       for (var i = 1; i <= conceptCount; i++)
         ConceptNodeInfo(
           nodeId: 'concept-$i',
@@ -133,6 +139,14 @@ class SanitizedRecallDataset {
         ),
     ];
     final pages = <ConceptPage>[
+      ConceptPage(
+        nodeId: chatNodeId,
+        title: 'Sanitized chat synthesis',
+        bodyHtml:
+            '<b>Core idea.</b> A synthetic weekly note built from sanitized '
+            'study chats.<br><br>Nothing here comes from a real conversation.',
+        updatedAt: anchor.subtract(const Duration(days: 1)),
+      ),
       for (var i = 1; i <= conceptCount; i++)
         ConceptPage(
           nodeId: 'concept-$i',
@@ -456,6 +470,31 @@ class SanitizedRecallApi extends RecallApi {
     _appliedFlagsByOwner
         .putIfAbsent(_requireOwnerId(), () => <Map<String, dynamic>>[])
         .add(Map<String, dynamic>.from(entry));
+  }
+
+  final Set<String> _dismissedFlagIds = {};
+
+  @override
+  Future<Set<int>> fetchHiddenCardIds() async {
+    _requireOnline();
+    return {
+      for (final flag
+          in _appliedFlagsByOwner[_requireOwnerId()] ??
+              const <Map<String, dynamic>>[])
+        if ((flag['reason'] == 'dislike' || flag['reason'] == 'delete') &&
+            !_dismissedFlagIds.contains(flag['client_id']))
+          (flag['card_id'] as num).toInt(),
+    };
+  }
+
+  @override
+  Future<void> dismissFlag({
+    required int cardId,
+    required String clientEventId,
+  }) async {
+    _requireOnline();
+    _requireOwnerId();
+    _dismissedFlagIds.add(clientEventId);
   }
 
   @override

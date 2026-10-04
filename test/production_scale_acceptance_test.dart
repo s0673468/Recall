@@ -27,8 +27,10 @@ void main() {
     expect(data.cards, hasLength(1600));
     expect(data.decks, hasLength(32));
     expect(data.reviews, hasLength(12000));
-    expect(data.conceptNodes, hasLength(72));
-    expect(data.conceptPages, hasLength(72));
+    // 72 curriculum primers plus one synthetic weekly chat synthesis.
+    expect(data.conceptNodes, hasLength(73));
+    expect(data.conceptPages, hasLength(73));
+    expect(data.conceptPages.first.nodeId, SanitizedRecallDataset.chatNodeId);
     expect(data.conceptPages.last.nodeId, 'concept-72');
     expect(data.conceptPages.last.title.toLowerCase(), contains('concept 72'));
     expect(data.conceptPages.last.title.length, greaterThan(70));
