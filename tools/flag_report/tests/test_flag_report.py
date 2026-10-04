@@ -187,10 +187,17 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual([record.guid for record in records[:2]], ["g-wrong", "g-wrong"])
         self.assertTrue(all(table in {"note_flags", "notes", "decks"} for table, _ in calls))
         output = report.render_markdown(records)
-        for reason in report.FLAG_REASONS:
+        for reason in {row["reason"] for row in FIXED_FLAGS}:
             self.assertIn(f"## {reason}", output)
         self.assertNotIn("private-user", output)
         self.assertNotIn("client_event_id", output)
+
+    def test_one_tap_hide_reasons_are_part_of_the_live_set(self) -> None:
+        rows = [{**FIXED_FLAGS[0], "reason": reason} for reason in ("dislike", "delete")]
+
+        parsed = report._parse_flag_rows(rows)
+
+        self.assertEqual([reason for _, reason, _ in parsed], ["dislike", "delete"])
 
     def test_unknown_reason_fails_closed_before_context_fetch(self) -> None:
         calls: list[tuple[str, dict[str, str]]] = []

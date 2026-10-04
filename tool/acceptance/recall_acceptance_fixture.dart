@@ -542,13 +542,21 @@ class SanitizedRecallApi extends RecallApi {
   }
 
   @override
-  Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) async {
+  Future<List<DateTime>> fetchDueDates({
+    Set<int>? includedDeckIds,
+    Set<int> excludeCardIds = const {},
+  }) async {
     _requireOnline();
     if (scenario == AcceptanceScenario.partialStatsFailure) {
       throw StateError('sanitized forecast failure');
     }
     return _selected(includedDeckIds: includedDeckIds)
-        .where((card) => !card.isNew && card.due != null)
+        .where(
+          (card) =>
+              !card.isNew &&
+              card.due != null &&
+              !excludeCardIds.contains(card.id),
+        )
         .map((card) => card.due!.toLocal())
         .toList();
   }

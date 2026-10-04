@@ -7,7 +7,8 @@ and deck names, and writes Markdown grouped by reason.
 The tool is deliberately GET-only. It never inserts, updates, upserts, or
 deletes cards or flags. The output contains only:
 
-- the exact live reason (`wrong`, `confusing`, `too_long`, or `duplicate`);
+- the exact live reason (`wrong`, `confusing`, `too_long`, `duplicate`, or the one-tap
+  `dislike` / `delete`, which also hide the card until the weekly review);
 - the flag's `guid`;
 - a plain-text front prefix capped at 160 characters, with script/style/SVG
   content removed;

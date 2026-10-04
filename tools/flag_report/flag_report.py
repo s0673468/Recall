@@ -24,7 +24,7 @@ import urllib.request
 from typing import Iterable, Mapping, Sequence
 
 
-FLAG_REASONS = ("wrong", "confusing", "too_long", "duplicate")
+FLAG_REASONS = ("wrong", "confusing", "too_long", "duplicate", "dislike", "delete")
 REQUIRED_SCHEMA = {
     "note_flags": ("card_id", "guid", "reason", "flagged_at"),
     "notes": ("guid", "front", "deck_id"),

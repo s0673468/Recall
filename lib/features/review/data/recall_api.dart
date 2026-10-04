@@ -1088,7 +1088,10 @@ class RecallApi implements ReviewReplayGateway {
   /// so they're excluded here too. [includedDeckIds] scopes the automatic
   /// forecast; leaving it null preserves unrestricted callers. With ~1.2k
   /// cards a plain ranged select is well within limits.
-  Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) async {
+  Future<List<DateTime>> fetchDueDates({
+    Set<int>? includedDeckIds,
+    Set<int> excludeCardIds = const {},
+  }) async {
     if (includedDeckIds != null && includedDeckIds.isEmpty) return const [];
     final select = includedDeckIds == null
         ? 'id,due'
@@ -1124,7 +1127,9 @@ class RecallApi implements ReviewReplayGateway {
     }
     return [
       for (final r in rows)
-        if (r['due'] != null) DateTime.parse(r['due'] as String).toLocal(),
+        if (r['due'] != null &&
+            !excludeCardIds.contains((r['id'] as num?)?.toInt()))
+          DateTime.parse(r['due'] as String).toLocal(),
     ];
   }
 
