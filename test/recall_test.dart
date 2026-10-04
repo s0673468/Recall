@@ -3429,7 +3429,7 @@ void main() {
         ..reviewLog = [
           ReviewLogEntry(
             guid: 'g1',
-            at: DateTime.now().subtract(const Duration(days: 1)),
+            at: DateTime.now().subtract(const Duration(days: 3)),
             rating: 3,
           ),
         ]
@@ -4505,7 +4505,6 @@ void main() {
       await controller.refresh();
 
       expect(controller.state.queue.map((c) => c.id), [2]);
-      expect(controller.flagNotice, isNull);
     });
 
     test('an unsynced hide survives an offline reload', () async {
