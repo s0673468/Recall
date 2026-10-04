@@ -510,9 +510,8 @@ class _FakeRecallApi implements RecallApi {
   Set<int> lastExcludedCardIds = const {};
   Set<int> lastAheadExcludedCardIds = const {};
 
-  /// When true, the hidden-card read returns the state from before any flag
-  /// was inserted, after first running [onFetchHidden].
-  bool staleHiddenRead = false;
+  /// Runs while a hidden-card read is in flight. The read still answers
+  /// with the server state from when it started.
   Future<void> Function()? onFetchHidden;
 
   /// When true, applyFlag commits the flag and then throws, as if the reply
@@ -528,12 +527,13 @@ class _FakeRecallApi implements RecallApi {
   @override
   Future<Set<int>> fetchHiddenCardIds() async {
     if (failFetchHidden) throw StateError('offline');
+    final committed = [...flagged];
+    final dismissed = {...dismissedFlags};
     await onFetchHidden?.call();
-    if (staleHiddenRead) return const {};
     return {
-      for (final flag in flagged)
+      for (final flag in committed)
         if ((flag['reason'] == 'dislike' || flag['reason'] == 'delete') &&
-            !dismissedFlags.contains(flag['client_id']))
+            !dismissed.contains(flag['client_id']))
           (flag['card_id'] as num).toInt(),
     };
   }
@@ -4797,7 +4797,8 @@ void main() {
       await controller.hideCurrent('delete');
       await controller.syncPending();
       expect(await store.flagOutbox(), hasLength(1));
-      final clientId = api.flagged.single['client_id'] as String;
+      // Each retry re-delivers the same event id; the server dedupes it.
+      final clientId = api.flagged.first['client_id'] as String;
 
       await controller.undo();
 
@@ -4847,10 +4848,12 @@ void main() {
       await controller.hideCurrent('dislike');
       // The server read sees the pre-insert state while the flag is
       // delivered and drained from the outbox in the meantime.
-      api
-        ..failApplyFlag = false
-        ..staleHiddenRead = true
-        ..onFetchHidden = () => controller.syncPending();
+      api.onFetchHidden = () async {
+        api
+          ..onFetchHidden = null
+          ..failApplyFlag = false;
+        await controller.syncPending();
+      };
 
       await controller.refresh();
 
