@@ -90,9 +90,7 @@ Future<void> _pumpStudy(WidgetTester tester, _MetadataController c) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildRecallTheme(),
-      home: Scaffold(
-        body: StudyScreen(controller: c, nativeIos: false),
-      ),
+      home: Scaffold(body: StudyScreen(controller: c, nativeIos: false)),
     ),
   );
   await tester.pumpAndSettle();
@@ -182,9 +180,7 @@ void main() {
       final cloze = _MetadataController(
         ReviewState(
           loading: false,
-          queue: [
-            _card(front: 'Capital: {{c1::Paris}}', back: 'France'),
-          ],
+          queue: [_card(front: 'Capital: {{c1::Paris}}', back: 'France')],
         ),
       );
       addTearDown(cloze.dispose);
@@ -273,7 +269,10 @@ void main() {
       controller.emit(controller.state.copyWith(pendingSync: 3, index: 1));
       controller.notice = 'Marked for deletion';
       await tester.pump();
-      expect(identical(tester.widget(find.byType(RecallListGroup)), groupBefore), isTrue);
+      expect(
+        identical(tester.widget(find.byType(RecallListGroup)), groupBefore),
+        isTrue,
+      );
 
       controller.emit(
         controller.state.copyWith(
@@ -284,7 +283,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('recall_deck_row_Math')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('recall_deck_row_Math')),
+        findsOneWidget,
+      );
     });
   });
 }

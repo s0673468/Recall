@@ -103,7 +103,11 @@ class StatsScreenState extends State<StatsScreen> {
   /// tab revisit that serves the same log must not recompute every section.
   final _derived = <String, ({List<Object?> inputs, Object? value})>{};
 
-  T _derive<T>(String key, List<Object?> inputs, T Function() compute) {
+  T _derive<T>(
+    String key,
+    T Function() compute, {
+    required List<Object?> inputs,
+  }) {
     final hit = _derived[key];
     if (hit != null && _sameInputs(hit.inputs, inputs)) return hit.value as T;
     final value = compute();
@@ -128,8 +132,8 @@ class StatsScreenState extends State<StatsScreen> {
       List<ReviewLogEntry> log,
     ) => _derive(
       'tiles',
-      [log, day],
       () => StatsService.tileStats(log, today: today),
+      inputs: [log, day],
     );
     return RefreshIndicator(
       onRefresh: () => reload(refresh: true),
@@ -157,12 +161,12 @@ class StatsScreenState extends State<StatsScreen> {
                 hero: true,
                 summary: _derive(
                   'retention',
-                  [log, day, _retentionWindow],
                   () => StatsService.computeRetention(
                     log,
                     now: today,
                     windowDays: _retentionWindow,
                   ),
+                  inputs: [log, day, _retentionWindow],
                 ),
                 windowDays: _retentionWindow,
                 onWindowChanged: (w) => setState(() => _retentionWindow = w),
@@ -206,8 +210,8 @@ class StatsScreenState extends State<StatsScreen> {
                       ReviewHeatmap(
                         days: _derive(
                           'heatmap',
-                          [log, day],
                           () => StatsService.buildHeatmap(log, today: today),
+                          inputs: [log, day],
                         ),
                       ),
                     ],
@@ -224,8 +228,8 @@ class StatsScreenState extends State<StatsScreen> {
                 builder: (due) => DueForecastChart(
                   days: _derive(
                     'forecast',
-                    [due, day],
                     () => StatsService.buildForecast(due, today: today),
+                    inputs: [due, day],
                   ),
                 ),
               ),
@@ -239,13 +243,13 @@ class StatsScreenState extends State<StatsScreen> {
                 builder: (data) {
                   final result = _derive(
                     'concepts',
-                    [data.log, data.tags, data.nodes, day],
                     () => StatsService.computeNodeRetention(
                       reviewLog: data.log,
                       noteTags: data.tags,
                       conceptNodes: data.nodes,
                       now: today,
                     ),
+                    inputs: [data.log, data.tags, data.nodes, day],
                   );
                   return ConceptRetentionPanel(
                     ranked: result.ranked,

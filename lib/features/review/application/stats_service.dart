@@ -66,12 +66,8 @@ class StatsService {
         refresh: refresh,
       );
 
-  Future<List<ConceptPage>> loadConceptPages({bool refresh = false}) =>
-      _cache.read(
-        'concept_pages',
-        () => api.fetchConceptPages(),
-        refresh: refresh,
-      );
+  Future<List<ConceptPage>> loadConceptPages({bool refresh = false}) => _cache
+      .read('concept_pages', () => api.fetchConceptPages(), refresh: refresh);
 
   static DateTime dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 

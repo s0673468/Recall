@@ -26,8 +26,7 @@ class RecallReadCache {
   static final Expando<RecallReadCache> _byApi = Expando('RecallReadCache');
 
   /// The cache shared by every surface that reads through [api].
-  static RecallReadCache of(RecallApi api) =>
-      _byApi[api] ??= RecallReadCache();
+  static RecallReadCache of(RecallApi api) => _byApi[api] ??= RecallReadCache();
 
   final Duration maxAge;
   final DateTime Function() _clock;

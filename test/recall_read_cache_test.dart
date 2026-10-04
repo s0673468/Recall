@@ -58,19 +58,22 @@ void main() {
     expect(await cache.read('nodes', load), 2);
   });
 
-  test('a review delivered mid-request is not hidden by that request', () async {
-    final gate = Completer<int>();
-    final inFlight = cache.read(
-      'log',
-      () => gate.future,
-      reviewDependent: true,
-    );
-    cache.reviewsChanged();
-    final next = cache.read('log', load, reviewDependent: true);
-    expect(identical(inFlight, next), isFalse);
-    gate.complete(0);
-    expect(await next, 1);
-  });
+  test(
+    'a review delivered mid-request is not hidden by that request',
+    () async {
+      final gate = Completer<int>();
+      final inFlight = cache.read(
+        'log',
+        () => gate.future,
+        reviewDependent: true,
+      );
+      cache.reviewsChanged();
+      final next = cache.read('log', load, reviewDependent: true);
+      expect(identical(inFlight, next), isFalse);
+      gate.complete(0);
+      expect(await next, 1);
+    },
+  );
 
   test('failures are never cached, including synchronous throws', () async {
     await expectLater(

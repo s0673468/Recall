@@ -120,7 +120,10 @@ class CardFace extends StatefulWidget {
         ? _buildClozeSpans(maxWidth)
         : _buildHtmlSpans(html, maxWidth, cacheKey: cacheKey);
 
-    final textSpan = TextSpan(style: _readingStyle, children: _trimSpans(spans));
+    final textSpan = TextSpan(
+      style: _readingStyle,
+      children: _trimSpans(spans),
+    );
     return selectable
         ? SelectableText.rich(textSpan, textAlign: textAlign)
         : Text.rich(textSpan, textAlign: textAlign);
