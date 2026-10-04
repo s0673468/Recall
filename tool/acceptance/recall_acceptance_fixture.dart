@@ -394,12 +394,17 @@ class SanitizedRecallApi extends RecallApi {
     int? deckId,
     Set<int>? includedDeckIds,
     int limit = RecallApi.contentRevalidationBatchSize,
+    Set<int> excludeCardIds = const {},
   }) async {
     _requireOnline();
-    return _selected(
-      deckId: deckId,
-      includedDeckIds: includedDeckIds,
-    ).where((card) => card.contentRevalidationPending).take(limit).toList();
+    return _selected(deckId: deckId, includedDeckIds: includedDeckIds)
+        .where(
+          (card) =>
+              card.contentRevalidationPending &&
+              !excludeCardIds.contains(card.id),
+        )
+        .take(limit)
+        .toList();
   }
 
   @override

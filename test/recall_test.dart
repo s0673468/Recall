@@ -362,9 +362,11 @@ class _FakeRecallApi implements RecallApi {
     int? deckId,
     Set<int>? includedDeckIds,
     int limit = RecallApi.contentRevalidationBatchSize,
+    Set<int> excludeCardIds = const {},
   }) async => [
     for (final card in queue)
       if (card.contentRevalidationPending &&
+          !excludeCardIds.contains(card.id) &&
           (deckId == null || card.deckId == deckId) &&
           (includedDeckIds == null || includedDeckIds.contains(card.deckId)))
         _project(card),
@@ -1791,6 +1793,40 @@ void main() {
       // The background fetch replaced the snapshot with the fresh queue.
       expect(controller.state.queue.single.id, 1);
       expect(controller.state.offline, isFalse);
+    });
+
+    test('a card hidden elsewhere leaves a retained snapshot queue', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 1, name: 'ML')],
+        queue: [_card(id: 1), _card(id: 2)],
+      );
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final gate = Completer<void>();
+      api.beforeQueue = () => gate.future;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+
+      final loading = controller.load();
+      while (controller.state.queue.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      controller.flip(); // studying the snapshot: load keeps this queue
+      api.flagged.add({
+        'card_id': 2,
+        'reason': 'dislike',
+        'client_id': 'other-device',
+      });
+      gate.complete();
+      await loading;
+
+      expect(controller.state.current?.id, 1);
+      expect(controller.state.queue.map((c) => c.id), [1]);
     });
 
     test(

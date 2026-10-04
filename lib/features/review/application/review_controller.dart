@@ -584,12 +584,23 @@ class ReviewController extends ChangeNotifier {
         );
       } else {
         // The user is already studying the snapshot queue; keep their place
-        // and refresh only the metadata. The next load() picks up the rest.
+        // and refresh only the metadata. The next load() picks up the rest,
+        // but cards hidden meanwhile leave the upcoming part right away.
+        final hidden = _hiddenCardIds;
+        final upcoming = _state.index + 1;
+        final retained = _state.queue.length <= upcoming || hidden.isEmpty
+            ? null
+            : [
+                ..._state.queue.take(upcoming),
+                for (final card in _state.queue.skip(upcoming))
+                  if (!hidden.contains(card.id)) card,
+              ];
         _set(
           _state.copyWith(
             loading: false,
             error: null,
             offline: false,
+            queue: retained,
             decks: decks,
             pendingSync: pendingSync,
             globalDueCount: globalDueCount,

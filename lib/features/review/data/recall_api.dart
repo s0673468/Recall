@@ -283,6 +283,7 @@ class RecallApi implements ReviewReplayGateway {
     final revalidationsFuture = _fetchContentRevalidationQueueOrEmpty(
       deckId,
       included,
+      excludeCardIds,
     );
     final nowIso = DateTime.now().toUtc().toIso8601String();
     final introducedToday = await _newCardsIntroducedToday(
@@ -371,11 +372,13 @@ class RecallApi implements ReviewReplayGateway {
   Future<List<ReviewCard>> _fetchContentRevalidationQueueOrEmpty(
     int? deckId,
     Set<int>? includedDeckIds,
+    Set<int> excludeCardIds,
   ) async {
     try {
       return await fetchContentRevalidationQueue(
         deckId: deckId,
         includedDeckIds: includedDeckIds,
+        excludeCardIds: excludeCardIds,
       );
     } catch (_) {
       // The review-log read is an optional priority lane. Its outage must not
@@ -398,6 +401,7 @@ class RecallApi implements ReviewReplayGateway {
     int? deckId,
     Set<int>? includedDeckIds,
     int limit = contentRevalidationBatchSize,
+    Set<int> excludeCardIds = const {},
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
@@ -431,7 +435,10 @@ class RecallApi implements ReviewReplayGateway {
       for (final raw in rows) {
         final card = ReviewCard.fromRow(Map<String, dynamic>.from(raw));
         final revision = contentRevalidationRevision(card.tags);
-        if (revision != null) candidates.add((card: card, revision: revision));
+        // Hidden cards never take a slot in the capped priority batch.
+        if (revision != null && !excludeCardIds.contains(card.id)) {
+          candidates.add((card: card, revision: revision));
+        }
       }
       if (candidates.isNotEmpty) {
         final earliest = candidates
