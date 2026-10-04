@@ -40,8 +40,23 @@ class StatsService {
         reviewDependent: true,
       );
 
-  Future<List<DateTime>> loadDueDates({Set<int>? includedDeckIds}) =>
-      api.fetchDueDates(includedDeckIds: includedDeckIds);
+  Future<List<DateTime>> loadDueDates({
+    Set<int>? includedDeckIds,
+    Set<int> excludeCardIds = const {},
+  }) => api.fetchDueDates(
+    includedDeckIds: includedDeckIds,
+    excludeCardIds: excludeCardIds,
+  );
+
+  /// Cards hidden by an open one-tap flag generate no workload. A failed read
+  /// leaves the forecast unfiltered rather than failing the chart.
+  Future<Set<int>> _hiddenCardIdsOrEmpty() async {
+    try {
+      return await api.fetchHiddenCardIds();
+    } catch (_) {
+      return const {};
+    }
+  }
 
   /// Stats describes the normal automatic workload. Optional curricula stay
   /// visible in Decks and directly reviewable, but do not inflate this chart.
@@ -49,8 +64,12 @@ class StatsService {
       _cache.read(
         'automatic_due_dates',
         () async {
+          final hiddenFuture = _hiddenCardIdsOrEmpty();
           final decks = await api.fetchDecks();
-          return loadDueDates(includedDeckIds: automaticReviewDeckIds(decks));
+          return loadDueDates(
+            includedDeckIds: automaticReviewDeckIds(decks),
+            excludeCardIds: await hiddenFuture,
+          );
         },
         refresh: refresh,
         reviewDependent: true,

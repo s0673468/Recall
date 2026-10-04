@@ -505,6 +505,9 @@ class _FakeRecallApi implements RecallApi {
     if (commitThenThrowFlag) throw StateError('reply lost');
   }
 
+  /// The hidden ids the last forecast read excluded.
+  Set<int> lastDueDateExcludedIds = const {};
+
   /// Client event ids of flags withdrawn through [dismissFlag].
   final List<String> dismissedFlags = [];
 
@@ -621,9 +624,13 @@ class _FakeRecallApi implements RecallApi {
   }
 
   @override
-  Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) async {
+  Future<List<DateTime>> fetchDueDates({
+    Set<int>? includedDeckIds,
+    Set<int> excludeCardIds = const {},
+  }) async {
     if (failDueDates) throw StateError('cards fetch failed');
     lastDueDateDeckIds = includedDeckIds;
+    lastDueDateExcludedIds = excludeCardIds;
     final scheduled = scheduledDueDates;
     if (scheduled != null) {
       return [
@@ -4980,6 +4987,33 @@ void main() {
 
       await controller.undo();
       expect(controller.state.globalDueCount, 3);
+    });
+
+    test('a refresh landing during a hide keeps the hidden card out', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+      api.failApplyFlag = true;
+      final store = _GatedFlagStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      final hiding = controller.hideCurrent('dislike');
+      await Future<void>.delayed(Duration.zero);
+      await controller.refresh(); // lands while the flag write is pending
+      store.enqueueGate.complete();
+      await hiding;
+
+      expect(controller.state.queue.map((c) => c.id), isNot(contains(1)));
+      expect(controller.state.current?.id, isNot(1));
+    });
+
+    test('the forecast leaves out hidden cards', () async {
+      final api = _FakeRecallApi([_card(id: 1)])
+        ..flagged.add({'card_id': 7, 'reason': 'delete', 'client_id': 'x'});
+      final service = StatsService(api);
+
+      await service.loadAutomaticDueDates(refresh: true);
+
+      expect(api.lastDueDateExcludedIds, {7});
     });
 
     test('a rating after a hide makes the rating the undoable action', () async {

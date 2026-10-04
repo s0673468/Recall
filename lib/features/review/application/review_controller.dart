@@ -1404,20 +1404,42 @@ class ReviewController extends ChangeNotifier {
       return;
     }
     _rateInFlight = true;
+    // Mark the interaction and hide the card before any await, so a refresh
+    // landing meanwhile keeps this session's queue and filters the card out.
+    _interactionGeneration++;
+    final wasHidden = _hiddenCardIds.contains(card.id);
+    _hiddenCardIds = {..._hiddenCardIds, card.id};
     notifyListeners();
     try {
-      final clientId = await store.newEventId();
-      await store.enqueueFlag(<String, dynamic>{
-        'card_id': card.id,
-        'guid': card.guid,
-        'reason': reason,
-        'flagged_at': clock().toUtc().toIso8601String(),
-        'device': api.device,
-        'client_id': clientId,
-      });
-      _interactionGeneration++;
-      _hiddenCardIds = {..._hiddenCardIds, card.id};
+      final String clientId;
+      try {
+        clientId = await store.newEventId();
+        await store.enqueueFlag(<String, dynamic>{
+          'card_id': card.id,
+          'guid': card.guid,
+          'reason': reason,
+          'flagged_at': clock().toUtc().toIso8601String(),
+          'device': api.device,
+          'client_id': clientId,
+        });
+      } catch (_) {
+        // Nothing durable was recorded, so the card is not hidden.
+        if (!wasHidden) {
+          _hiddenCardIds = {..._hiddenCardIds}..remove(card.id);
+        }
+        rethrow;
+      }
       unawaited(_quietly(() => store.addHiddenCard(card.id)));
+      if (!identical(_state.current, card)) {
+        // The queue changed under the awaits; the card is flagged and hidden,
+        // but there is no position of ours to advance or restore.
+        _showFlagNotice(
+          reason == 'delete'
+              ? 'Marked for deletion'
+              : 'Hidden until Sunday review',
+        );
+        return;
+      }
       _undo = null;
       _hideUndo = _HideUndoRecord(
         card: card,
@@ -1494,9 +1516,23 @@ class ReviewController extends ChangeNotifier {
       _hideUndo = null;
       _interactionGeneration++;
       final globalDueCount = _state.globalDueCount;
+      final queue = _state.queue;
+      final at = record.index < queue.length &&
+              queue[record.index].id == record.card.id
+          ? null
+          : record.index.clamp(0, queue.length);
       _set(
         _state.copyWith(
-          index: record.index,
+          // Bring back the hidden card itself even if the queue around it
+          // changed, never whatever now sits at the old index.
+          queue: at == null
+              ? null
+              : [
+                  ...queue.take(at).where((c) => c.id != record.card.id),
+                  record.card,
+                  ...queue.skip(at).where((c) => c.id != record.card.id),
+                ],
+          index: at ?? record.index,
           showBack: false,
           globalDueCount:
               !_countsTowardsGlobalDue(record.card) || globalDueCount == null

@@ -50,7 +50,10 @@ class _StatsApi implements RecallApi {
   ];
 
   @override
-  Future<List<DateTime>> fetchDueDates({Set<int>? includedDeckIds}) {
+  Future<List<DateTime>> fetchDueDates({
+    Set<int>? includedDeckIds,
+    Set<int> excludeCardIds = const {},
+  }) {
     this.includedDeckIds = includedDeckIds;
     return dueCompleter.future;
   }

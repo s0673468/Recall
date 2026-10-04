@@ -2,7 +2,9 @@
 """Recall note_flags bridge — the phone-to-desktop feedback loop.
 
 German flags bad cards mid-review in the Recall app (reasons: wrong / confusing /
-too_long / duplicate). Flags land in the anki-review Supabase `note_flags` table.
+too_long / duplicate, plus the one-tap dislike / delete that hide the card until the
+weekly review resolves the flag). Flags land in the anki-review Supabase `note_flags`
+table.
 This script is the ONLY way revision jobs touch that table:
 
   list      open flags joined to the local collection (nid, deck, front) — feed
