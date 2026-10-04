@@ -137,7 +137,7 @@ class ReadScreenState extends State<ReadScreen> {
           );
         } else {
           final data = snapshot.data!;
-          final todayPages = ConceptAttribution.todayConceptPages(
+          final todayPages = ConceptAttribution.recentConceptPages(
             reviewLog: data.reviewLog,
             noteTags: data.noteTags,
             conceptPages: data.conceptPages,
@@ -172,10 +172,10 @@ class ReadScreenState extends State<ReadScreen> {
                   key: const Key('recall_read_today_hero'),
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const RecallSectionLabel(title: 'Today’s reading'),
+                    const RecallSectionLabel(title: 'Recent reading'),
                     const SizedBox(height: UiSpacing.xs),
                     Text(
-                      'Connected to your recent reviews.',
+                      'From what you reviewed in the last 3 days.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: UiColors.textMuted,
                       ),
@@ -196,7 +196,7 @@ class ReadScreenState extends State<ReadScreen> {
                       const SizedBox(height: UiSpacing.md),
                     if (todayPages.isEmpty && rereadPages.isEmpty)
                       const Text(
-                        'Nothing studied yet today. Your full library is ready below.',
+                        'Nothing reviewed in the last 3 days. Your full library is ready below.',
                         style: TextStyle(color: UiColors.textMuted),
                       ),
                     if (todayPages.isNotEmpty)

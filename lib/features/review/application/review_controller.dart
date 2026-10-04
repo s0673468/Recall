@@ -372,12 +372,18 @@ class ReviewController extends ChangeNotifier {
   /// fully reviewable when the learner opens them explicitly.
   Set<int> _automaticDeckIds = const {};
 
+  /// Cards kept out of the queue by an unresolved "don't like" or "delete"
+  /// flag. Server open flags are the truth; the local copy covers flags that
+  /// have not synced yet and offline cold starts.
+  Set<int> _hiddenCardIds = const {};
+
   Future<void> load({int? deckId, bool keepReviewed = true}) async {
     _sessionLoaded = true;
     final loadToken = ++_loadSequence;
     // Reloading (refresh/deck switch) leaves the session the last rating was
     // made in — its queue position stops meaning anything, so undo expires.
     _undo = null;
+    _hideUndo = null;
     // NB: load() always applies [deckId] as the new filter (null = all decks),
     // so any difference from the current filter is a deck switch.
     final deckChanged = deckId != _state.deckFilter;
@@ -403,6 +409,8 @@ class ReviewController extends ChangeNotifier {
     // Cold start: paint the cached snapshot immediately (a card in hand beats
     // a spinner) and let the network fetch below replace it in the background.
     // Not on a deck switch — the snapshot holds the previous filter's queue.
+    _hiddenCardIds = await _loadHiddenCardsQuietly();
+    if (loadToken != _loadSequence) return;
     var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
       final snapshot = await store.loadSnapshot(deckId: _state.deckFilter);
@@ -489,6 +497,7 @@ class ReviewController extends ChangeNotifier {
         globalDueFuture,
         _fetchRecentReviewLog(),
         _fetchReviewActivity(),
+        _refreshHiddenCards(),
       ]);
       final decks = results[1] as List<DeckRow>;
       _automaticDeckIds = automaticReviewDeckIds(decks);
@@ -648,10 +657,12 @@ class ReviewController extends ChangeNotifier {
         .whereType<num>()
         .map((id) => id.toInt())
         .toSet();
-    if (pendingCardIds.isEmpty) return queue;
+    final hidden = _hiddenCardIds;
+    if (pendingCardIds.isEmpty && hidden.isEmpty) return queue;
     return [
       for (final card in queue)
-        if (!pendingCardIds.contains(card.id)) card,
+        if (!pendingCardIds.contains(card.id) && !hidden.contains(card.id))
+          card,
     ];
   }
 
@@ -1159,6 +1170,8 @@ class ReviewController extends ChangeNotifier {
       }
     }
     _undo = undo; // replaces any previous record — undo is single-level
+    _hideUndo = null;
+    _clearFlagNotice();
     final catchUp = await _recordCatchUpReview(card);
     haptics.rating();
     final globalDueCount = _state.globalDueCount;
@@ -1271,7 +1284,13 @@ class ReviewController extends ChangeNotifier {
     'confusing',
     'too_long',
     'duplicate',
+    ...hideReasons,
   };
+
+  /// One-tap reasons that also take the card out of rotation until the weekly
+  /// review resolves the flag: `dislike` asks for a rewrite, `delete` asks for
+  /// removal.
+  static const Set<String> hideReasons = {'dislike', 'delete'};
 
   /// Queue a bad-card report for the current card and kick off a flag flush.
   /// Flagging is a pure side-channel: it never rates, skips, or advances the
@@ -1285,7 +1304,11 @@ class ReviewController extends ChangeNotifier {
   /// across devices — `note_flags` dedupes on it exactly like `review_log`.
   Future<void> flag(String reason) async {
     final card = _state.current;
-    if (card == null || !flagReasons.contains(reason)) return;
+    if (card == null ||
+        !flagReasons.contains(reason) ||
+        hideReasons.contains(reason)) {
+      return;
+    }
     final entry = <String, dynamic>{
       'card_id': card.id,
       'guid': card.guid,
@@ -1295,9 +1318,165 @@ class ReviewController extends ChangeNotifier {
       'client_id': await store.newEventId(),
     };
     await store.enqueueFlag(entry);
+    _showFlagNotice('Flagged for the weekly review');
     // Send behind the UI; a failure (e.g. table not created yet) just leaves
     // the flag queued for the next flush.
     unawaited(_flushFlagOutbox());
+  }
+
+  /// One-tap flag that also hides the card: it is queued durably like any
+  /// flag, the card leaves the queue without a rating, and it stays hidden
+  /// until the weekly review resolves or dismisses the flag. The undo button
+  /// brings it back.
+  Future<void> hideCurrent(String reason) async {
+    final card = _state.current;
+    if (card == null ||
+        !hideReasons.contains(reason) ||
+        _undoInFlight ||
+        _rateInFlight) {
+      return;
+    }
+    _rateInFlight = true;
+    notifyListeners();
+    try {
+      final clientId = await store.newEventId();
+      await store.enqueueFlag(<String, dynamic>{
+        'card_id': card.id,
+        'guid': card.guid,
+        'reason': reason,
+        'flagged_at': clock().toUtc().toIso8601String(),
+        'device': api.device,
+        'client_id': clientId,
+      });
+      _interactionGeneration++;
+      _hiddenCardIds = {..._hiddenCardIds, card.id};
+      unawaited(_quietly(() => store.addHiddenCard(card.id)));
+      _undo = null;
+      _hideUndo = _HideUndoRecord(
+        card: card,
+        index: _state.index,
+        clientId: clientId,
+      );
+      _showFlagNotice(
+        reason == 'delete' ? 'Marked for deletion' : 'Hidden until Sunday review',
+      );
+      haptics.rating();
+      _set(_state.copyWith(index: _state.index + 1, showBack: false));
+      if (_state.isDone) haptics.completion();
+    } finally {
+      _rateInFlight = false;
+      notifyListeners();
+    }
+    unawaited(_flushFlagOutbox());
+  }
+
+  _HideUndoRecord? _hideUndo;
+
+  Future<void> _undoHide(_HideUndoRecord record) async {
+    _undoInFlight = true;
+    notifyListeners();
+    try {
+      // Settle any flag flush so the entry is definitely either still queued
+      // or already delivered.
+      while (_flagFlushTask != null) {
+        try {
+          await _flagFlushTask;
+        } catch (_) {}
+      }
+      if (!identical(_hideUndo, record)) return;
+      final removed = await store.removeFlagEntry(record.clientId);
+      if (!removed) {
+        try {
+          await api.dismissFlag(
+            cardId: record.card.id,
+            clientEventId: record.clientId,
+          );
+        } catch (_) {
+          // Offline: the flag stands and undo stays available for a retry.
+          debugPrint('Recall: flag undo failed (offline?)');
+          return;
+        }
+      }
+      _hideUndo = null;
+      _interactionGeneration++;
+      _hiddenCardIds = {..._hiddenCardIds}..remove(record.card.id);
+      unawaited(_quietly(() => store.removeHiddenCard(record.card.id)));
+      _clearFlagNotice();
+      _set(_state.copyWith(index: record.index, showBack: false));
+      haptics.undo();
+    } finally {
+      _undoInFlight = false;
+      notifyListeners();
+    }
+  }
+
+  Future<Set<int>> _loadHiddenCardsQuietly() async {
+    try {
+      return await store.hiddenCardIds();
+    } catch (_) {
+      return _hiddenCardIds;
+    }
+  }
+
+  /// Replace the hidden set with the server's open hide flags plus any that
+  /// have not synced. A failed read keeps the local set, so an outage never
+  /// brings hidden cards back.
+  Future<void> _refreshHiddenCards() async {
+    final before = _hiddenCardIds;
+    final Set<int> server;
+    try {
+      server = await api.fetchHiddenCardIds();
+    } catch (_) {
+      return;
+    }
+    final List<Map<String, dynamic>> pending;
+    try {
+      pending = await store.flagOutbox();
+    } catch (_) {
+      return;
+    }
+    final next = <int>{
+      ...server,
+      for (final entry in pending)
+        if (hideReasons.contains(entry['reason']) && entry['card_id'] is num)
+          (entry['card_id'] as num).toInt(),
+      // Hidden while this read was in flight.
+      ..._hiddenCardIds.difference(before),
+    };
+    _hiddenCardIds = next;
+    unawaited(_quietly(() => store.replaceHiddenCards(next)));
+  }
+
+  Future<void> _quietly(Future<void> Function() write) async {
+    try {
+      await write();
+    } catch (_) {
+      debugPrint('Recall: hidden-card cache write skipped (non-fatal)');
+    }
+  }
+
+  // --- Flag notice ---
+
+  String? _flagNotice;
+  Timer? _flagNoticeTimer;
+
+  /// A short, inline confirmation for the last flag. It sits in the header,
+  /// never over the rating buttons, and fades on its own.
+  String? get flagNotice => _flagNotice;
+
+  void _showFlagNotice(String text) {
+    _flagNoticeTimer?.cancel();
+    _flagNotice = text;
+    _flagNoticeTimer = Timer(const Duration(seconds: 3), _clearFlagNotice);
+    notifyListeners();
+  }
+
+  void _clearFlagNotice() {
+    _flagNoticeTimer?.cancel();
+    _flagNoticeTimer = null;
+    if (_flagNotice == null) return;
+    _flagNotice = null;
+    notifyListeners();
   }
 
   // --- Undo (single-level, session-only) ---
@@ -1306,7 +1485,7 @@ class ReviewController extends ChangeNotifier {
   bool _undoInFlight = false;
 
   /// Whether the most recent rating can still be reverted.
-  bool get canUndo => _undo != null;
+  bool get canUndo => _undo != null || _hideUndo != null;
 
   /// True while [undo] is completing. [rate] is blocked for the duration and
   /// the UI hides the undo affordance, so nothing can interleave with the
@@ -1323,6 +1502,8 @@ class ReviewController extends ChangeNotifier {
   /// Exclusive: while it runs, [rate] no-ops — otherwise a rating landing
   /// during the awaits below would be rewound over by the queue restore.
   Future<void> undo() async {
+    final hidden = _hideUndo;
+    if (hidden != null && !_undoInFlight) return _undoHide(hidden);
     final u = _undo;
     if (u == null || _undoInFlight) return;
     _undoInFlight = true;
@@ -1555,6 +1736,7 @@ class ReviewController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _flagNoticeTimer?.cancel();
     _authSub?.cancel();
     prefs?.removeListener(_onPrefsChanged);
     super.dispose();
@@ -1587,6 +1769,18 @@ class PendingSyncException implements Exception {
 /// identity of the review, and — once a flush delivers it — the review_log
 /// row id to delete. It also keeps the presentation-only catch-up source and
 /// progress before the rating so undo cannot consume a daily slot permanently.
+class _HideUndoRecord {
+  final ReviewCard card;
+  final int index;
+  final String clientId;
+
+  const _HideUndoRecord({
+    required this.card,
+    required this.index,
+    required this.clientId,
+  });
+}
+
 class _UndoRecord {
   final String clientId;
   final ReviewCard card;

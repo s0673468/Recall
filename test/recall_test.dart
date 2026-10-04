@@ -495,6 +495,35 @@ class _FakeRecallApi implements RecallApi {
     flagged.add(e);
   }
 
+  /// Client event ids of flags withdrawn through [dismissFlag].
+  final List<String> dismissedFlags = [];
+
+  /// When true, the hidden-card read throws (e.g. offline).
+  bool failFetchHidden = false;
+
+  /// When true, dismissing a synced flag throws (offline undo).
+  bool failDismissFlag = false;
+
+  @override
+  Future<Set<int>> fetchHiddenCardIds() async {
+    if (failFetchHidden) throw StateError('offline');
+    return {
+      for (final flag in flagged)
+        if ((flag['reason'] == 'dislike' || flag['reason'] == 'delete') &&
+            !dismissedFlags.contains(flag['client_id']))
+          (flag['card_id'] as num).toInt(),
+    };
+  }
+
+  @override
+  Future<void> dismissFlag({
+    required int cardId,
+    required String clientEventId,
+  }) async {
+    if (failDismissFlag) throw StateError('offline');
+    dismissedFlags.add(clientEventId);
+  }
+
   @override
   Future<void> undoReview(Map<String, dynamic> e) async {
     await beforeUndoReview?.call();
@@ -3375,13 +3404,13 @@ void main() {
       await pumpShell(tester, api);
 
       expect(find.byType(ReadScreen), findsOneWidget);
-      expect(find.text('Today’s reading'), findsOneWidget);
+      expect(find.text('Recent reading'), findsOneWidget);
       expect(find.text('More from the library'), findsOneWidget);
       expect(find.text('Vector geometry primer'), findsOneWidget);
       expect(find.text('M00'), findsOneWidget);
       expect(
         find.text(
-          'Nothing studied yet today. Your full library is ready below.',
+          'Nothing reviewed in the last 3 days. Your full library is ready below.',
         ),
         findsNothing,
       );
@@ -3412,7 +3441,7 @@ void main() {
 
       expect(
         find.text(
-          'Nothing studied yet today. Your full library is ready below.',
+          'Nothing reviewed in the last 3 days. Your full library is ready below.',
         ),
         findsOneWidget,
       );
@@ -4447,6 +4476,130 @@ void main() {
       },
     );
 
+    test('one-tap dislike hides the card without rating it', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      await controller.hideCurrent('dislike');
+
+      expect(controller.state.current?.id, 2);
+      expect(controller.state.reviewedThisSession, 0);
+      expect(api.applied, isEmpty);
+      expect(controller.flagNotice, 'Hidden until Sunday review');
+      expect(controller.canUndo, isTrue);
+      await controller.syncPending();
+      expect(api.flagged.single['reason'], 'dislike');
+      expect(api.flagged.single['card_id'], 1);
+    });
+
+    test('hidden cards stay out of the queue after a reload', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('delete');
+      await controller.syncPending();
+
+      await controller.refresh();
+
+      expect(controller.state.queue.map((c) => c.id), [2]);
+      expect(controller.flagNotice, isNull);
+    });
+
+    test('an unsynced hide survives an offline reload', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.failApplyFlag = true; // flag stays queued locally
+      api.failFetchHidden = true; // server truth unavailable
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+
+      await controller.refresh();
+
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('undo brings back a hidden card and drops its queued flag', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.failApplyFlag = true;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+
+      await controller.undo();
+
+      expect(controller.state.current?.id, 1);
+      expect(controller.canUndo, isFalse);
+      expect(await store.flagOutbox(), isEmpty);
+      expect(await store.hiddenCardIds(), isEmpty);
+    });
+
+    test('undo dismisses a hide flag that already synced', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('delete');
+      await controller.syncPending();
+      final clientId = api.flagged.single['client_id'] as String;
+
+      await controller.undo();
+
+      expect(api.dismissedFlags, [clientId]);
+      expect(controller.state.current?.id, 1);
+      await controller.refresh();
+      expect(controller.state.queue.map((c) => c.id), [1, 2]);
+    });
+
+    test('an offline undo of a synced hide keeps undo available', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+      api.failDismissFlag = true;
+
+      await controller.undo();
+
+      expect(controller.state.current?.id, 2);
+      expect(controller.canUndo, isTrue);
+    });
+
+    test('a rating after a hide makes the rating the undoable action', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      controller.flip();
+      await controller.rate(Rating.good);
+
+      await controller.undo();
+
+      // The rating is undone; the hidden card stays hidden.
+      expect(controller.state.current?.id, 2);
+      expect(controller.state.reviewedThisSession, 0);
+    });
+
+    test('sheet reasons do not hide and one-tap reasons need hideCurrent', () async {
+      final api = _FakeRecallApi([_card(id: 1)]);
+      api.failApplyFlag = true;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      await controller.flag('dislike'); // ignored: hide reasons only hide
+      expect(await store.flagOutbox(), isEmpty);
+      await controller.flag('wrong');
+      expect(controller.state.current?.id, 1);
+      expect(controller.flagNotice, 'Flagged for the weekly review');
+    });
+
     test('a successful flag flush drains the flag outbox', () async {
       final api = _FakeRecallApi([_card(id: 1)]);
       final store = LocalReviewStore();
@@ -4552,7 +4705,7 @@ void main() {
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
-      expect(find.byTooltip('Undo last rating'), findsNothing);
+      expect(find.byTooltip('Undo'), findsNothing);
 
       await tester.tap(find.text('Show answer'));
       await tester.pump();
@@ -4560,14 +4713,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('second question'), findsOneWidget);
-      expect(find.byTooltip('Undo last rating'), findsOneWidget);
+      expect(find.byTooltip('Undo'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Undo last rating'));
+      await tester.tap(find.byTooltip('Undo'));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('first question'), findsOneWidget);
       expect(find.text('Show answer'), findsOneWidget);
-      expect(find.byTooltip('Undo last rating'), findsNothing);
+      expect(find.byTooltip('Undo'), findsNothing);
     });
 
     testWidgets('the all-caught-up screen still offers undo', (tester) async {
@@ -4678,12 +4831,59 @@ void main() {
 
       // Sheet dismissed, confirmation shown, flag queued, review untouched.
       expect(find.text('Confusing'), findsNothing);
-      expect(find.text('Card flagged'), findsOneWidget);
+      expect(find.text('Flagged for the weekly review'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
       final flags = await store.flagOutbox();
       expect(flags.single['reason'], 'confusing');
       expect(flags.single['card_id'], 701);
       expect(controller.state.index, 0);
       expect(controller.state.showBack, isFalse);
+      // The inline notice fades on its own.
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(find.text('Flagged for the weekly review'), findsNothing);
+    });
+
+    testWidgets('the header thumbs-down hides the card in one tap', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      final api = _FakeRecallApi([_card(id: 711), _card(id: 712)]);
+      api.failApplyFlag = true;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
+      await tester.tap(find.byKey(const Key('recall_flag_dislike')));
+      await tester.pumpAndSettle();
+
+      expect(controller.state.current?.id, 712);
+      expect(find.text('Hidden until Sunday review'), findsOneWidget);
+      expect(find.byType(BottomSheet), findsNothing);
+      expect((await store.flagOutbox()).single['reason'], 'dislike');
+
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(controller.state.current?.id, 711);
+      expect(await store.flagOutbox(), isEmpty);
+
+      await tester.tap(find.byKey(const Key('recall_flag_delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Marked for deletion'), findsOneWidget);
+      expect((await store.flagOutbox()).single['reason'], 'delete');
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
     });
 
     testWidgets('cancelling the flag sheet enqueues nothing', (tester) async {
@@ -4721,7 +4921,7 @@ void main() {
       tester,
     ) async {
       // A PWA can be backgrounded/killed the instant the user sees the
-      // confirmation — so "Card flagged" must never appear before the
+      // confirmation — so the flag notice must never appear before the
       // SharedPreferences write has completed. Gate the store's enqueue and
       // assert the sheet stays up (no confirmation) until it lands.
       SharedPreferences.setMockInitialValues({});
@@ -4752,7 +4952,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       // Enqueue still in flight: no confirmation, sheet still open.
-      expect(find.text('Card flagged'), findsNothing);
+      expect(find.text('Flagged for the weekly review'), findsNothing);
       expect(find.text('Wrong'), findsOneWidget);
 
       store.enqueueGate.complete();
@@ -4760,8 +4960,10 @@ void main() {
 
       // Now — and only now — dismissed and confirmed, with the flag queued.
       expect(find.text('Wrong'), findsNothing);
-      expect(find.text('Card flagged'), findsOneWidget);
+      expect(find.text('Flagged for the weekly review'), findsOneWidget);
       expect((await store.flagOutbox()).single['card_id'], 703);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
     });
   });
 

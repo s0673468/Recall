@@ -49,7 +49,7 @@ class RemediationService {
       queue: results[0] as List<LocalRemediationItem>,
       conceptNodes: results[3] as List<ConceptNodeInfo>,
       conceptPages: conceptPages,
-      readTodayPages: ConceptAttribution.todayConceptPages(
+      readTodayPages: ConceptAttribution.recentConceptPages(
         reviewLog: reviewLog,
         noteTags: noteTags,
         conceptPages: conceptPages,

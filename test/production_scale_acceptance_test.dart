@@ -226,7 +226,7 @@ void main() {
     expect(find.text('Flag this card'), findsOneWidget);
     await tester.tap(find.text('Confusing'));
     await tester.pumpAndSettle();
-    expect(find.text('Card flagged'), findsOneWidget);
+    expect(find.text('Flagged for the weekly review'), findsOneWidget);
     expect(api.appliedFlags.single['reason'], 'confusing');
     await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
@@ -234,8 +234,8 @@ void main() {
     await tester.tap(find.text('Good'));
     await tester.pumpAndSettle();
     expect(dependencies.reviewController.state.reviewedThisSession, 1);
-    expect(find.byTooltip('Undo last rating'), findsOneWidget);
-    await tester.tap(find.byTooltip('Undo last rating'));
+    expect(find.byTooltip('Undo'), findsOneWidget);
+    await tester.tap(find.byTooltip('Undo'));
     await tester.pumpAndSettle();
     expect(dependencies.reviewController.state.reviewedThisSession, 0);
 

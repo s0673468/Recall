@@ -48,6 +48,46 @@ abstract final class ConceptAttribution {
     ]..sort((a, b) => a.title.compareTo(b.title));
   }
 
+  /// Primers whose tagged cards were reviewed on any of the last [days] local
+  /// device days, today included. The most recently reviewed come first.
+  static List<ConceptPage> recentConceptPages({
+    required List<ReviewLogEntry> reviewLog,
+    required Map<String, String> noteTags,
+    required List<ConceptPage> conceptPages,
+    required DateTime today,
+    int days = 3,
+  }) {
+    final todayOnly = _dayOnly(today);
+    final firstDay = DateTime(
+      todayOnly.year,
+      todayOnly.month,
+      todayOnly.day - (days - 1),
+    );
+    final lastReviewed = <String, DateTime>{};
+    for (final review in reviewLog) {
+      final day = _dayOnly(review.at);
+      if (day.isBefore(firstDay) || day.isAfter(todayOnly)) continue;
+      final guid = review.guid;
+      if (guid == null) continue;
+      for (final node in nodeTags(noteTags[guid])) {
+        final seen = lastReviewed[node];
+        if (seen == null || review.at.isAfter(seen)) {
+          lastReviewed[node] = review.at;
+        }
+      }
+    }
+
+    return [
+      for (final page in conceptPages)
+        if (lastReviewed.containsKey(page.nodeId)) page,
+    ]..sort((a, b) {
+      final byDay = _dayOnly(
+        lastReviewed[b.nodeId]!,
+      ).compareTo(_dayOnly(lastReviewed[a.nodeId]!));
+      return byDay != 0 ? byDay : a.title.compareTo(b.title);
+    });
+  }
+
   static DateTime _dayOnly(DateTime value) =>
       DateTime(value.year, value.month, value.day);
 }

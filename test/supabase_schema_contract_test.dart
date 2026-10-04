@@ -11,6 +11,7 @@ void main() {
     'scripts/supabase/migrations/004_concept_pages.sql',
     'scripts/supabase/migrations/005_review_event_idempotency.sql',
     'scripts/supabase/migrations/006_apply_review_rpc.sql',
+    'scripts/supabase/migrations/007_note_flags_hide_reasons.sql',
   ];
 
   const tableContracts = <String>{
@@ -120,6 +121,7 @@ void main() {
       contains("'wrong', 'confusing', 'too_long', 'duplicate'"),
     );
     expect(migrations, contains("'open', 'resolved', 'dismissed'"));
+    expect(migrations, contains("'dislike', 'delete'"));
     expect(migrations, contains('on conflict (card_id, client_event_id)'));
     expect(migrations, contains('security invoker'));
     expect(migrations, contains('c.suspended = false'));
@@ -131,6 +133,7 @@ void main() {
       'scripts/supabase/verify/verify_apply_review.sql',
       'scripts/supabase/rollback/006_drop_apply_review_rpc.sql',
       'scripts/supabase/rollback/005_drop_event_unique_indexes.sql',
+      'scripts/supabase/rollback/007_restore_flag_reasons.sql',
     ];
     for (final path in paths) {
       expect(File(path).existsSync(), isTrue, reason: '$path must exist');

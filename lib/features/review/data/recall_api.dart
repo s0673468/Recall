@@ -904,6 +904,39 @@ class RecallApi implements ReviewReplayGateway {
     }
   }
 
+  /// Card ids with an open "don't like" or "delete" flag. Those cards stay out
+  /// of the queue until the weekly review resolves or dismisses the flag.
+  Future<Set<int>> fetchHiddenCardIds() async {
+    final rows = await client
+        .from('note_flags')
+        .select('card_id')
+        .eq('status', 'open')
+        .inFilter('reason', const ['dislike', 'delete']);
+    return {
+      for (final row in rows)
+        if (row['card_id'] is num) (row['card_id'] as num).toInt(),
+    };
+  }
+
+  /// Withdraw a synced one-tap flag the user undid. Only an open flag with
+  /// this exact client event id is touched, so a flag the weekly review
+  /// already handled keeps its resolution.
+  Future<void> dismissFlag({
+    required int cardId,
+    required String clientEventId,
+  }) async {
+    await client
+        .from('note_flags')
+        .update({
+          'status': 'dismissed',
+          'resolved_at': DateTime.now().toUtc().toIso8601String(),
+          'resolution': 'undone in Recall',
+        })
+        .eq('card_id', cardId)
+        .eq('client_event_id', clientEventId)
+        .eq('status', 'open');
+  }
+
   bool _idempotencySchemaUnavailable(PostgrestException error) =>
       error.code == '42703' ||
       error.code == '42P10' ||

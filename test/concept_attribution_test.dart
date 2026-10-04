@@ -69,4 +69,55 @@ void main() {
       expect(pages, isEmpty);
     });
   });
+
+  group('recentConceptPages', () {
+    final today = DateTime(2026, 7, 29, 12);
+    ConceptPage page(String id, String title) => ConceptPage(
+      nodeId: id,
+      title: title,
+      bodyHtml: title,
+      updatedAt: DateTime.utc(2026, 7, 29),
+    );
+
+    test('covers today and the two days before, newest first', () {
+      final pages = ConceptAttribution.recentConceptPages(
+        reviewLog: [
+          _review('today', DateTime(2026, 7, 29, 8), 3),
+          _review('yesterday', DateTime(2026, 7, 28, 23, 59), 3),
+          _review('two-days', DateTime(2026, 7, 27, 0, 1), 3),
+          _review('too-old', DateTime(2026, 7, 26, 23, 59), 3),
+        ],
+        noteTags: {
+          'today': 'node::m02-c',
+          'yesterday': 'node::m00-a',
+          'two-days': 'node::m01-b',
+          'too-old': 'node::m03-d',
+        },
+        conceptPages: [
+          page('m00-a', 'A primer'),
+          page('m01-b', 'B primer'),
+          page('m02-c', 'C primer'),
+          page('m03-d', 'D primer'),
+        ],
+        today: today,
+      );
+
+      expect(pages.map((p) => p.nodeId), ['m02-c', 'm00-a', 'm01-b']);
+    });
+
+    test('a node reviewed on several days ranks by its latest review', () {
+      final pages = ConceptAttribution.recentConceptPages(
+        reviewLog: [
+          _review('old', DateTime(2026, 7, 27, 9), 3),
+          _review('new', DateTime(2026, 7, 29, 9), 3),
+          _review('mid', DateTime(2026, 7, 28, 9), 3),
+        ],
+        noteTags: {'old': 'node::m00-a', 'new': 'node::m00-a', 'mid': 'node::m01-b'},
+        conceptPages: [page('m01-b', 'B primer'), page('m00-a', 'A primer')],
+        today: today,
+      );
+
+      expect(pages.map((p) => p.nodeId), ['m00-a', 'm01-b']);
+    });
+  });
 }

@@ -204,13 +204,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Vector geometry'), findsOneWidget);
       expect(find.text('Models and generalization'), findsOneWidget);
-      expect(find.text('Today’s reading'), findsOneWidget);
+      expect(find.text('Recent reading'), findsOneWidget);
       await tester.enterText(
         find.byKey(const Key('recall_primer_search')),
         'M00',
       );
       await tester.pumpAndSettle();
-      expect(find.text('Today’s reading'), findsNothing);
+      expect(find.text('Recent reading'), findsNothing);
       expect(find.text('Vector geometry'), findsOneWidget);
       expect(find.text('Models and generalization'), findsNothing);
       await tester.tap(find.text('Vector geometry'));
@@ -224,7 +224,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Clear search'));
       await tester.pumpAndSettle();
-      expect(find.text('Today’s reading'), findsOneWidget);
+      expect(find.text('Recent reading'), findsOneWidget);
       expect(find.text('Vector geometry'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

@@ -29,6 +29,7 @@ class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
+  static const _hiddenCardsKey = 'recall_hidden_cards_v1';
   static const catchUpKey = 'recall_catch_up_v1';
   static const remediationKey = 'recall_remediation_v1';
   static const installIdKey = 'recall_install_id_v1';
@@ -364,6 +365,21 @@ class LocalReviewStore {
     });
   }
 
+  /// Drop the queued flag whose `client_id` matches — an undone one-tap flag
+  /// that has not synced yet. Returns false when a flush already delivered it.
+  Future<bool> removeFlagEntry(Object clientId) {
+    final key = _storageKey(_flagOutboxKey);
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final list = _readList(prefs, key);
+      final before = list.length;
+      list.removeWhere((e) => e['client_id'] == clientId);
+      if (list.length == before) return false;
+      await _writeList(prefs, key, list);
+      return true;
+    });
+  }
+
   /// Drop the first [count] flags — the prefix a flag flush just delivered —
   /// and return how many remain. Flags enqueued while the flush ran are
   /// appended after that prefix, so they survive untouched.
@@ -384,6 +400,54 @@ class LocalReviewStore {
       await _writeList(prefs, key, remaining);
       return remaining.length;
     });
+  }
+
+  // --- Hidden cards ---
+  //
+  // Cards German flagged as "don't like" or "delete" stay out of the queue
+  // until the weekly review resolves the flag. The server's open flags are the
+  // truth; this local set only covers the gap before a flag syncs and offline
+  // cold starts, and is replaced wholesale whenever the server set is known.
+
+  Future<Set<int>> hiddenCardIds() {
+    final key = _storageKey(_hiddenCardsKey);
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      return _readHidden(prefs, key);
+    });
+  }
+
+  Future<void> addHiddenCard(int cardId) =>
+      _updateHidden((ids) => ids..add(cardId));
+
+  Future<void> removeHiddenCard(int cardId) =>
+      _updateHidden((ids) => ids..remove(cardId));
+
+  Future<void> replaceHiddenCards(Set<int> cardIds) =>
+      _updateHidden((_) => {...cardIds});
+
+  Future<void> _updateHidden(Set<int> Function(Set<int>) change) {
+    final key = _storageKey(_hiddenCardsKey);
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final next = change(_readHidden(prefs, key));
+      final ids = next.toList()..sort();
+      final written = await prefs.setString(key, jsonEncode(ids));
+      if (!written) throw LocalOutboxWriteException(key);
+    });
+  }
+
+  Set<int> _readHidden(SharedPreferences prefs, String key) {
+    final raw = prefs.getString(key);
+    if (raw == null) return <int>{};
+    try {
+      return {
+        for (final id in jsonDecode(raw) as List)
+          if (id is num) id.toInt(),
+      };
+    } catch (_) {
+      return <int>{};
+    }
   }
 
   /// Read the local, disposable primer-remediation queue for [now]'s local
@@ -465,6 +529,7 @@ class LocalReviewStore {
     final flagOutboxKey = _storageKey(_flagOutboxKey);
     final catchUpStorageKey = _storageKey(catchUpKey);
     final remediationStorageKey = _storageKey(remediationKey);
+    final hiddenStorageKey = _storageKey(_hiddenCardsKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       for (final key in prefs.getKeys()) {
@@ -476,6 +541,7 @@ class LocalReviewStore {
       await prefs.remove(flagOutboxKey);
       await prefs.remove(catchUpStorageKey);
       await prefs.remove(remediationStorageKey);
+      await prefs.remove(hiddenStorageKey);
     });
   }
 
