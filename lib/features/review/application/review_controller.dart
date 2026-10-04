@@ -516,7 +516,22 @@ class ReviewController extends ChangeNotifier {
       ]);
       final decks = results[1] as List<DeckRow>;
       _automaticDeckIds = automaticReviewDeckIds(decks);
-      final fetchedQueue = results[2] as List<ReviewCard>;
+      var fetchedQueue = results[2] as List<ReviewCard>;
+      if (!setEquals(knownHidden, _hiddenCardIds)) {
+        // The fresh hide set differs from the cached one the query excluded
+        // (flags from another device, or ones the review resolved). Refetch
+        // once so hidden cards never use up the limits and resolved ones
+        // return now rather than on the next load.
+        fetchedQueue = await api.fetchQueue(
+          deckId: _state.deckFilter,
+          includedDeckIds: _state.deckFilter == null
+              ? automaticReviewDeckIds(decks)
+              : null,
+          newLimit: active.newLimitForDeck(_state.deckFilter),
+          order: active.newOrder,
+          excludeCardIds: _hiddenCardIds,
+        );
+      }
       final fetchedDue = results[3] as ({int count, DateTime updatedAt})?;
       final recent = results[4] as _RecentReviews;
       final recentReviews = recent.reviews;
@@ -1402,7 +1417,16 @@ class ReviewController extends ChangeNotifier {
         reason == 'delete' ? 'Marked for deletion' : 'Hidden until Sunday review',
       );
       haptics.rating();
-      _set(_state.copyWith(index: _state.index + 1, showBack: false));
+      final globalDueCount = _state.globalDueCount;
+      _set(
+        _state.copyWith(
+          index: _state.index + 1,
+          showBack: false,
+          globalDueCount: !_countsTowardsGlobalDue(card) || globalDueCount == null
+              ? globalDueCount
+              : (globalDueCount - 1).clamp(0, globalDueCount),
+        ),
+      );
       if (_state.isDone) haptics.completion();
     } finally {
       _rateInFlight = false;
@@ -1425,6 +1449,7 @@ class ReviewController extends ChangeNotifier {
         } catch (_) {}
       }
       if (!identical(_hideUndo, record)) return;
+      final loadSequence = _loadSequence;
       // A queued entry is not proof the server never saw the flag: a commit
       // whose reply was lost stays queued too. Drop the entry, then always
       // withdraw on the server, queueing a durable withdrawal when offline.
@@ -1446,12 +1471,28 @@ class ReviewController extends ChangeNotifier {
           return;
         }
       }
-      _hideUndo = null;
-      _interactionGeneration++;
       _hiddenCardIds = {..._hiddenCardIds}..remove(record.card.id);
       unawaited(_quietly(() => store.removeHiddenCard(record.card.id)));
       _clearFlagNotice();
-      _set(_state.copyWith(index: record.index, showBack: false));
+      if (!identical(_hideUndo, record) || loadSequence != _loadSequence) {
+        // A reload or deck switch replaced the queue while the withdrawal
+        // was in flight; the flag is withdrawn, but there is no position to
+        // restore in the new queue.
+        return;
+      }
+      _hideUndo = null;
+      _interactionGeneration++;
+      final globalDueCount = _state.globalDueCount;
+      _set(
+        _state.copyWith(
+          index: record.index,
+          showBack: false,
+          globalDueCount:
+              !_countsTowardsGlobalDue(record.card) || globalDueCount == null
+              ? globalDueCount
+              : globalDueCount + 1,
+        ),
+      );
       haptics.undo();
     } finally {
       _undoInFlight = false;
@@ -1459,12 +1500,39 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
+  /// The cached hidden set plus the durable flag outbox. The outbox is the
+  /// crash-safe record: the cache write after a hide is best-effort, so a
+  /// queued hide must count even if the cache never saw it.
   Future<Set<int>> _loadHiddenCardsQuietly() async {
+    Set<int> cached;
     try {
-      return await store.hiddenCardIds();
+      cached = await store.hiddenCardIds();
     } catch (_) {
-      return _hiddenCardIds;
+      cached = _hiddenCardIds;
     }
+    try {
+      return _applyPendingFlagOps(cached, await store.flagOutbox());
+    } catch (_) {
+      return cached;
+    }
+  }
+
+  /// Apply queued hides and withdrawals, oldest first, on top of [base].
+  Set<int> _applyPendingFlagOps(
+    Set<int> base,
+    List<Map<String, dynamic>> pending,
+  ) {
+    final next = <int>{...base};
+    for (final entry in pending) {
+      final id = entry['card_id'];
+      if (id is! num) continue;
+      if (entry['op'] == dismissOp) {
+        next.remove(id.toInt());
+      } else if (hideReasons.contains(entry['reason'])) {
+        next.add(id.toInt());
+      }
+    }
+    return next;
   }
 
   /// Replace the hidden set with the server's open hide flags plus any that
@@ -1480,22 +1548,23 @@ class ReviewController extends ChangeNotifier {
     } catch (_) {
       return;
     }
-    final Set<int> server;
+    Set<int>? server;
     try {
       server = await api.fetchHiddenCardIds();
     } catch (_) {
+      server = null;
+    }
+    if (server == null) {
+      // Offline: the server truth is unknown, but queued hides are durable
+      // and must still apply on top of the local set.
+      final local = _applyPendingFlagOps(_hiddenCardIds, pending);
+      if (!setEquals(local, _hiddenCardIds)) {
+        _hiddenCardIds = local;
+        unawaited(_quietly(() => store.replaceHiddenCards(local)));
+      }
       return;
     }
-    final next = <int>{...server};
-    for (final entry in pending) {
-      final id = entry['card_id'];
-      if (id is! num) continue;
-      if (entry['op'] == dismissOp) {
-        next.remove(id.toInt());
-      } else if (hideReasons.contains(entry['reason'])) {
-        next.add(id.toInt());
-      }
-    }
+    final next = _applyPendingFlagOps(server, pending);
     // Hides and undos that happened while the reads were in flight win.
     next
       ..addAll(_hiddenCardIds.difference(before))

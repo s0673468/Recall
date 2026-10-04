@@ -538,11 +538,15 @@ class _FakeRecallApi implements RecallApi {
     };
   }
 
+  /// Awaited inside dismissFlag — lets tests hold a withdrawal open.
+  Future<void> Function()? beforeDismissFlag;
+
   @override
   Future<void> dismissFlag({
     required int cardId,
     required String clientEventId,
   }) async {
+    await beforeDismissFlag?.call();
     if (failDismissFlag) throw StateError('offline');
     dismissedFlags.add(clientEventId);
   }
@@ -4859,6 +4863,80 @@ void main() {
 
       expect(api.flagged.single['card_id'], 1);
       expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('flags from another device are excluded before the limits', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+        ..flagged.add({
+          'card_id': 1,
+          'reason': 'dislike',
+          'client_id': 'other-device',
+        });
+      final store = LocalReviewStore(); // no hidden cache on this device
+      final controller = build(api, store: store);
+
+      await controller.load();
+
+      expect(api.queueFetches, 2); // refetched with the fresh hide set
+      expect(api.lastExcludedCardIds, {1});
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('a queued hide survives a lost cache write and an offline load', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+        ..failApplyFlag = true
+        ..failFetchHidden = true;
+      final store = LocalReviewStore();
+      // The durable flag landed but the best-effort cache write did not.
+      await store.enqueueFlag({
+        'card_id': 1,
+        'guid': 'g1',
+        'reason': 'delete',
+        'client_id': 'queued-hide',
+      });
+      final controller = build(api, store: store);
+
+      await controller.load();
+
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('an undo finishing after a reload leaves the new queue alone', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+      final gate = Completer<void>();
+      api.beforeDismissFlag = () => gate.future;
+
+      final undo = controller.undo();
+      await Future<void>.delayed(Duration.zero);
+      api.beforeDismissFlag = null;
+      await controller.refresh(); // replaces the queue mid-withdrawal
+      gate.complete();
+      await undo;
+
+      expect(controller.state.index, 0);
+      expect(controller.state.queue.map((c) => c.id), [1, 2, 3]);
+    });
+
+    test('hiding a due card lowers the global due count; undo restores it', () async {
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.utc(2026, 7, 13, 12);
+      final api = _FakeRecallApi(
+        [_card(state: 2, due: now.subtract(const Duration(hours: 1)))],
+      )..deckCounts = const {1: (due: 3, neu: 0)};
+      final controller = build(api, clock: () => now);
+      await controller.load();
+      expect(controller.state.globalDueCount, 3);
+
+      await controller.hideCurrent('dislike');
+      expect(controller.state.globalDueCount, 2);
+
+      await controller.undo();
+      expect(controller.state.globalDueCount, 3);
     });
 
     test('a rating after a hide makes the rating the undoable action', () async {
