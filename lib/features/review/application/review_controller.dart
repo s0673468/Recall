@@ -23,6 +23,10 @@ import 'review_haptics.dart';
 import 'review_state.dart';
 
 typedef ReviewActivitySnapshot = ({bool available, DateTime? latest});
+typedef _RecentReviews = ({
+  List<ReviewLogEntry> reviews,
+  ReviewActivitySnapshot activity,
+});
 
 /// Owns auth + the study session: gates on the signed-in user, loads the queue
 /// (cloud, with an offline cache fallback), flips cards, schedules ratings with
@@ -499,16 +503,16 @@ class ReviewController extends ChangeNotifier {
         decksFuture,
         queueFuture,
         globalDueFuture,
-        _fetchRecentReviewLog(),
-        _fetchReviewActivity(),
+        _fetchRecentReviews(),
         _refreshHiddenCards(),
       ]);
       final decks = results[1] as List<DeckRow>;
       _automaticDeckIds = automaticReviewDeckIds(decks);
       final fetchedQueue = results[2] as List<ReviewCard>;
       final fetchedDue = results[3] as ({int count, DateTime updatedAt})?;
-      final recentReviews = results[4] as List<ReviewLogEntry>;
-      final fetchedActivity = results[5] as ReviewActivitySnapshot;
+      final recent = results[4] as _RecentReviews;
+      final recentReviews = recent.reviews;
+      final fetchedActivity = recent.activity;
       // A partial flush is deliberately swallowed by _flushOnce. Re-read the
       // outbox after that attempt and never serve a card whose review remains
       // queued locally, even if the server fetch still returns it.
@@ -682,14 +686,30 @@ class ReviewController extends ChangeNotifier {
         card,
   ];
 
-  Future<List<ReviewLogEntry>> _fetchRecentReviewLog() async {
+  /// One read serves both the catch-up threshold (the recent window) and the
+  /// reminder's review-activity signal (the last two days), which used to be
+  /// two separate review-log round-trips on every load.
+  Future<_RecentReviews> _fetchRecentReviews() async {
+    // Mirror the server-side window RecallApi.fetchReviewLog(days: 2) applied.
+    final activitySince = DateTime.now().toUtc().subtract(
+      const Duration(days: _reviewActivityDays),
+    );
     try {
-      return await api.fetchReviewLog(days: BacklogCatchUp.recentDays);
+      final reviews = await api.fetchReviewLog(days: BacklogCatchUp.recentDays);
+      return (
+        reviews: reviews,
+        activity: _reviewActivity(reviews, activitySince),
+      );
     } catch (_) {
       // Recent activity only tunes the offer threshold. A stats/history
       // outage must never turn a healthy study queue into an offline screen.
+      // Reminder eligibility fails closed when activity is unavailable, and a
+      // later foreground refresh retries.
       debugPrint('Recall: catch-up activity unavailable (non-fatal)');
-      return const [];
+      return (
+        reviews: const <ReviewLogEntry>[],
+        activity: (available: false, latest: null),
+      );
     }
   }
 
@@ -864,19 +884,18 @@ class ReviewController extends ChangeNotifier {
   /// A two-day window covers every local calendar day even around UTC offsets
   /// and daylight-saving transitions; the API returns local timestamps for the
   /// day comparison performed by the reminder controller.
-  Future<ReviewActivitySnapshot> _fetchReviewActivity() async {
-    try {
-      final reviews = await api.fetchReviewLog(days: 2);
-      DateTime? latest;
-      for (final review in reviews) {
-        if (latest == null || review.at.isAfter(latest)) latest = review.at;
-      }
-      return (available: true, latest: latest?.toLocal());
-    } catch (_) {
-      // Reminder eligibility fails closed when activity is unavailable. The
-      // queue itself remains usable, and a later foreground refresh retries.
-      return (available: false, latest: null);
+  static const int _reviewActivityDays = 2;
+
+  ReviewActivitySnapshot _reviewActivity(
+    List<ReviewLogEntry> reviews,
+    DateTime since,
+  ) {
+    DateTime? latest;
+    for (final review in reviews) {
+      if (review.at.isBefore(since)) continue;
+      if (latest == null || review.at.isAfter(latest)) latest = review.at;
     }
+    return (available: true, latest: latest?.toLocal());
   }
 
   Future<void> _refreshFsrsSettings(int loadToken) async {

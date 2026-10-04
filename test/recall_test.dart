@@ -1332,6 +1332,48 @@ void main() {
       },
     );
 
+    test('one review-log read serves catch-up and review activity', () async {
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.now();
+      final api = _FakeRecallApi([_card()])
+        ..reviewLog = [
+          ReviewLogEntry(at: now.subtract(const Duration(days: 5)), rating: 3),
+        ];
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+      expect(api.reviewLogReads, [BacklogCatchUp.recentDays]);
+      // The activity signal keeps the server's former 2-day window: an older
+      // review is known activity but never counts as the latest review.
+      expect(controller.state.reviewActivityKnown, isTrue);
+      expect(controller.state.lastReviewedAt, isNull);
+
+      final recent = now.subtract(const Duration(hours: 3));
+      api.reviewLog = [
+        ReviewLogEntry(at: now.subtract(const Duration(days: 5)), rating: 3),
+        ReviewLogEntry(at: recent, rating: 3),
+      ];
+      await controller.refresh();
+      expect(api.reviewLogReads, hasLength(2));
+      expect(controller.state.lastReviewedAt, recent);
+
+      api.failReviewLog = true;
+      final failing = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(failing.dispose);
+      await failing.load();
+      expect(failing.state.queue, isNotEmpty);
+      expect(failing.state.reviewActivityKnown, isFalse);
+    });
+
     test(
       'keepGoing cards due later do not reduce the cloud due count',
       () async {
