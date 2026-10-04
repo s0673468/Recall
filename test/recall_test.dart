@@ -4918,7 +4918,12 @@ void main() {
       gate.complete();
       await undo;
 
+      // The reloaded queue keeps its own position instead of jumping to the
+      // old index; the withdrawn card returns on the next load.
       expect(controller.state.index, 0);
+      expect(controller.state.isDone, isFalse);
+      expect(controller.canUndo, isFalse);
+      await controller.refresh();
       expect(controller.state.queue.map((c) => c.id), [1, 2, 3]);
     });
 
