@@ -387,6 +387,10 @@ class ReviewController extends ChangeNotifier {
   /// have not synced yet and offline cold starts.
   Set<int> _hiddenCardIds = const {};
 
+  /// Hides whose durable flag write is still in flight. A reload that
+  /// re-reads storage meanwhile must keep them hidden.
+  final Set<int> _hidesInFlight = {};
+
   Future<void> load({int? deckId, bool keepReviewed = true}) async {
     _sessionLoaded = true;
     final loadToken = ++_loadSequence;
@@ -419,7 +423,7 @@ class ReviewController extends ChangeNotifier {
     // Cold start: paint the cached snapshot immediately (a card in hand beats
     // a spinner) and let the network fetch below replace it in the background.
     // Not on a deck switch — the snapshot holds the previous filter's queue.
-    _hiddenCardIds = await _loadHiddenCardsQuietly();
+    _hiddenCardIds = {...await _loadHiddenCardsQuietly(), ..._hidesInFlight};
     if (loadToken != _loadSequence) return;
     var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
@@ -1409,6 +1413,7 @@ class ReviewController extends ChangeNotifier {
     _interactionGeneration++;
     final wasHidden = _hiddenCardIds.contains(card.id);
     _hiddenCardIds = {..._hiddenCardIds, card.id};
+    _hidesInFlight.add(card.id);
     notifyListeners();
     try {
       final String clientId;
@@ -1424,15 +1429,30 @@ class ReviewController extends ChangeNotifier {
         });
       } catch (_) {
         // Nothing durable was recorded, so the card is not hidden.
+        _hidesInFlight.remove(card.id);
         if (!wasHidden) {
           _hiddenCardIds = {..._hiddenCardIds}..remove(card.id);
         }
         rethrow;
       }
+      _hidesInFlight.remove(card.id);
       unawaited(_quietly(() => store.addHiddenCard(card.id)));
-      if (!identical(_state.current, card)) {
-        // The queue changed under the awaits; the card is flagged and hidden,
-        // but there is no position of ours to advance or restore.
+      if (_state.current?.id != card.id) {
+        // The queue changed under the awaits and now shows another card.
+        // Drop the hidden one from what is still ahead; there is no position
+        // of ours to advance or restore.
+        final upcoming = _state.index + 1;
+        if (_state.queue.skip(upcoming).any((c) => c.id == card.id)) {
+          _set(
+            _state.copyWith(
+              queue: [
+                ..._state.queue.take(upcoming),
+                for (final c in _state.queue.skip(upcoming))
+                  if (c.id != card.id) c,
+              ],
+            ),
+          );
+        }
         _showFlagNotice(
           reason == 'delete'
               ? 'Marked for deletion'
@@ -1615,7 +1635,8 @@ class ReviewController extends ChangeNotifier {
     // Hides and undos that happened while the reads were in flight win.
     next
       ..addAll(_hiddenCardIds.difference(before))
-      ..removeAll(before.difference(_hiddenCardIds));
+      ..removeAll(before.difference(_hiddenCardIds))
+      ..addAll(_hidesInFlight);
     _hiddenCardIds = next;
     unawaited(_quietly(() => store.replaceHiddenCards(next)));
   }
