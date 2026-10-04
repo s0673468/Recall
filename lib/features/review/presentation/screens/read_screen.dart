@@ -178,6 +178,31 @@ class ReadScreenState extends State<ReadScreen> {
                   key: const Key('recall_read_today_hero'),
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (chatPages.isNotEmpty) ...[
+                      const RecallSectionLabel(title: 'From your chats'),
+                      const SizedBox(height: UiSpacing.xs),
+                      Text(
+                        'Weekly notes from your ChatGPT and Claude study discussions.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: UiColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: UiSpacing.md),
+                      RecallListGroup(
+                        key: const Key('recall_read_chats'),
+                        children: [
+                          for (final page in chatPages)
+                            PrimerRow(
+                              page: page,
+                              module: moduleByNode[page.nodeId],
+                              onTap: () => unawaited(
+                                _openPrimer(page, data.conceptNodes),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: UiSpacing.xl),
+                    ],
                     const RecallSectionLabel(title: 'Recent reading'),
                     const SizedBox(height: UiSpacing.xs),
                     Text(
@@ -219,31 +244,6 @@ class ReadScreenState extends State<ReadScreen> {
                         ],
                       ),
                     const SizedBox(height: UiSpacing.xl),
-                    if (chatPages.isNotEmpty) ...[
-                      const RecallSectionLabel(title: 'From your chats'),
-                      const SizedBox(height: UiSpacing.xs),
-                      Text(
-                        'Weekly notes from your ChatGPT and Claude study discussions.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: UiColors.textMuted,
-                        ),
-                      ),
-                      const SizedBox(height: UiSpacing.md),
-                      RecallListGroup(
-                        key: const Key('recall_read_chats'),
-                        children: [
-                          for (final page in chatPages)
-                            PrimerRow(
-                              page: page,
-                              module: moduleByNode[page.nodeId],
-                              onTap: () => unawaited(
-                                _openPrimer(page, data.conceptNodes),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: UiSpacing.xl),
-                    ],
                   ],
                 ),
               ),
