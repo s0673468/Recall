@@ -3,9 +3,13 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:health_anki_flutter/core/widgets/listenable_selector.dart';
+import 'package:health_anki_flutter/core/widgets/recall_surfaces.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/application/review_state.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
+import 'package:health_anki_flutter/features/review/data/recall_api.dart';
+import 'package:health_anki_flutter/features/review/presentation/screens/decks_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
@@ -110,6 +114,16 @@ List<InlineSpan> _faceSpans(WidgetTester tester) {
   ];
 }
 
+class _CountsApi implements RecallApi {
+  @override
+  Future<Map<int, ({int due, int neu})>> fetchDeckCounts() async => {
+    1: (due: 3, neu: 1),
+  };
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   group('study card face rebuild boundary', () {
     testWidgets(
@@ -201,6 +215,76 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Old front'), findsNothing);
       expect(find.text('New front'), findsOneWidget);
+    });
+  });
+
+  group('narrow controller listeners', () {
+    testWidgets('ListenableSelector rebuilds only when its slice changes', (
+      tester,
+    ) async {
+      final source = ValueNotifier<(int, int)>((0, 0));
+      addTearDown(source.dispose);
+      var builds = 0;
+      await tester.pumpWidget(
+        ListenableSelector<int>(
+          listenable: source,
+          selector: () => source.value.$1,
+          builder: (context, value) {
+            builds++;
+            return Text('$value', textDirection: TextDirection.ltr);
+          },
+        ),
+      );
+      expect(builds, 1);
+
+      source.value = (0, 1); // unrelated slice
+      await tester.pump();
+      expect(builds, 1);
+
+      source.value = (2, 1);
+      await tester.pump();
+      expect(builds, 2);
+      expect(find.text('2'), findsOneWidget);
+    });
+
+    testWidgets('Decks ignores ticks that leave the deck list unchanged', (
+      tester,
+    ) async {
+      const decks = [DeckRow(deckId: 1, name: 'ML')];
+      final controller = _MetadataController(
+        ReviewState(loading: false, decks: decks, queue: [_card()]),
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildRecallTheme(),
+          home: Scaffold(
+            body: DecksScreen(
+              controller: controller,
+              api: _CountsApi(),
+              onStudyDeck: (_) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final groupBefore = tester.widget(find.byType(RecallListGroup));
+
+      controller.emit(controller.state.copyWith(pendingSync: 3, index: 1));
+      controller.notice = 'Marked for deletion';
+      await tester.pump();
+      expect(identical(tester.widget(find.byType(RecallListGroup)), groupBefore), isTrue);
+
+      controller.emit(
+        controller.state.copyWith(
+          decks: const [
+            DeckRow(deckId: 1, name: 'ML'),
+            DeckRow(deckId: 2, name: 'Math'),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('recall_deck_row_Math')), findsOneWidget);
     });
   });
 }
