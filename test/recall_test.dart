@@ -1802,7 +1802,13 @@ void main() {
         decks: const [DeckRow(deckId: 1, name: 'ML')],
         queue: [_card(id: 1), _card(id: 2)],
       );
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      // Card 2 was hidden on another device; this device's cache lacks it.
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+        ..flagged.add({
+          'card_id': 2,
+          'reason': 'dislike',
+          'client_id': 'other-device',
+        });
       final gate = Completer<void>();
       api.beforeQueue = () => gate.future;
       final controller = ReviewController(
@@ -1816,12 +1822,8 @@ void main() {
       while (controller.state.queue.isEmpty) {
         await Future<void>.delayed(Duration.zero);
       }
+      expect(controller.state.queue.map((c) => c.id), [1, 2]);
       controller.flip(); // studying the snapshot: load keeps this queue
-      api.flagged.add({
-        'card_id': 2,
-        'reason': 'dislike',
-        'client_id': 'other-device',
-      });
       gate.complete();
       await loading;
 
