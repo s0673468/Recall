@@ -27,7 +27,12 @@ import '../../domain/inline_html.dart';
 /// When a face carries display (block) math the client can't render inline, the
 /// server-side [ReviewCard.latexSvg] is drawn via flutter_svg instead — a
 /// defensive fallback (the column is empty in practice).
-class CardFace extends StatelessWidget {
+///
+/// The composed rich text is memoized per mounted face. A parent rebuild that
+/// leaves every input unchanged (a sync badge tick, a flag notice, a rating
+/// lock) reuses the identical text widget, so inline HTML, cloze, and TeX are
+/// not re-parsed and the paragraph is not laid out again.
+class CardFace extends StatefulWidget {
   final String html;
   final bool hasLatex;
   final TextStyle style;
@@ -78,38 +83,47 @@ class CardFace extends StatelessWidget {
   TextStyle get _readingStyle => style;
 
   @override
-  Widget build(BuildContext context) {
-    // Display-math fallback: a LaTeX face with NO delimiter the client can
-    // render (`\( … \)`, `\[ … \]`, or `$$ … $$`), but a server-rendered SVG
-    // available. Whenever any renderable delimiter is present the client path
-    // wins. Empty in practice.
-    final svg = latexSvg;
+  State<CardFace> createState() => _CardFaceState();
+
+  /// Whether [other] renders exactly the same face at the same width. The
+  /// reveal flag only matters for cloze markup, so flipping a plain card does
+  /// not rebuild its front.
+  bool _rendersSameAs(CardFace other) {
+    if (identical(this, other)) return true;
+    if (html != other.html ||
+        hasLatex != other.hasLatex ||
+        latexSvg != other.latexSvg ||
+        cacheKey != other.cacheKey ||
+        selectable != other.selectable ||
+        textAlign != other.textAlign ||
+        style != other.style) {
+      return false;
+    }
+    return revealCloze == other.revealCloze || !isCloze(html);
+  }
+
+  /// Display-math fallback: a LaTeX face with NO delimiter the client can
+  /// render (`\( … \)`, `\[ … \]`, or `$$ … $$`), but a server-rendered SVG
+  /// available. Whenever any renderable delimiter is present the client path
+  /// wins. Empty in practice.
+  bool get _usesSvgFallback {
+    if (!hasLatex || latexSvg == null) return false;
     final hasRenderableMath =
         html.contains(r'\(') || html.contains(r'\[') || html.contains(r'$$');
-    if (hasLatex && svg != null && !hasRenderableMath) {
-      return _SvgFace(svg: svg, style: _readingStyle);
-    }
+    return !hasRenderableMath;
+  }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxWidth = constraints.hasBoundedWidth
-            ? constraints.maxWidth
-            : double.infinity;
-        // Cloze first (only when present), then HTML, then math. A face with no
-        // cloze markup takes the exact HTML+math path unchanged.
-        final spans = isCloze(html)
-            ? _buildClozeSpans(maxWidth)
-            : _buildHtmlSpans(html, maxWidth, cacheKey: cacheKey);
+  Widget _buildRichText(double maxWidth) {
+    // Cloze first (only when present), then HTML, then math. A face with no
+    // cloze markup takes the exact HTML+math path unchanged.
+    final spans = isCloze(html)
+        ? _buildClozeSpans(maxWidth)
+        : _buildHtmlSpans(html, maxWidth, cacheKey: cacheKey);
 
-        final textSpan = TextSpan(
-          style: _readingStyle,
-          children: _trimSpans(spans),
-        );
-        return selectable
-            ? SelectableText.rich(textSpan, textAlign: textAlign)
-            : Text.rich(textSpan, textAlign: textAlign);
-      },
-    );
+    final textSpan = TextSpan(style: _readingStyle, children: _trimSpans(spans));
+    return selectable
+        ? SelectableText.rich(textSpan, textAlign: textAlign)
+        : Text.rich(textSpan, textAlign: textAlign);
   }
 
   /// Build spans for a plain (non-cloze) HTML string — the Spec-8 pipeline,
@@ -372,6 +386,40 @@ class CardFace extends StatelessWidget {
     return s.replaceFirstMapped(
       RegExp(r'^\s*([.,;:!?])'),
       (m) => '⁠${m.group(1)}',
+    );
+  }
+}
+
+class _CardFaceState extends State<CardFace> {
+  CardFace? _memoFace;
+  double? _memoWidth;
+  Widget? _memo;
+
+  @override
+  Widget build(BuildContext context) {
+    final face = widget;
+    if (face._usesSvgFallback) {
+      return _SvgFace(svg: face.latexSvg!, style: face._readingStyle);
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.hasBoundedWidth
+            ? constraints.maxWidth
+            : double.infinity;
+        final memo = _memo;
+        final memoFace = _memoFace;
+        if (memo != null &&
+            memoFace != null &&
+            _memoWidth == maxWidth &&
+            face._rendersSameAs(memoFace)) {
+          return memo;
+        }
+        final built = face._buildRichText(maxWidth);
+        _memoFace = face;
+        _memoWidth = maxWidth;
+        _memo = built;
+        return built;
+      },
     );
   }
 }
