@@ -49,14 +49,14 @@ class ReadScreenState extends State<ReadScreen> {
     _fetch();
   }
 
-  void _fetch() {
+  void _fetch({bool refresh = false}) {
     _searching = false;
     _data = () async {
       final results = await Future.wait<Object>([
-        _service.loadReviewLog(),
-        _service.loadNoteTags(),
-        _service.loadConceptNodes(),
-        _service.loadConceptPages(),
+        _service.loadReviewLog(refresh: refresh),
+        _service.loadNoteTags(refresh: refresh),
+        _service.loadConceptNodes(refresh: refresh),
+        _service.loadConceptPages(refresh: refresh),
         widget.store.remediationQueue(),
       ]);
       return (
@@ -69,8 +69,10 @@ class ReadScreenState extends State<ReadScreen> {
     }();
   }
 
-  Future<void> reload() async {
-    setState(_fetch);
+  /// Tab revisits reuse fresh shared data; pull-to-refresh forces a network
+  /// read.
+  Future<void> reload({bool refresh = false}) async {
+    setState(() => _fetch(refresh: refresh));
     await _data.catchError(
       (_) => (
         reviewLog: <ReviewLogEntry>[],
@@ -100,7 +102,7 @@ class ReadScreenState extends State<ReadScreen> {
 
   @override
   Widget build(BuildContext context) => RefreshIndicator(
-    onRefresh: reload,
+    onRefresh: () => reload(refresh: true),
     child: FutureBuilder<_ReadData>(
       future: _data,
       builder: (context, snapshot) {
@@ -137,7 +139,7 @@ class ReadScreenState extends State<ReadScreen> {
           );
         } else {
           final data = snapshot.data!;
-          final todayPages = ConceptAttribution.todayConceptPages(
+          final todayPages = ConceptAttribution.recentConceptPages(
             reviewLog: data.reviewLog,
             noteTags: data.noteTags,
             conceptPages: data.conceptPages,
@@ -152,6 +154,10 @@ class ReadScreenState extends State<ReadScreen> {
           final moduleByNode = {
             for (final node in data.conceptNodes) node.nodeId: node.module,
           };
+          final chatPages = ConceptAttribution.recentChatPages(
+            conceptPages: data.conceptPages,
+            now: DateTime.now(),
+          );
           content = ListView(
             key: const ValueKey('read_content'),
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -172,10 +178,35 @@ class ReadScreenState extends State<ReadScreen> {
                   key: const Key('recall_read_today_hero'),
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const RecallSectionLabel(title: 'Today’s reading'),
+                    if (chatPages.isNotEmpty) ...[
+                      const RecallSectionLabel(title: 'From your chats'),
+                      const SizedBox(height: UiSpacing.xs),
+                      Text(
+                        'Weekly notes from your ChatGPT and Claude study discussions.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: UiColors.textMuted,
+                        ),
+                      ),
+                      const SizedBox(height: UiSpacing.md),
+                      RecallListGroup(
+                        key: const Key('recall_read_chats'),
+                        children: [
+                          for (final page in chatPages)
+                            PrimerRow(
+                              page: page,
+                              module: moduleByNode[page.nodeId],
+                              onTap: () => unawaited(
+                                _openPrimer(page, data.conceptNodes),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: UiSpacing.xl),
+                    ],
+                    const RecallSectionLabel(title: 'Recent reading'),
                     const SizedBox(height: UiSpacing.xs),
                     Text(
-                      'Connected to your recent reviews.',
+                      'From what you reviewed in the last 3 days.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: UiColors.textMuted,
                       ),
@@ -196,7 +227,7 @@ class ReadScreenState extends State<ReadScreen> {
                       const SizedBox(height: UiSpacing.md),
                     if (todayPages.isEmpty && rereadPages.isEmpty)
                       const Text(
-                        'Nothing studied yet today. Your full library is ready below.',
+                        'Nothing reviewed in the last 3 days. Your full library is ready below.',
                         style: TextStyle(color: UiColors.textMuted),
                       ),
                     if (todayPages.isNotEmpty)
@@ -226,6 +257,7 @@ class ReadScreenState extends State<ReadScreen> {
                 browseExcludedNodeIds: {
                   for (final page in todayPages) page.nodeId,
                   for (final page in rereadPages) page.nodeId,
+                  for (final page in chatPages) page.nodeId,
                 },
                 onQueryChanged: (query) {
                   final searching = query.trim().isNotEmpty;

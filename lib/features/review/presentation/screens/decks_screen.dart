@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/listenable_selector.dart';
 import '../../../../core/widgets/recall_motion.dart';
 import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
@@ -53,10 +54,13 @@ class DecksScreenState extends State<DecksScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ListenableBuilder(
+    // Only the deck list matters here; it is replaced wholesale on each load,
+    // so rating, sync, and notice ticks never rebuild this (often hidden) tab.
+    return ListenableSelector<List<DeckRow>>(
       listenable: widget.controller,
-      builder: (context, _) {
-        final decks = widget.controller.state.decks;
+      selector: () => widget.controller.state.decks,
+      equals: identical,
+      builder: (context, decks) {
         final automaticDeckIds = automaticReviewDeckIds(decks);
         final query = _query.trim().toLowerCase().replaceAll('::', ' ');
         final matches = decks.where(

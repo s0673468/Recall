@@ -41,6 +41,7 @@ Apply each file as one transaction, in this order:
 5. [`migrations/004_concept_pages.sql`](migrations/004_concept_pages.sql)
 6. [`migrations/005_review_event_idempotency.sql`](migrations/005_review_event_idempotency.sql)
 7. [`migrations/006_apply_review_rpc.sql`](migrations/006_apply_review_rpc.sql)
+8. [`migrations/007_note_flags_hide_reasons.sql`](migrations/007_note_flags_hide_reasons.sql)
 
 All migrations are idempotent. Re-running them preserves rows. `000` uses
 `CREATE TABLE IF NOT EXISTS`; it intentionally does not guess how to repair a
@@ -48,7 +49,7 @@ wrongly shaped existing table. The verification step reports drift instead.
 
 ### Fresh project
 
-Create the isolated Recall Supabase project and configure Auth. Apply all seven
+Create the isolated Recall Supabase project and configure Auth. Apply all eight
 migrations before running the importer or releasing a client. Then create the
 private runtime environment with only `SUPABASE_URL`,
 `SUPABASE_SERVICE_KEY`, and `SUPABASE_USER_ID`; do not commit it.

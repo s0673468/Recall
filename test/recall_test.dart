@@ -19,10 +19,12 @@ import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart
 import 'package:health_anki_flutter/features/review/application/remediation_service.dart';
 import 'package:health_anki_flutter/features/review/application/review_haptics.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
+import 'package:health_anki_flutter/features/review/application/stats_service.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/catch_up_state.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
+import 'package:health_anki_flutter/features/review/data/recall_read_cache.dart';
 import 'package:health_anki_flutter/features/review/data/review_replay.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
@@ -338,16 +340,19 @@ class _FakeRecallApi implements RecallApi {
     Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     queueFetches++;
     lastNewLimit = newLimit;
     lastOrder = order;
     lastIncludedDeckIds = includedDeckIds;
+    lastExcludedCardIds = excludeCardIds;
     await beforeQueue?.call();
     return [
       for (final c in queue)
         if ((deckId == null || c.deckId == deckId) &&
-            (includedDeckIds == null || includedDeckIds.contains(c.deckId)))
+            (includedDeckIds == null || includedDeckIds.contains(c.deckId)) &&
+            !excludeCardIds.contains(c.id))
           _project(c),
     ];
   }
@@ -357,9 +362,11 @@ class _FakeRecallApi implements RecallApi {
     int? deckId,
     Set<int>? includedDeckIds,
     int limit = RecallApi.contentRevalidationBatchSize,
+    Set<int> excludeCardIds = const {},
   }) async => [
     for (final card in queue)
       if (card.contentRevalidationPending &&
+          !excludeCardIds.contains(card.id) &&
           (deckId == null || card.deckId == deckId) &&
           (includedDeckIds == null || includedDeckIds.contains(card.deckId)))
         _project(card),
@@ -377,8 +384,10 @@ class _FakeRecallApi implements RecallApi {
     Duration horizon = const Duration(hours: 24),
     int limit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     aheadFetches++;
+    lastAheadExcludedCardIds = excludeCardIds;
     final cutoff = DateTime.now().toUtc().add(horizon);
     final all = [
       for (final c in queue)
@@ -493,6 +502,55 @@ class _FakeRecallApi implements RecallApi {
     await beforeApplyFlag?.call();
     if (failApplyFlag) throw StateError('note_flags missing');
     flagged.add(e);
+    if (commitThenThrowFlag) throw StateError('reply lost');
+  }
+
+  /// Client event ids of flags withdrawn through [dismissFlag].
+  final List<String> dismissedFlags = [];
+
+  /// The hidden ids the last queue and bonus fetches excluded.
+  Set<int> lastExcludedCardIds = const {};
+  Set<int> lastAheadExcludedCardIds = const {};
+
+  /// Runs while a hidden-card read is in flight. The read still answers
+  /// with the server state from when it started.
+  Future<void> Function()? onFetchHidden;
+
+  /// When true, applyFlag commits the flag and then throws, as if the reply
+  /// was lost.
+  bool commitThenThrowFlag = false;
+
+  /// When true, the hidden-card read throws (e.g. offline).
+  bool failFetchHidden = false;
+
+  /// When true, dismissing a synced flag throws (offline undo).
+  bool failDismissFlag = false;
+
+  @override
+  Future<Set<int>> fetchHiddenCardIds() async {
+    if (failFetchHidden) throw StateError('offline');
+    final committed = [...flagged];
+    final dismissed = {...dismissedFlags};
+    await onFetchHidden?.call();
+    return {
+      for (final flag in committed)
+        if ((flag['reason'] == 'dislike' || flag['reason'] == 'delete') &&
+            !dismissed.contains(flag['client_id']))
+          (flag['card_id'] as num).toInt(),
+    };
+  }
+
+  /// Awaited inside dismissFlag — lets tests hold a withdrawal open.
+  Future<void> Function()? beforeDismissFlag;
+
+  @override
+  Future<void> dismissFlag({
+    required int cardId,
+    required String clientEventId,
+  }) async {
+    await beforeDismissFlag?.call();
+    if (failDismissFlag) throw StateError('offline');
+    dismissedFlags.add(clientEventId);
   }
 
   @override
@@ -551,8 +609,13 @@ class _FakeRecallApi implements RecallApi {
   bool failReviewLog = false;
   bool failDueDates = false;
 
+  /// The `days` window of every review-log read, in call order.
+  final List<int> reviewLogReads = [];
+  int conceptPageReads = 0;
+
   @override
   Future<List<ReviewLogEntry>> fetchReviewLog({int days = 190}) async {
+    reviewLogReads.add(days);
     if (failReviewLog) throw StateError('review_log fetch failed');
     return reviewLog;
   }
@@ -585,7 +648,10 @@ class _FakeRecallApi implements RecallApi {
   Future<List<ConceptNodeInfo>> fetchConceptNodes() async => conceptNodes;
 
   @override
-  Future<List<ConceptPage>> fetchConceptPages() async => conceptPages;
+  Future<List<ConceptPage>> fetchConceptPages() async {
+    conceptPageReads++;
+    return conceptPages;
+  }
 
   @override
   Future<void> signIn({required String email, required String password}) async {
@@ -1293,6 +1359,48 @@ void main() {
       },
     );
 
+    test('one review-log read serves catch-up and review activity', () async {
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.now();
+      final api = _FakeRecallApi([_card()])
+        ..reviewLog = [
+          ReviewLogEntry(at: now.subtract(const Duration(days: 5)), rating: 3),
+        ];
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+
+      await controller.load();
+      expect(api.reviewLogReads, [BacklogCatchUp.recentDays]);
+      // The activity signal keeps the server's former 2-day window: an older
+      // review is known activity but never counts as the latest review.
+      expect(controller.state.reviewActivityKnown, isTrue);
+      expect(controller.state.lastReviewedAt, isNull);
+
+      final recent = now.subtract(const Duration(hours: 3));
+      api.reviewLog = [
+        ReviewLogEntry(at: now.subtract(const Duration(days: 5)), rating: 3),
+        ReviewLogEntry(at: recent, rating: 3),
+      ];
+      await controller.refresh();
+      expect(api.reviewLogReads, hasLength(2));
+      expect(controller.state.lastReviewedAt, recent);
+
+      api.failReviewLog = true;
+      final failing = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(failing.dispose);
+      await failing.load();
+      expect(failing.state.queue, isNotEmpty);
+      expect(failing.state.reviewActivityKnown, isFalse);
+    });
+
     test(
       'keepGoing cards due later do not reduce the cloud due count',
       () async {
@@ -1685,6 +1793,42 @@ void main() {
       // The background fetch replaced the snapshot with the fresh queue.
       expect(controller.state.queue.single.id, 1);
       expect(controller.state.offline, isFalse);
+    });
+
+    test('a card hidden elsewhere leaves a retained snapshot queue', () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      await store.saveSnapshot(
+        decks: const [DeckRow(deckId: 1, name: 'ML')],
+        queue: [_card(id: 1), _card(id: 2)],
+      );
+      // Card 2 was hidden on another device; this device's cache lacks it.
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+        ..flagged.add({
+          'card_id': 2,
+          'reason': 'dislike',
+          'client_id': 'other-device',
+        });
+      final gate = Completer<void>();
+      api.beforeQueue = () => gate.future;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+
+      final loading = controller.load();
+      while (controller.state.queue.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(controller.state.queue.map((c) => c.id), [1, 2]);
+      controller.flip(); // studying the snapshot: load keeps this queue
+      gate.complete();
+      await loading;
+
+      expect(controller.state.current?.id, 1);
+      expect(controller.state.queue.map((c) => c.id), [1]);
     });
 
     test(
@@ -3375,16 +3519,48 @@ void main() {
       await pumpShell(tester, api);
 
       expect(find.byType(ReadScreen), findsOneWidget);
-      expect(find.text('Today’s reading'), findsOneWidget);
+      expect(find.text('Recent reading'), findsOneWidget);
       expect(find.text('More from the library'), findsOneWidget);
       expect(find.text('Vector geometry primer'), findsOneWidget);
       expect(find.text('M00'), findsOneWidget);
       expect(
         find.text(
-          'Nothing studied yet today. Your full library is ready below.',
+          'Nothing reviewed in the last 3 days. Your full library is ready below.',
         ),
         findsNothing,
       );
+    });
+
+    testWidgets('shows recent chat syntheses in their own section', (
+      tester,
+    ) async {
+      const chatNode = ConceptNodeInfo(
+        nodeId: 'chat-2026-w40-entropy',
+        title: 'Entropy, from your chats',
+        module: 'From your chats',
+      );
+      final chatPage = ConceptPage(
+        nodeId: chatNode.nodeId,
+        title: 'Entropy, from your chats',
+        bodyHtml: '<p>Entropy</p>',
+        updatedAt: DateTime.now().toUtc(),
+      );
+      final primer = ConceptPage(
+        nodeId: node.nodeId,
+        title: 'Vector geometry primer',
+        bodyHtml: 'Projection',
+        updatedAt: DateTime.utc(2026, 7, 29),
+      );
+      final api = _FakeRecallApi([_card()])
+        ..conceptNodes = const [node, chatNode]
+        ..conceptPages = [primer, chatPage];
+
+      await pumpShell(tester, api);
+
+      expect(find.text('From your chats'), findsWidgets);
+      expect(find.byKey(const Key('recall_read_chats')), findsOneWidget);
+      expect(find.text('Entropy, from your chats'), findsOneWidget);
+      expect(find.text('Vector geometry primer'), findsOneWidget);
     });
 
     testWidgets('shows the empty-today line while keeping the library', (
@@ -3400,7 +3576,7 @@ void main() {
         ..reviewLog = [
           ReviewLogEntry(
             guid: 'g1',
-            at: DateTime.now().subtract(const Duration(days: 1)),
+            at: DateTime.now().subtract(const Duration(days: 3)),
             rating: 3,
           ),
         ]
@@ -3412,7 +3588,7 @@ void main() {
 
       expect(
         find.text(
-          'Nothing studied yet today. Your full library is ready below.',
+          'Nothing reviewed in the last 3 days. Your full library is ready below.',
         ),
         findsOneWidget,
       );
@@ -3481,6 +3657,112 @@ void main() {
 
       expect(find.text('Reread: Vector geometry primer'), findsNothing);
       expect(find.text('Vector geometry primer'), findsOneWidget);
+    });
+  });
+
+  group('Shared read cache', () {
+    Future<ReviewController> pumpShell(
+      WidgetTester tester,
+      _FakeRecallApi api,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      final prefs = RecallPrefsController(api: api);
+      addTearDown(controller.dispose);
+      addTearDown(prefs.dispose);
+      await controller.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppShell(
+            controller: controller,
+            api: api,
+            prefs: prefs,
+            linkSource: _SilentLinkSource(),
+            nativeIos: false,
+            nativeAndroid: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return controller;
+    }
+
+    Future<void> openTab(WidgetTester tester, String label) async {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text(label),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    int longLogReads(_FakeRecallApi api) => api.reviewLogReads
+        .where((days) => days == StatsService.reviewLogDays)
+        .length;
+
+    testWidgets('Stats and Read share one read; revisits reuse it', (
+      tester,
+    ) async {
+      final api = _FakeRecallApi([_card(), _card(id: 2)]);
+      await pumpShell(tester, api);
+      // Both tabs mount at startup and load together.
+      expect(longLogReads(api), 1);
+      expect(api.conceptPageReads, 1);
+
+      await openTab(tester, 'Stats');
+      await openTab(tester, 'Read');
+      await openTab(tester, 'Study');
+      await openTab(tester, 'Stats');
+      expect(longLogReads(api), 1);
+      expect(api.conceptPageReads, 1);
+    });
+
+    testWidgets('a delivered review refreshes the log on the next visit', (
+      tester,
+    ) async {
+      final api = _FakeRecallApi([_card(), _card(id: 2)]);
+      final controller = await pumpShell(tester, api);
+      expect(longLogReads(api), 1);
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      await tester.pumpAndSettle();
+      expect(api.applied, hasLength(1));
+
+      await openTab(tester, 'Stats');
+      expect(longLogReads(api), 2);
+      // Concept metadata does not depend on reviews and stays shared.
+      expect(api.conceptPageReads, 1);
+      await openTab(tester, 'Read');
+      expect(longLogReads(api), 2);
+    });
+
+    test('signing out drops the shared reads', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _GatedFsrsRecallApi([_card()]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      addTearDown(api.authStates.close);
+      final cache = RecallReadCache.of(api);
+      var loads = 0;
+      Future<int> load() async => ++loads;
+      await cache.read('concept_pages', load);
+      await cache.read('concept_pages', load);
+      expect(loads, 1);
+
+      api.authStates.add(const AuthState(AuthChangeEvent.signedOut, null));
+      await Future<void>.delayed(Duration.zero);
+      await cache.read('concept_pages', load);
+      expect(loads, 2);
     });
   });
 
@@ -4447,6 +4729,289 @@ void main() {
       },
     );
 
+    test('one-tap dislike hides the card without rating it', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      await controller.hideCurrent('dislike');
+
+      expect(controller.state.current?.id, 2);
+      expect(controller.state.reviewedThisSession, 0);
+      expect(api.applied, isEmpty);
+      expect(controller.flagNotice, 'Hidden until Sunday review');
+      expect(controller.canUndo, isTrue);
+      await controller.syncPending();
+      expect(api.flagged.single['reason'], 'dislike');
+      expect(api.flagged.single['card_id'], 1);
+    });
+
+    test('hidden cards stay out of the queue after a reload', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('delete');
+      await controller.syncPending();
+
+      await controller.refresh();
+
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('an unsynced hide survives an offline reload', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.failApplyFlag = true; // flag stays queued locally
+      api.failFetchHidden = true; // server truth unavailable
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+
+      await controller.refresh();
+
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('undo brings back a hidden card and drops its queued flag', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.failApplyFlag = true;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+
+      await controller.undo();
+
+      expect(controller.state.current?.id, 1);
+      expect(controller.canUndo, isFalse);
+      expect(await store.flagOutbox(), isEmpty);
+      expect(await store.hiddenCardIds(), isEmpty);
+    });
+
+    test('undo dismisses a hide flag that already synced', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('delete');
+      await controller.syncPending();
+      final clientId = api.flagged.single['client_id'] as String;
+
+      await controller.undo();
+
+      expect(api.dismissedFlags, [clientId]);
+      expect(controller.state.current?.id, 1);
+      await controller.refresh();
+      expect(controller.state.queue.map((c) => c.id), [1, 2]);
+    });
+
+    test('an offline undo of a synced hide queues a durable withdrawal', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+      final clientId = api.flagged.single['client_id'] as String;
+      api.failDismissFlag = true;
+
+      await controller.undo();
+
+      expect(controller.state.current?.id, 1);
+      expect(controller.canUndo, isFalse);
+      expect((await store.flagOutbox()).single['op'], 'dismiss');
+      // A reload while offline must not re-hide the withdrawn card.
+      api.failDismissFlag = false;
+      api.failFetchHidden = false;
+      await controller.refresh();
+      expect(api.dismissedFlags, [clientId]);
+      expect(controller.state.queue.map((c) => c.id), [1, 2]);
+    });
+
+    test('undo withdraws a flag whose delivery reply was lost', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.commitThenThrowFlag = true; // committed, but stays queued locally
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('delete');
+      await controller.syncPending();
+      expect(await store.flagOutbox(), hasLength(1));
+      // Each retry re-delivers the same event id; the server dedupes it.
+      final clientId = api.flagged.first['client_id'] as String;
+
+      await controller.undo();
+
+      expect(api.dismissedFlags, [clientId]);
+      expect(await store.flagOutbox(), isEmpty);
+      expect(controller.state.current?.id, 1);
+    });
+
+    test('hidden cards are excluded before the queue fetch limits', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+
+      await controller.refresh();
+
+      expect(api.lastExcludedCardIds, {1});
+    });
+
+    test('keep going never brings back a hidden card', () async {
+      final now = DateTime.now().toUtc();
+      final api = _FakeRecallApi([
+        _card(id: 1, state: 2, due: now.subtract(const Duration(hours: 1))),
+      ]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+      expect(controller.state.isDone, isTrue);
+
+      await controller.keepGoing();
+
+      expect(api.lastAheadExcludedCardIds, {1});
+      expect(controller.state.queue.map((c) => c.id), isNot(contains(1)));
+      expect(controller.canUndo, isFalse);
+    });
+
+    test('a flag delivered during the hidden-card read stays hidden', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.failApplyFlag = true;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      // The server read sees the pre-insert state while the flag is
+      // delivered and drained from the outbox in the meantime.
+      api.onFetchHidden = () async {
+        api
+          ..onFetchHidden = null
+          ..failApplyFlag = false;
+        await controller.syncPending();
+      };
+
+      await controller.refresh();
+
+      expect(api.flagged.single['card_id'], 1);
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('flags from another device are excluded before the limits', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+        ..flagged.add({
+          'card_id': 1,
+          'reason': 'dislike',
+          'client_id': 'other-device',
+        });
+      final store = LocalReviewStore(); // no hidden cache on this device
+      final controller = build(api, store: store);
+
+      await controller.load();
+
+      expect(api.queueFetches, 2); // refetched with the fresh hide set
+      expect(api.lastExcludedCardIds, {1});
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('a queued hide survives a lost cache write and an offline load', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+        ..failApplyFlag = true
+        ..failFetchHidden = true;
+      final store = LocalReviewStore();
+      // The durable flag landed but the best-effort cache write did not.
+      await store.enqueueFlag({
+        'card_id': 1,
+        'guid': 'g1',
+        'reason': 'delete',
+        'client_id': 'queued-hide',
+      });
+      final controller = build(api, store: store);
+
+      await controller.load();
+
+      expect(controller.state.queue.map((c) => c.id), [2]);
+    });
+
+    test('an undo finishing after a reload leaves the new queue alone', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+      final gate = Completer<void>();
+      api.beforeDismissFlag = () => gate.future;
+
+      final undo = controller.undo();
+      await Future<void>.delayed(Duration.zero);
+      api.beforeDismissFlag = null;
+      await controller.refresh(); // replaces the queue mid-withdrawal
+      gate.complete();
+      await undo;
+
+      // The reloaded queue keeps its own position instead of jumping to the
+      // old index; the withdrawn card returns on the next load.
+      expect(controller.state.index, 0);
+      expect(controller.state.isDone, isFalse);
+      expect(controller.canUndo, isFalse);
+      await controller.refresh();
+      expect(controller.state.queue.map((c) => c.id), [1, 2, 3]);
+    });
+
+    test('hiding a due card lowers the global due count; undo restores it', () async {
+      SharedPreferences.setMockInitialValues({});
+      final now = DateTime.utc(2026, 7, 13, 12);
+      final api = _FakeRecallApi(
+        [_card(state: 2, due: now.subtract(const Duration(hours: 1)))],
+      )..deckCounts = const {1: (due: 3, neu: 0)};
+      final controller = build(api, clock: () => now);
+      await controller.load();
+      expect(controller.state.globalDueCount, 3);
+
+      await controller.hideCurrent('dislike');
+      expect(controller.state.globalDueCount, 2);
+
+      await controller.undo();
+      expect(controller.state.globalDueCount, 3);
+    });
+
+    test('a rating after a hide makes the rating the undoable action', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      controller.flip();
+      await controller.rate(Rating.good);
+
+      await controller.undo();
+
+      // The rating is undone; the hidden card stays hidden.
+      expect(controller.state.current?.id, 2);
+      expect(controller.state.reviewedThisSession, 0);
+    });
+
+    test('sheet reasons do not hide and one-tap reasons need hideCurrent', () async {
+      final api = _FakeRecallApi([_card(id: 1)]);
+      api.failApplyFlag = true;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+
+      await controller.flag('dislike'); // ignored: hide reasons only hide
+      expect(await store.flagOutbox(), isEmpty);
+      await controller.flag('wrong');
+      expect(controller.state.current?.id, 1);
+      expect(controller.flagNotice, 'Flagged for the weekly review');
+    });
+
     test('a successful flag flush drains the flag outbox', () async {
       final api = _FakeRecallApi([_card(id: 1)]);
       final store = LocalReviewStore();
@@ -4552,7 +5117,7 @@ void main() {
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
-      expect(find.byTooltip('Undo last rating'), findsNothing);
+      expect(find.byTooltip('Undo').hitTestable(), findsNothing);
 
       await tester.tap(find.text('Show answer'));
       await tester.pump();
@@ -4560,14 +5125,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('second question'), findsOneWidget);
-      expect(find.byTooltip('Undo last rating'), findsOneWidget);
+      expect(find.byTooltip('Undo'), findsOneWidget);
 
-      await tester.tap(find.byTooltip('Undo last rating'));
+      await tester.tap(find.byTooltip('Undo'));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('first question'), findsOneWidget);
       expect(find.text('Show answer'), findsOneWidget);
-      expect(find.byTooltip('Undo last rating'), findsNothing);
+      expect(find.byTooltip('Undo').hitTestable(), findsNothing);
     });
 
     testWidgets('the all-caught-up screen still offers undo', (tester) async {
@@ -4678,12 +5243,67 @@ void main() {
 
       // Sheet dismissed, confirmation shown, flag queued, review untouched.
       expect(find.text('Confusing'), findsNothing);
-      expect(find.text('Card flagged'), findsOneWidget);
+      expect(find.text('Flagged for the weekly review'), findsOneWidget);
+      expect(find.byType(SnackBar), findsNothing);
       final flags = await store.flagOutbox();
       expect(flags.single['reason'], 'confusing');
       expect(flags.single['card_id'], 701);
       expect(controller.state.index, 0);
       expect(controller.state.showBack, isFalse);
+      // The inline notice fades on its own.
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(find.text('Flagged for the weekly review'), findsNothing);
+    });
+
+    testWidgets('the header thumbs-down hides the card in one tap', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final store = LocalReviewStore();
+      final api = _FakeRecallApi([_card(id: 711), _card(id: 712)]);
+      api.failApplyFlag = true;
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store,
+      );
+      addTearDown(controller.dispose);
+      await controller.load();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(splashFactory: InkRipple.splashFactory),
+          home: Scaffold(body: StudyScreen(controller: controller)),
+        ),
+      );
+      final dislikeBefore = tester.getCenter(
+        find.byKey(const Key('recall_flag_dislike')),
+      );
+      await tester.tap(find.byKey(const Key('recall_flag_dislike')));
+      await tester.pumpAndSettle();
+
+      // Undo appearing must not shift the flag buttons under the finger.
+      expect(
+        tester.getCenter(find.byKey(const Key('recall_flag_dislike'))),
+        dislikeBefore,
+      );
+      expect(controller.state.current?.id, 712);
+      expect(find.text('Hidden until Sunday review'), findsOneWidget);
+      expect(find.byType(BottomSheet), findsNothing);
+      expect((await store.flagOutbox()).single['reason'], 'dislike');
+
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      expect(controller.state.current?.id, 711);
+      expect(await store.flagOutbox(), isEmpty);
+
+      await tester.tap(find.byKey(const Key('recall_flag_delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Marked for deletion'), findsOneWidget);
+      expect((await store.flagOutbox()).single['reason'], 'delete');
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
     });
 
     testWidgets('cancelling the flag sheet enqueues nothing', (tester) async {
@@ -4721,7 +5341,7 @@ void main() {
       tester,
     ) async {
       // A PWA can be backgrounded/killed the instant the user sees the
-      // confirmation — so "Card flagged" must never appear before the
+      // confirmation — so the flag notice must never appear before the
       // SharedPreferences write has completed. Gate the store's enqueue and
       // assert the sheet stays up (no confirmation) until it lands.
       SharedPreferences.setMockInitialValues({});
@@ -4752,7 +5372,7 @@ void main() {
       await tester.pump();
       await tester.pump();
       // Enqueue still in flight: no confirmation, sheet still open.
-      expect(find.text('Card flagged'), findsNothing);
+      expect(find.text('Flagged for the weekly review'), findsNothing);
       expect(find.text('Wrong'), findsOneWidget);
 
       store.enqueueGate.complete();
@@ -4760,8 +5380,10 @@ void main() {
 
       // Now — and only now — dismissed and confirmed, with the flag queued.
       expect(find.text('Wrong'), findsNothing);
-      expect(find.text('Card flagged'), findsOneWidget);
+      expect(find.text('Flagged for the weekly review'), findsOneWidget);
       expect((await store.flagOutbox()).single['card_id'], 703);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
     });
   });
 

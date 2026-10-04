@@ -83,6 +83,7 @@ class _PrefsRecallApi extends RecallApi {
     Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     queueNewLimit = newLimit;
     return const [];

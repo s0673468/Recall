@@ -50,22 +50,27 @@ class StatsScreenState extends State<StatsScreen> {
     _fetch();
   }
 
-  void _fetch() {
-    _reviewLog = _service.loadReviewLog();
-    _dueDates = _service.loadAutomaticDueDates();
+  List<Future<Object>>? _conceptParts;
+
+  void _fetch({bool refresh = false}) {
+    _reviewLog = _service.loadReviewLog(refresh: refresh);
+    _dueDates = _service.loadAutomaticDueDates(refresh: refresh);
     // The Concepts section needs the review log plus the node<->card tag map and
     // concept metadata/primers. Start each one-time fetch together and bundle
     // them so the section resolves (and fails) as one unit.
+    final parts = <Future<Object>>[
+      _reviewLog,
+      _service.loadNoteTags(refresh: refresh),
+      _service.loadConceptNodes(refresh: refresh),
+      _service.loadConceptPages(refresh: refresh),
+    ];
+    // A tab revisit served entirely from the shared cache keeps the resolved
+    // bundle, so the section neither refetches nor flashes its spinner.
+    final previous = _conceptParts;
+    if (previous != null && _sameInputs(previous, parts)) return;
+    _conceptParts = parts;
     _conceptData = () async {
-      final tagsFuture = _service.loadNoteTags();
-      final nodesFuture = _service.loadConceptNodes();
-      final pagesFuture = _service.loadConceptPages();
-      final results = await Future.wait<Object>([
-        _reviewLog,
-        tagsFuture,
-        nodesFuture,
-        pagesFuture,
-      ]);
+      final results = await Future.wait<Object>(parts);
       return (
         log: results[0] as List<ReviewLogEntry>,
         tags: results[1] as Map<String, String>,
@@ -75,8 +80,10 @@ class StatsScreenState extends State<StatsScreen> {
     }();
   }
 
-  Future<void> reload() async {
-    setState(_fetch);
+  /// Tab revisits reuse fresh shared data; pull-to-refresh forces a network
+  /// read of every section.
+  Future<void> reload({bool refresh = false}) async {
+    setState(() => _fetch(refresh: refresh));
     await Future.wait([
       _reviewLog.catchError((_) => <ReviewLogEntry>[]),
       _dueDates.catchError((_) => <DateTime>[]),
@@ -91,11 +98,45 @@ class StatsScreenState extends State<StatsScreen> {
     ]);
   }
 
+  /// Derived chart data, keyed by the exact inputs it was computed from. The
+  /// transforms walk the whole review log, so a retention-window change or a
+  /// tab revisit that serves the same log must not recompute every section.
+  final _derived = <String, ({List<Object?> inputs, Object? value})>{};
+
+  T _derive<T>(
+    String key,
+    T Function() compute, {
+    required List<Object?> inputs,
+  }) {
+    final hit = _derived[key];
+    if (hit != null && _sameInputs(hit.inputs, inputs)) return hit.value as T;
+    final value = compute();
+    _derived[key] = (inputs: inputs, value: value);
+    return value;
+  }
+
+  static bool _sameInputs(List<Object?> a, List<Object?> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i]) && a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final today = DateTime.now();
+    // Every transform below depends on the calendar day only.
+    final day = StatsService.dayOnly(today);
+    ({String recall, int reviews, int streak}) tiles(
+      List<ReviewLogEntry> log,
+    ) => _derive(
+      'tiles',
+      () => StatsService.tileStats(log, today: today),
+      inputs: [log, day],
+    );
     return RefreshIndicator(
-      onRefresh: reload,
+      onRefresh: () => reload(refresh: true),
       // Eagerly build the small set of sections. Together with maintainState,
       // this attaches every FutureBuilder while its disclosure is closed, so
       // an independent fetch failure always has a listener.
@@ -118,10 +159,14 @@ class StatsScreenState extends State<StatsScreen> {
               builder: (log) => RetentionPanel(
                 key: const Key('recall_retention_hero'),
                 hero: true,
-                summary: StatsService.computeRetention(
-                  log,
-                  now: today,
-                  windowDays: _retentionWindow,
+                summary: _derive(
+                  'retention',
+                  () => StatsService.computeRetention(
+                    log,
+                    now: today,
+                    windowDays: _retentionWindow,
+                  ),
+                  inputs: [log, day, _retentionWindow],
                 ),
                 windowDays: _retentionWindow,
                 onWindowChanged: (w) => setState(() => _retentionWindow = w),
@@ -132,7 +177,7 @@ class StatsScreenState extends State<StatsScreen> {
               future: _reviewLog,
               label: 'history',
               builder: (log) {
-                final t = StatsService.tileStats(log, today: today);
+                final t = tiles(log);
                 return RecallMetricStrip(
                   key: const Key('recall_stats_history_strip'),
                   metrics: [
@@ -153,7 +198,7 @@ class StatsScreenState extends State<StatsScreen> {
                 future: _reviewLog,
                 label: 'heatmap',
                 builder: (log) {
-                  final t = StatsService.tileStats(log, today: today);
+                  final t = tiles(log);
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -163,7 +208,11 @@ class StatsScreenState extends State<StatsScreen> {
                       ),
                       const SizedBox(height: UiSpacing.md),
                       ReviewHeatmap(
-                        days: StatsService.buildHeatmap(log, today: today),
+                        days: _derive(
+                          'heatmap',
+                          () => StatsService.buildHeatmap(log, today: today),
+                          inputs: [log, day],
+                        ),
                       ),
                     ],
                   );
@@ -177,7 +226,11 @@ class StatsScreenState extends State<StatsScreen> {
                 future: _dueDates,
                 label: 'forecast',
                 builder: (due) => DueForecastChart(
-                  days: StatsService.buildForecast(due, today: today),
+                  days: _derive(
+                    'forecast',
+                    () => StatsService.buildForecast(due, today: today),
+                    inputs: [due, day],
+                  ),
                 ),
               ),
             ),
@@ -188,11 +241,15 @@ class StatsScreenState extends State<StatsScreen> {
                 future: _conceptData,
                 label: 'concepts',
                 builder: (data) {
-                  final result = StatsService.computeNodeRetention(
-                    reviewLog: data.log,
-                    noteTags: data.tags,
-                    conceptNodes: data.nodes,
-                    now: today,
+                  final result = _derive(
+                    'concepts',
+                    () => StatsService.computeNodeRetention(
+                      reviewLog: data.log,
+                      noteTags: data.tags,
+                      conceptNodes: data.nodes,
+                      now: today,
+                    ),
+                    inputs: [data.log, data.tags, data.nodes, day],
                   );
                   return ConceptRetentionPanel(
                     ranked: result.ranked,

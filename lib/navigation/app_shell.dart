@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
 import '../core/diagnostics/operational_diagnostics.dart';
 import '../core/platform/recall_platform.dart';
+import '../core/widgets/listenable_selector.dart';
 import '../core/widgets/recall_motion.dart';
 import '../features/review/application/review_controller.dart';
 import '../features/reminders/application/study_reminder_controller.dart';
@@ -191,13 +192,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           systemNavigationBarContrastEnforced: false,
           systemNavigationBarIconBrightness: Brightness.light,
         ),
-        child: ListenableBuilder(
+        // The shell only reflects the busy bar. Tabs listen for themselves,
+        // so ordinary controller ticks do not rebuild the scaffold.
+        child: ListenableSelector<bool>(
           listenable: widget.controller,
-          builder: (context, _) => LayoutBuilder(
+          selector: () {
+            final state = widget.controller.state;
+            return state.loading || state.authSubmitting;
+          },
+          builder: (context, busy) => LayoutBuilder(
             builder: (context, constraints) {
               final useRail = _nativeAndroid && constraints.maxWidth >= 600;
-              final state = widget.controller.state;
-              final busy = state.loading || state.authSubmitting;
               final content = Column(
                 children: [
                   SizedBox(

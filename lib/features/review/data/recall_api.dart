@@ -276,12 +276,14 @@ class RecallApi implements ReviewReplayGateway {
     Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
     final revalidationsFuture = _fetchContentRevalidationQueueOrEmpty(
       deckId,
       included,
+      excludeCardIds,
     );
     final nowIso = DateTime.now().toUtc().toIso8601String();
     final introducedToday = await _newCardsIntroducedToday(
@@ -315,6 +317,13 @@ class RecallApi implements ReviewReplayGateway {
       dueQ = dueQ.inFilter('notes.deck_id', ids);
       newQ = newQ.inFilter('notes.deck_id', ids);
     }
+    // Cards hidden by an open one-tap flag are excluded before the new-card
+    // limit, so a hidden card never uses up the day's introduction budget.
+    final excluded = _idList(excludeCardIds);
+    if (excluded != null) {
+      dueQ = dueQ.not('id', 'in', excluded);
+      newQ = newQ.not('id', 'in', excluded);
+    }
 
     // newest_first inverts the id order; random still fetches a stable page
     // (id asc) and shuffles client-side so the same cards recur across loads.
@@ -346,20 +355,30 @@ class RecallApi implements ReviewReplayGateway {
     final revalidations = await revalidationsFuture;
     final priorityIds = {for (final card in revalidations) card.id};
     return [
-      ...revalidations,
+      for (final card in revalidations)
+        if (!excludeCardIds.contains(card.id)) card,
       for (final card in ordinary)
         if (!priorityIds.contains(card.id)) card,
     ];
   }
 
+  /// A PostgREST `in` list for [ids], or null when there is nothing to filter.
+  static String? _idList(Set<int> ids) {
+    if (ids.isEmpty) return null;
+    final sorted = ids.toList()..sort();
+    return '(${sorted.join(',')})';
+  }
+
   Future<List<ReviewCard>> _fetchContentRevalidationQueueOrEmpty(
     int? deckId,
     Set<int>? includedDeckIds,
+    Set<int> excludeCardIds,
   ) async {
     try {
       return await fetchContentRevalidationQueue(
         deckId: deckId,
         includedDeckIds: includedDeckIds,
+        excludeCardIds: excludeCardIds,
       );
     } catch (_) {
       // The review-log read is an optional priority lane. Its outage must not
@@ -382,6 +401,7 @@ class RecallApi implements ReviewReplayGateway {
     int? deckId,
     Set<int>? includedDeckIds,
     int limit = contentRevalidationBatchSize,
+    Set<int> excludeCardIds = const {},
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
@@ -415,7 +435,10 @@ class RecallApi implements ReviewReplayGateway {
       for (final raw in rows) {
         final card = ReviewCard.fromRow(Map<String, dynamic>.from(raw));
         final revision = contentRevalidationRevision(card.tags);
-        if (revision != null) candidates.add((card: card, revision: revision));
+        // Hidden cards never take a slot in the capped priority batch.
+        if (revision != null && !excludeCardIds.contains(card.id)) {
+          candidates.add((card: card, revision: revision));
+        }
       }
       if (candidates.isNotEmpty) {
         final earliest = candidates
@@ -550,6 +573,7 @@ class RecallApi implements ReviewReplayGateway {
     Duration horizon = const Duration(hours: 24),
     int limit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
@@ -569,6 +593,8 @@ class RecallApi implements ReviewReplayGateway {
       final ids = included.toList()..sort();
       aheadQ = aheadQ.inFilter('notes.deck_id', ids);
     }
+    final excluded = _idList(excludeCardIds);
+    if (excluded != null) aheadQ = aheadQ.not('id', 'in', excluded);
     final aheadRows = await aheadQ.order('due', ascending: true).limit(limit);
     final ahead = [
       for (final r in aheadRows)
@@ -590,6 +616,7 @@ class RecallApi implements ReviewReplayGateway {
       final ids = included.toList()..sort();
       newQ = newQ.inFilter('notes.deck_id', ids);
     }
+    if (excluded != null) newQ = newQ.not('id', 'in', excluded);
     final newAscending = order != NewOrder.newestFirst;
     final newRows = await newQ
         .order('id', ascending: newAscending)
@@ -902,6 +929,39 @@ class RecallApi implements ReviewReplayGateway {
       payload.remove('client_event_id');
       await client.from('note_flags').insert(payload);
     }
+  }
+
+  /// Card ids with an open "don't like" or "delete" flag. Those cards stay out
+  /// of the queue until the weekly review resolves or dismisses the flag.
+  Future<Set<int>> fetchHiddenCardIds() async {
+    final rows = await client
+        .from('note_flags')
+        .select('card_id')
+        .eq('status', 'open')
+        .inFilter('reason', const ['dislike', 'delete']);
+    return {
+      for (final row in rows)
+        if (row['card_id'] is num) (row['card_id'] as num).toInt(),
+    };
+  }
+
+  /// Withdraw a synced one-tap flag the user undid. Only an open flag with
+  /// this exact client event id is touched, so a flag the weekly review
+  /// already handled keeps its resolution.
+  Future<void> dismissFlag({
+    required int cardId,
+    required String clientEventId,
+  }) async {
+    await client
+        .from('note_flags')
+        .update({
+          'status': 'dismissed',
+          'resolved_at': DateTime.now().toUtc().toIso8601String(),
+          'resolution': 'undone in Recall',
+        })
+        .eq('card_id', cardId)
+        .eq('client_event_id', clientEventId)
+        .eq('status', 'open');
   }
 
   bool _idempotencySchemaUnavailable(PostgrestException error) =>

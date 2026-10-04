@@ -27,8 +27,10 @@ void main() {
     expect(data.cards, hasLength(1600));
     expect(data.decks, hasLength(32));
     expect(data.reviews, hasLength(12000));
-    expect(data.conceptNodes, hasLength(72));
-    expect(data.conceptPages, hasLength(72));
+    // 72 curriculum primers plus one synthetic weekly chat synthesis.
+    expect(data.conceptNodes, hasLength(73));
+    expect(data.conceptPages, hasLength(73));
+    expect(data.conceptPages.first.nodeId, SanitizedRecallDataset.chatNodeId);
     expect(data.conceptPages.last.nodeId, 'concept-72');
     expect(data.conceptPages.last.title.toLowerCase(), contains('concept 72'));
     expect(data.conceptPages.last.title.length, greaterThan(70));
@@ -226,7 +228,7 @@ void main() {
     expect(find.text('Flag this card'), findsOneWidget);
     await tester.tap(find.text('Confusing'));
     await tester.pumpAndSettle();
-    expect(find.text('Card flagged'), findsOneWidget);
+    expect(find.text('Flagged for the weekly review'), findsOneWidget);
     expect(api.appliedFlags.single['reason'], 'confusing');
     await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
@@ -234,8 +236,8 @@ void main() {
     await tester.tap(find.text('Good'));
     await tester.pumpAndSettle();
     expect(dependencies.reviewController.state.reviewedThisSession, 1);
-    expect(find.byTooltip('Undo last rating'), findsOneWidget);
-    await tester.tap(find.byTooltip('Undo last rating'));
+    expect(find.byTooltip('Undo'), findsOneWidget);
+    await tester.tap(find.byTooltip('Undo'));
     await tester.pumpAndSettle();
     expect(dependencies.reviewController.state.reviewedThisSession, 0);
 

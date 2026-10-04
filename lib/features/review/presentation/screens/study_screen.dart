@@ -197,6 +197,13 @@ class StudyScreen extends StatelessWidget {
           offline: s.offline,
           pendingSync: s.pendingSync,
           onUndo: undoable ? controller.undo : null,
+          notice: controller.flagNotice,
+          onDislike: controller.rateInFlight
+              ? null
+              : () => unawaited(controller.hideCurrent('dislike')),
+          onDelete: controller.rateInFlight
+              ? null
+              : () => unawaited(controller.hideCurrent('delete')),
           onMore: () => _showStudyOptions(
             context,
             controller,
@@ -284,6 +291,9 @@ class _Header extends StatelessWidget {
   final bool offline;
   final int pendingSync;
   final VoidCallback? onUndo;
+  final VoidCallback? onDislike;
+  final VoidCallback? onDelete;
+  final String? notice;
   final VoidCallback onMore;
   final VoidCallback onSession;
   const _Header({
@@ -296,6 +306,9 @@ class _Header extends StatelessWidget {
     required this.onMore,
     required this.onSession,
     this.onUndo,
+    this.onDislike,
+    this.onDelete,
+    this.notice,
   });
 
   @override
@@ -307,18 +320,39 @@ class _Header extends StatelessWidget {
           Expanded(
             child: Text(
               title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(
                 fontSize: 24,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          if (onUndo != null)
-            IconButton(
-              tooltip: 'Undo last rating',
+          IconButton(
+            key: const Key('recall_flag_dislike'),
+            tooltip: 'Don’t like it · hide until Sunday review',
+            icon: const Icon(Icons.thumb_down_outlined, size: 20),
+            onPressed: onDislike,
+          ),
+          IconButton(
+            key: const Key('recall_flag_delete'),
+            tooltip: 'Flag for deletion',
+            icon: const Icon(Icons.delete_outline, size: 21),
+            onPressed: onDelete,
+          ),
+          // The undo slot is always reserved so the flag buttons never shift
+          // under a finger when undo appears after a hide or rating.
+          Visibility(
+            visible: onUndo != null,
+            maintainSize: true,
+            maintainAnimation: true,
+            maintainState: true,
+            child: IconButton(
+              tooltip: 'Undo',
               icon: const Icon(Icons.undo, size: 20),
               onPressed: onUndo,
             ),
+          ),
           IconButton(
             tooltip: 'More options',
             icon: const Icon(Icons.more_horiz, size: 22),
@@ -355,9 +389,23 @@ class _Header extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            '$session done',
-            style: const TextStyle(fontSize: 13, color: UiColors.textMuted),
+          // The flag confirmation takes this slot for a moment instead of a
+          // popup, so nothing ever covers the card or the rating buttons.
+          AnimatedSwitcher(
+            duration: RecallMotion.quick,
+            child: Semantics(
+              key: ValueKey(notice ?? 'session'),
+              liveRegion: notice != null,
+              child: Text(
+                notice ?? '$session done',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: notice == null
+                      ? UiColors.textMuted
+                      : UiColors.textSecondary,
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -621,31 +669,20 @@ const List<({String reason, String label})> _flagOptions = [
 /// A platform-appropriate sheet listing the flag reasons: Cupertino actions on
 /// native iOS, the existing Material bottom sheet on web. Selecting one
 /// enqueues the flag (durable, offline-safe), dismisses the sheet, and shows a
-/// brief confirmation. The review flow is left completely untouched —
+/// brief inline confirmation in the header. The review flow is left completely untouched —
 /// flagging never rates, skips, or advances the card. Cancel enqueues nothing.
 void _showFlagSheet(
   BuildContext context,
   ReviewController controller, {
   required bool nativeIos,
 }) {
-  // Capture the messenger before any async gap — the sheet's own context is
-  // gone by the time the confirmation fires.
-  final messenger = ScaffoldMessenger.of(context);
-
   Future<void> selectReason(BuildContext sheetContext, String reason) async {
     // Capture the navigator pre-await — using sheetContext across the gap
-    // trips use_build_context_synchronously.
+    // trips use_build_context_synchronously. The confirmation is the header's
+    // inline notice, shown once the flag is durably queued.
     final navigator = Navigator.of(sheetContext);
     await controller.flag(reason);
     navigator.pop();
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text('Card flagged'),
-        ),
-      );
   }
 
   if (nativeIos) {
