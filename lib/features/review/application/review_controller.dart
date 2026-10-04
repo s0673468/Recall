@@ -485,9 +485,12 @@ class ReviewController extends ChangeNotifier {
       final active = _activePrefs;
       final decksFuture = api.fetchDecks();
       final hiddenFuture = _refreshHiddenCards();
+      // Exclude the hidden set already known on this device so the queue
+      // fetch never waits on the hidden-card read; the fresh server set still
+      // filters the result below.
+      final knownHidden = _hiddenCardIds;
       final queueFuture = () async {
         final decks = await decksFuture;
-        await hiddenFuture;
         final includedDeckIds = _state.deckFilter == null
             ? automaticReviewDeckIds(decks)
             : null;
@@ -496,7 +499,7 @@ class ReviewController extends ChangeNotifier {
           includedDeckIds: includedDeckIds,
           newLimit: active.newLimitForDeck(_state.deckFilter),
           order: active.newOrder,
-          excludeCardIds: _hiddenCardIds,
+          excludeCardIds: knownHidden,
         );
       }();
       final globalDueFuture = () async {
