@@ -2,6 +2,7 @@ import '../data/local_review_store.dart';
 import '../data/recall_api.dart';
 import '../domain/concept_attribution.dart';
 import '../domain/stats_models.dart';
+import 'stats_service.dart';
 
 /// The local data needed to turn queued node ids into readable primer rows.
 /// Nothing in this record is written back to Supabase.
@@ -35,12 +36,15 @@ class RemediationService {
 
   Future<RemediationData> load({DateTime? now}) async {
     final at = now ?? DateTime.now();
+    // Shares the Read and Stats requests. Only the last few days of the log
+    // matter here, which the shared window covers.
+    final stats = StatsService(api);
     final results = await Future.wait<Object>([
       store.remediationQueue(now: at),
-      api.fetchReviewLog(),
-      api.fetchNoteTags(),
-      api.fetchConceptNodes(),
-      api.fetchConceptPages(),
+      stats.loadReviewLog(),
+      stats.loadNoteTags(),
+      stats.loadConceptNodes(),
+      stats.loadConceptPages(),
     ]);
     final reviewLog = results[1] as List<ReviewLogEntry>;
     final noteTags = results[2] as Map<String, String>;

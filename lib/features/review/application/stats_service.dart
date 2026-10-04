@@ -1,5 +1,6 @@
-import '../data/recall_api.dart';
 import '../data/models.dart';
+import '../data/recall_api.dart';
+import '../data/recall_read_cache.dart';
 import '../domain/concept_attribution.dart';
 import '../domain/local_day.dart';
 import '../domain/stats_models.dart';
@@ -23,24 +24,54 @@ class StatsService {
   static const int conceptWindowDays = 14;
   static const int conceptMinReviews = 4;
 
-  Future<List<ReviewLogEntry>> loadReviewLog() =>
-      api.fetchReviewLog(days: heatmapWeeks * 7 + 7);
+  /// The review-log window Stats, Read, and remediation share.
+  static const int reviewLogDays = heatmapWeeks * 7 + 7;
+
+  RecallReadCache get _cache => RecallReadCache.of(api);
+
+  /// Loaders read through [RecallReadCache], so surfaces mounted together
+  /// share one request and a tab revisit reuses a fresh result. [refresh]
+  /// always goes to the network (pull-to-refresh).
+  Future<List<ReviewLogEntry>> loadReviewLog({bool refresh = false}) =>
+      _cache.read(
+        'review_log:$reviewLogDays',
+        () => api.fetchReviewLog(days: reviewLogDays),
+        refresh: refresh,
+        reviewDependent: true,
+      );
 
   Future<List<DateTime>> loadDueDates({Set<int>? includedDeckIds}) =>
       api.fetchDueDates(includedDeckIds: includedDeckIds);
 
   /// Stats describes the normal automatic workload. Optional curricula stay
   /// visible in Decks and directly reviewable, but do not inflate this chart.
-  Future<List<DateTime>> loadAutomaticDueDates() async {
-    final decks = await api.fetchDecks();
-    return loadDueDates(includedDeckIds: automaticReviewDeckIds(decks));
-  }
+  Future<List<DateTime>> loadAutomaticDueDates({bool refresh = false}) =>
+      _cache.read(
+        'automatic_due_dates',
+        () async {
+          final decks = await api.fetchDecks();
+          return loadDueDates(includedDeckIds: automaticReviewDeckIds(decks));
+        },
+        refresh: refresh,
+        reviewDependent: true,
+      );
 
-  Future<Map<String, String>> loadNoteTags() => api.fetchNoteTags();
+  Future<Map<String, String>> loadNoteTags({bool refresh = false}) =>
+      _cache.read('note_tags', () => api.fetchNoteTags(), refresh: refresh);
 
-  Future<List<ConceptNodeInfo>> loadConceptNodes() => api.fetchConceptNodes();
+  Future<List<ConceptNodeInfo>> loadConceptNodes({bool refresh = false}) =>
+      _cache.read(
+        'concept_nodes',
+        () => api.fetchConceptNodes(),
+        refresh: refresh,
+      );
 
-  Future<List<ConceptPage>> loadConceptPages() => api.fetchConceptPages();
+  Future<List<ConceptPage>> loadConceptPages({bool refresh = false}) =>
+      _cache.read(
+        'concept_pages',
+        () => api.fetchConceptPages(),
+        refresh: refresh,
+      );
 
   static DateTime dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 

@@ -14,6 +14,7 @@ import '../data/catch_up_state.dart';
 import '../data/local_review_store.dart';
 import '../data/models.dart';
 import '../data/recall_api.dart';
+import '../data/recall_read_cache.dart';
 import '../domain/concept_attribution.dart';
 import '../domain/stats_models.dart';
 import 'backlog_catch_up.dart';
@@ -155,6 +156,7 @@ class ReviewController extends ChangeNotifier {
     final user = api.currentUser;
     if (user == null) {
       // Signed out — drop the session state and show the login gate.
+      RecallReadCache.of(api).clear();
       _sessionSetupGeneration++;
       _activeUserId = null;
       _sessionSetupOwner = null;
@@ -169,6 +171,8 @@ class ReviewController extends ChangeNotifier {
       // sign-out. Do not let the old queue, due count, or review activity drive
       // the new owner's reminder while that owner's data is loading.
       if (_activeUserId != user.id) {
+        // Shared Stats/Read aggregates belong to the previous owner.
+        RecallReadCache.of(api).clear();
         _sessionSetupGeneration++;
         if (_activeUserId != null) {
           _sessionLoaded = false;
@@ -1541,6 +1545,7 @@ class ReviewController extends ChangeNotifier {
             ...api.restoreEntry(u.card),
             'review_log_id': u.reviewLogId,
           });
+          RecallReadCache.of(api).reviewsChanged();
         } catch (_) {
           // Cloud restore failed (offline?). The rating stands; hand the
           // snapshot back so the user can simply tap undo again — unless a
@@ -1652,6 +1657,8 @@ class ReviewController extends ChangeNotifier {
         break;
       }
     }
+    // Delivered reviews changed the server's log and due dates.
+    if (sent > 0) RecallReadCache.of(api).reviewsChanged();
     final remaining = await store.removeFirst(sent, ownerScope: ownerScope);
     if (_flushStillOwnsSession(ownerId, ownerScope) &&
         _state.pendingSync != remaining) {

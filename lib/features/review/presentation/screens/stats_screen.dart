@@ -50,22 +50,27 @@ class StatsScreenState extends State<StatsScreen> {
     _fetch();
   }
 
-  void _fetch() {
-    _reviewLog = _service.loadReviewLog();
-    _dueDates = _service.loadAutomaticDueDates();
+  List<Future<Object>>? _conceptParts;
+
+  void _fetch({bool refresh = false}) {
+    _reviewLog = _service.loadReviewLog(refresh: refresh);
+    _dueDates = _service.loadAutomaticDueDates(refresh: refresh);
     // The Concepts section needs the review log plus the node<->card tag map and
     // concept metadata/primers. Start each one-time fetch together and bundle
     // them so the section resolves (and fails) as one unit.
+    final parts = <Future<Object>>[
+      _reviewLog,
+      _service.loadNoteTags(refresh: refresh),
+      _service.loadConceptNodes(refresh: refresh),
+      _service.loadConceptPages(refresh: refresh),
+    ];
+    // A tab revisit served entirely from the shared cache keeps the resolved
+    // bundle, so the section neither refetches nor flashes its spinner.
+    final previous = _conceptParts;
+    if (previous != null && _sameInputs(previous, parts)) return;
+    _conceptParts = parts;
     _conceptData = () async {
-      final tagsFuture = _service.loadNoteTags();
-      final nodesFuture = _service.loadConceptNodes();
-      final pagesFuture = _service.loadConceptPages();
-      final results = await Future.wait<Object>([
-        _reviewLog,
-        tagsFuture,
-        nodesFuture,
-        pagesFuture,
-      ]);
+      final results = await Future.wait<Object>(parts);
       return (
         log: results[0] as List<ReviewLogEntry>,
         tags: results[1] as Map<String, String>,
@@ -75,8 +80,10 @@ class StatsScreenState extends State<StatsScreen> {
     }();
   }
 
-  Future<void> reload() async {
-    setState(_fetch);
+  /// Tab revisits reuse fresh shared data; pull-to-refresh forces a network
+  /// read of every section.
+  Future<void> reload({bool refresh = false}) async {
+    setState(() => _fetch(refresh: refresh));
     await Future.wait([
       _reviewLog.catchError((_) => <ReviewLogEntry>[]),
       _dueDates.catchError((_) => <DateTime>[]),
@@ -125,7 +132,7 @@ class StatsScreenState extends State<StatsScreen> {
       () => StatsService.tileStats(log, today: today),
     );
     return RefreshIndicator(
-      onRefresh: reload,
+      onRefresh: () => reload(refresh: true),
       // Eagerly build the small set of sections. Together with maintainState,
       // this attaches every FutureBuilder while its disclosure is closed, so
       // an independent fetch failure always has a listener.

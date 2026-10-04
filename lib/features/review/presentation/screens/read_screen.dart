@@ -49,14 +49,14 @@ class ReadScreenState extends State<ReadScreen> {
     _fetch();
   }
 
-  void _fetch() {
+  void _fetch({bool refresh = false}) {
     _searching = false;
     _data = () async {
       final results = await Future.wait<Object>([
-        _service.loadReviewLog(),
-        _service.loadNoteTags(),
-        _service.loadConceptNodes(),
-        _service.loadConceptPages(),
+        _service.loadReviewLog(refresh: refresh),
+        _service.loadNoteTags(refresh: refresh),
+        _service.loadConceptNodes(refresh: refresh),
+        _service.loadConceptPages(refresh: refresh),
         widget.store.remediationQueue(),
       ]);
       return (
@@ -69,8 +69,10 @@ class ReadScreenState extends State<ReadScreen> {
     }();
   }
 
-  Future<void> reload() async {
-    setState(_fetch);
+  /// Tab revisits reuse fresh shared data; pull-to-refresh forces a network
+  /// read.
+  Future<void> reload({bool refresh = false}) async {
+    setState(() => _fetch(refresh: refresh));
     await _data.catchError(
       (_) => (
         reviewLog: <ReviewLogEntry>[],
@@ -100,7 +102,7 @@ class ReadScreenState extends State<ReadScreen> {
 
   @override
   Widget build(BuildContext context) => RefreshIndicator(
-    onRefresh: reload,
+    onRefresh: () => reload(refresh: true),
     child: FutureBuilder<_ReadData>(
       future: _data,
       builder: (context, snapshot) {

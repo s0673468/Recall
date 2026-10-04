@@ -19,10 +19,12 @@ import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart
 import 'package:health_anki_flutter/features/review/application/remediation_service.dart';
 import 'package:health_anki_flutter/features/review/application/review_haptics.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
+import 'package:health_anki_flutter/features/review/application/stats_service.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/catch_up_state.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
+import 'package:health_anki_flutter/features/review/data/recall_read_cache.dart';
 import 'package:health_anki_flutter/features/review/data/review_replay.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
@@ -580,8 +582,13 @@ class _FakeRecallApi implements RecallApi {
   bool failReviewLog = false;
   bool failDueDates = false;
 
+  /// The `days` window of every review-log read, in call order.
+  final List<int> reviewLogReads = [];
+  int conceptPageReads = 0;
+
   @override
   Future<List<ReviewLogEntry>> fetchReviewLog({int days = 190}) async {
+    reviewLogReads.add(days);
     if (failReviewLog) throw StateError('review_log fetch failed');
     return reviewLog;
   }
@@ -614,7 +621,10 @@ class _FakeRecallApi implements RecallApi {
   Future<List<ConceptNodeInfo>> fetchConceptNodes() async => conceptNodes;
 
   @override
-  Future<List<ConceptPage>> fetchConceptPages() async => conceptPages;
+  Future<List<ConceptPage>> fetchConceptPages() async {
+    conceptPageReads++;
+    return conceptPages;
+  }
 
   @override
   Future<void> signIn({required String email, required String password}) async {
@@ -3510,6 +3520,112 @@ void main() {
 
       expect(find.text('Reread: Vector geometry primer'), findsNothing);
       expect(find.text('Vector geometry primer'), findsOneWidget);
+    });
+  });
+
+  group('Shared read cache', () {
+    Future<ReviewController> pumpShell(
+      WidgetTester tester,
+      _FakeRecallApi api,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      final prefs = RecallPrefsController(api: api);
+      addTearDown(controller.dispose);
+      addTearDown(prefs.dispose);
+      await controller.load();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppShell(
+            controller: controller,
+            api: api,
+            prefs: prefs,
+            linkSource: _SilentLinkSource(),
+            nativeIos: false,
+            nativeAndroid: false,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return controller;
+    }
+
+    Future<void> openTab(WidgetTester tester, String label) async {
+      await tester.tap(
+        find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text(label),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    int longLogReads(_FakeRecallApi api) => api.reviewLogReads
+        .where((days) => days == StatsService.reviewLogDays)
+        .length;
+
+    testWidgets('Stats and Read share one read; revisits reuse it', (
+      tester,
+    ) async {
+      final api = _FakeRecallApi([_card(), _card(id: 2)]);
+      await pumpShell(tester, api);
+      // Both tabs mount at startup and load together.
+      expect(longLogReads(api), 1);
+      expect(api.conceptPageReads, 1);
+
+      await openTab(tester, 'Stats');
+      await openTab(tester, 'Read');
+      await openTab(tester, 'Study');
+      await openTab(tester, 'Stats');
+      expect(longLogReads(api), 1);
+      expect(api.conceptPageReads, 1);
+    });
+
+    testWidgets('a delivered review refreshes the log on the next visit', (
+      tester,
+    ) async {
+      final api = _FakeRecallApi([_card(), _card(id: 2)]);
+      final controller = await pumpShell(tester, api);
+      expect(longLogReads(api), 1);
+
+      controller.flip();
+      await controller.rate(Rating.good);
+      await tester.pumpAndSettle();
+      expect(api.applied, hasLength(1));
+
+      await openTab(tester, 'Stats');
+      expect(longLogReads(api), 2);
+      // Concept metadata does not depend on reviews and stays shared.
+      expect(api.conceptPageReads, 1);
+      await openTab(tester, 'Read');
+      expect(longLogReads(api), 2);
+    });
+
+    test('signing out drops the shared reads', () async {
+      SharedPreferences.setMockInitialValues({});
+      final api = _GatedFsrsRecallApi([_card()]);
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: LocalReviewStore(),
+      );
+      addTearDown(controller.dispose);
+      addTearDown(api.authStates.close);
+      final cache = RecallReadCache.of(api);
+      var loads = 0;
+      Future<int> load() async => ++loads;
+      await cache.read('concept_pages', load);
+      await cache.read('concept_pages', load);
+      expect(loads, 1);
+
+      api.authStates.add(const AuthState(AuthChangeEvent.signedOut, null));
+      await Future<void>.delayed(Duration.zero);
+      await cache.read('concept_pages', load);
+      expect(loads, 2);
     });
   });
 
