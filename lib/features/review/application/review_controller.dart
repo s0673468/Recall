@@ -169,6 +169,7 @@ class ReviewController extends ChangeNotifier {
       _invalidateActiveSession();
       engine.resetToDefaults();
       _undo = null; // the session (and its undo snapshot) is gone
+      _hideUndo = null;
       _set(const ReviewState(loading: false));
     } else {
       // A provider can switch accounts without emitting an intermediate local
@@ -323,6 +324,7 @@ class ReviewController extends ChangeNotifier {
     _loadSequence++;
     _interactionGeneration++;
     _undo = null;
+    _hideUndo = null;
   }
 
   String _authMessage(Object e) {
@@ -482,8 +484,10 @@ class ReviewController extends ChangeNotifier {
       // _refreshFsrsSettings never throws (it falls back to defaults).
       final active = _activePrefs;
       final decksFuture = api.fetchDecks();
+      final hiddenFuture = _refreshHiddenCards();
       final queueFuture = () async {
         final decks = await decksFuture;
+        await hiddenFuture;
         final includedDeckIds = _state.deckFilter == null
             ? automaticReviewDeckIds(decks)
             : null;
@@ -492,6 +496,7 @@ class ReviewController extends ChangeNotifier {
           includedDeckIds: includedDeckIds,
           newLimit: active.newLimitForDeck(_state.deckFilter),
           order: active.newOrder,
+          excludeCardIds: _hiddenCardIds,
         );
       }();
       final globalDueFuture = () async {
@@ -504,7 +509,7 @@ class ReviewController extends ChangeNotifier {
         queueFuture,
         globalDueFuture,
         _fetchRecentReviews(),
-        _refreshHiddenCards(),
+        hiddenFuture,
       ]);
       final decks = results[1] as List<DeckRow>;
       _automaticDeckIds = automaticReviewDeckIds(decks);
@@ -980,6 +985,7 @@ class ReviewController extends ChangeNotifier {
     );
     _interactionGeneration++;
     _undo = null;
+    _hideUndo = null;
     _set(
       _state.copyWith(
         loading: false,
@@ -1015,6 +1021,7 @@ class ReviewController extends ChangeNotifier {
     if (_state.catchUp.isActive) return;
     final loadToken = ++_loadSequence;
     _undo = null; // the finished queue's positions stop meaning anything
+    _hideUndo = null;
     _set(_state.copyWith(loading: true, error: null));
     _previewForCardId = null;
     _previewAt = null;
@@ -1030,10 +1037,14 @@ class ReviewController extends ChangeNotifier {
     }
 
     try {
-      final queue = await api.fetchAheadQueue(
-        deckId: _state.deckFilter,
-        includedDeckIds: _state.deckFilter == null ? _automaticDeckIds : null,
-        order: _activePrefs.newOrder,
+      final queue = _withoutPendingReviews(
+        await api.fetchAheadQueue(
+          deckId: _state.deckFilter,
+          includedDeckIds: _state.deckFilter == null ? _automaticDeckIds : null,
+          order: _activePrefs.newOrder,
+          excludeCardIds: _hiddenCardIds,
+        ),
+        const [],
       );
       if (loadToken != _loadSequence) return;
       _set(
@@ -1315,6 +1326,10 @@ class ReviewController extends ChangeNotifier {
   /// removal.
   static const Set<String> hideReasons = {'dislike', 'delete'};
 
+  /// Flag-outbox entry kind that withdraws an undone one-tap flag on the
+  /// server. Plain flag entries carry no `op`.
+  static const String dismissOp = 'dismiss';
+
   /// Queue a bad-card report for the current card and kick off a flag flush.
   /// Flagging is a pure side-channel: it never rates, skips, or advances the
   /// card, and the review flow is left entirely untouched. Flagging the same
@@ -1407,16 +1422,24 @@ class ReviewController extends ChangeNotifier {
         } catch (_) {}
       }
       if (!identical(_hideUndo, record)) return;
-      final removed = await store.removeFlagEntry(record.clientId);
-      if (!removed) {
+      // A queued entry is not proof the server never saw the flag: a commit
+      // whose reply was lost stays queued too. Drop the entry, then always
+      // withdraw on the server, queueing a durable withdrawal when offline.
+      await store.removeFlagEntry(record.clientId);
+      try {
+        await api.dismissFlag(
+          cardId: record.card.id,
+          clientEventId: record.clientId,
+        );
+      } catch (_) {
         try {
-          await api.dismissFlag(
-            cardId: record.card.id,
-            clientEventId: record.clientId,
-          );
+          await store.enqueueFlag(<String, dynamic>{
+            'op': dismissOp,
+            'card_id': record.card.id,
+            'client_id': record.clientId,
+          });
         } catch (_) {
-          // Offline: the flag stands and undo stays available for a retry.
-          debugPrint('Recall: flag undo failed (offline?)');
+          debugPrint('Recall: flag undo could not be recorded');
           return;
         }
       }
@@ -1446,26 +1469,34 @@ class ReviewController extends ChangeNotifier {
   /// brings hidden cards back.
   Future<void> _refreshHiddenCards() async {
     final before = _hiddenCardIds;
-    final Set<int> server;
-    try {
-      server = await api.fetchHiddenCardIds();
-    } catch (_) {
-      return;
-    }
+    // Read the local queue before the server: a flag delivered between the
+    // two reads is then either still queued here or already visible there.
     final List<Map<String, dynamic>> pending;
     try {
       pending = await store.flagOutbox();
     } catch (_) {
       return;
     }
-    final next = <int>{
-      ...server,
-      for (final entry in pending)
-        if (hideReasons.contains(entry['reason']) && entry['card_id'] is num)
-          (entry['card_id'] as num).toInt(),
-      // Hidden while this read was in flight.
-      ..._hiddenCardIds.difference(before),
-    };
+    final Set<int> server;
+    try {
+      server = await api.fetchHiddenCardIds();
+    } catch (_) {
+      return;
+    }
+    final next = <int>{...server};
+    for (final entry in pending) {
+      final id = entry['card_id'];
+      if (id is! num) continue;
+      if (entry['op'] == dismissOp) {
+        next.remove(id.toInt());
+      } else if (hideReasons.contains(entry['reason'])) {
+        next.add(id.toInt());
+      }
+    }
+    // Hides and undos that happened while the reads were in flight win.
+    next
+      ..addAll(_hiddenCardIds.difference(before))
+      ..removeAll(before.difference(_hiddenCardIds));
     _hiddenCardIds = next;
     unawaited(_quietly(() => store.replaceHiddenCards(next)));
   }
@@ -1737,7 +1768,14 @@ class ReviewController extends ChangeNotifier {
     for (final entry in pending) {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       try {
-        await api.applyFlag(entry);
+        if (entry['op'] == dismissOp) {
+          await api.dismissFlag(
+            cardId: (entry['card_id'] as num).toInt(),
+            clientEventId: entry['client_id'].toString(),
+          );
+        } else {
+          await api.applyFlag(entry);
+        }
         sent++;
       } catch (_) {
         debugPrint('Recall: flag sync deferred (table missing?)');

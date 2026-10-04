@@ -276,6 +276,7 @@ class RecallApi implements ReviewReplayGateway {
     Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
@@ -315,6 +316,13 @@ class RecallApi implements ReviewReplayGateway {
       dueQ = dueQ.inFilter('notes.deck_id', ids);
       newQ = newQ.inFilter('notes.deck_id', ids);
     }
+    // Cards hidden by an open one-tap flag are excluded before the new-card
+    // limit, so a hidden card never uses up the day's introduction budget.
+    final excluded = _idList(excludeCardIds);
+    if (excluded != null) {
+      dueQ = dueQ.not('id', 'in', excluded);
+      newQ = newQ.not('id', 'in', excluded);
+    }
 
     // newest_first inverts the id order; random still fetches a stable page
     // (id asc) and shuffles client-side so the same cards recur across loads.
@@ -346,10 +354,18 @@ class RecallApi implements ReviewReplayGateway {
     final revalidations = await revalidationsFuture;
     final priorityIds = {for (final card in revalidations) card.id};
     return [
-      ...revalidations,
+      for (final card in revalidations)
+        if (!excludeCardIds.contains(card.id)) card,
       for (final card in ordinary)
         if (!priorityIds.contains(card.id)) card,
     ];
+  }
+
+  /// A PostgREST `in` list for [ids], or null when there is nothing to filter.
+  static String? _idList(Set<int> ids) {
+    if (ids.isEmpty) return null;
+    final sorted = ids.toList()..sort();
+    return '(${sorted.join(',')})';
   }
 
   Future<List<ReviewCard>> _fetchContentRevalidationQueueOrEmpty(
@@ -550,6 +566,7 @@ class RecallApi implements ReviewReplayGateway {
     Duration horizon = const Duration(hours: 24),
     int limit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
@@ -569,6 +586,8 @@ class RecallApi implements ReviewReplayGateway {
       final ids = included.toList()..sort();
       aheadQ = aheadQ.inFilter('notes.deck_id', ids);
     }
+    final excluded = _idList(excludeCardIds);
+    if (excluded != null) aheadQ = aheadQ.not('id', 'in', excluded);
     final aheadRows = await aheadQ.order('due', ascending: true).limit(limit);
     final ahead = [
       for (final r in aheadRows)
@@ -590,6 +609,7 @@ class RecallApi implements ReviewReplayGateway {
       final ids = included.toList()..sort();
       newQ = newQ.inFilter('notes.deck_id', ids);
     }
+    if (excluded != null) newQ = newQ.not('id', 'in', excluded);
     final newAscending = order != NewOrder.newestFirst;
     final newRows = await newQ
         .order('id', ascending: newAscending)

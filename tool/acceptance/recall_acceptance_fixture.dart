@@ -352,9 +352,13 @@ class SanitizedRecallApi extends RecallApi {
     Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     _requireOnline();
-    final cards = _selected(deckId: deckId, includedDeckIds: includedDeckIds);
+    final cards = _selected(
+      deckId: deckId,
+      includedDeckIds: includedDeckIds,
+    ).where((card) => !excludeCardIds.contains(card.id)).toList();
     final revalidations = cards
         .where((card) => card.contentRevalidationPending)
         .take(RecallApi.contentRevalidationBatchSize)
@@ -405,10 +409,14 @@ class SanitizedRecallApi extends RecallApi {
     Duration horizon = const Duration(hours: 24),
     int limit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     _requireOnline();
     final cutoff = dataset.now.add(horizon);
-    final cards = _selected(deckId: deckId, includedDeckIds: includedDeckIds);
+    final cards = _selected(
+      deckId: deckId,
+      includedDeckIds: includedDeckIds,
+    ).where((card) => !excludeCardIds.contains(card.id)).toList();
     final scheduled =
         cards
             .where(

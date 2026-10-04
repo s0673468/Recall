@@ -340,16 +340,19 @@ class _FakeRecallApi implements RecallApi {
     Set<int>? includedDeckIds,
     int newLimit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     queueFetches++;
     lastNewLimit = newLimit;
     lastOrder = order;
     lastIncludedDeckIds = includedDeckIds;
+    lastExcludedCardIds = excludeCardIds;
     await beforeQueue?.call();
     return [
       for (final c in queue)
         if ((deckId == null || c.deckId == deckId) &&
-            (includedDeckIds == null || includedDeckIds.contains(c.deckId)))
+            (includedDeckIds == null || includedDeckIds.contains(c.deckId)) &&
+            !excludeCardIds.contains(c.id))
           _project(c),
     ];
   }
@@ -379,8 +382,10 @@ class _FakeRecallApi implements RecallApi {
     Duration horizon = const Duration(hours: 24),
     int limit = 20,
     NewOrder order = NewOrder.oldestFirst,
+    Set<int> excludeCardIds = const {},
   }) async {
     aheadFetches++;
+    lastAheadExcludedCardIds = excludeCardIds;
     final cutoff = DateTime.now().toUtc().add(horizon);
     final all = [
       for (final c in queue)
@@ -495,10 +500,24 @@ class _FakeRecallApi implements RecallApi {
     await beforeApplyFlag?.call();
     if (failApplyFlag) throw StateError('note_flags missing');
     flagged.add(e);
+    if (commitThenThrowFlag) throw StateError('reply lost');
   }
 
   /// Client event ids of flags withdrawn through [dismissFlag].
   final List<String> dismissedFlags = [];
+
+  /// The hidden ids the last queue and bonus fetches excluded.
+  Set<int> lastExcludedCardIds = const {};
+  Set<int> lastAheadExcludedCardIds = const {};
+
+  /// When true, the hidden-card read returns the state from before any flag
+  /// was inserted, after first running [onFetchHidden].
+  bool staleHiddenRead = false;
+  Future<void> Function()? onFetchHidden;
+
+  /// When true, applyFlag commits the flag and then throws, as if the reply
+  /// was lost.
+  bool commitThenThrowFlag = false;
 
   /// When true, the hidden-card read throws (e.g. offline).
   bool failFetchHidden = false;
@@ -509,6 +528,8 @@ class _FakeRecallApi implements RecallApi {
   @override
   Future<Set<int>> fetchHiddenCardIds() async {
     if (failFetchHidden) throw StateError('offline');
+    await onFetchHidden?.call();
+    if (staleHiddenRead) return const {};
     return {
       for (final flag in flagged)
         if ((flag['reason'] == 'dislike' || flag['reason'] == 'delete') &&
@@ -4744,19 +4765,97 @@ void main() {
       expect(controller.state.queue.map((c) => c.id), [1, 2]);
     });
 
-    test('an offline undo of a synced hide keeps undo available', () async {
+    test('an offline undo of a synced hide queues a durable withdrawal', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
       final store = LocalReviewStore();
       final controller = build(api, store: store);
       await controller.load();
       await controller.hideCurrent('dislike');
       await controller.syncPending();
+      final clientId = api.flagged.single['client_id'] as String;
       api.failDismissFlag = true;
 
       await controller.undo();
 
-      expect(controller.state.current?.id, 2);
-      expect(controller.canUndo, isTrue);
+      expect(controller.state.current?.id, 1);
+      expect(controller.canUndo, isFalse);
+      expect((await store.flagOutbox()).single['op'], 'dismiss');
+      // A reload while offline must not re-hide the withdrawn card.
+      api.failDismissFlag = false;
+      api.failFetchHidden = false;
+      await controller.refresh();
+      expect(api.dismissedFlags, [clientId]);
+      expect(controller.state.queue.map((c) => c.id), [1, 2]);
+    });
+
+    test('undo withdraws a flag whose delivery reply was lost', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.commitThenThrowFlag = true; // committed, but stays queued locally
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('delete');
+      await controller.syncPending();
+      expect(await store.flagOutbox(), hasLength(1));
+      final clientId = api.flagged.single['client_id'] as String;
+
+      await controller.undo();
+
+      expect(api.dismissedFlags, [clientId]);
+      expect(await store.flagOutbox(), isEmpty);
+      expect(controller.state.current?.id, 1);
+    });
+
+    test('hidden cards are excluded before the queue fetch limits', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+
+      await controller.refresh();
+
+      expect(api.lastExcludedCardIds, {1});
+    });
+
+    test('keep going never brings back a hidden card', () async {
+      final now = DateTime.now().toUtc();
+      final api = _FakeRecallApi([
+        _card(id: 1, state: 2, due: now.subtract(const Duration(hours: 1))),
+      ]);
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      await controller.syncPending();
+      expect(controller.state.isDone, isTrue);
+
+      await controller.keepGoing();
+
+      expect(api.lastAheadExcludedCardIds, {1});
+      expect(controller.state.queue.map((c) => c.id), isNot(contains(1)));
+      expect(controller.canUndo, isFalse);
+    });
+
+    test('a flag delivered during the hidden-card read stays hidden', () async {
+      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+      api.failApplyFlag = true;
+      final store = LocalReviewStore();
+      final controller = build(api, store: store);
+      await controller.load();
+      await controller.hideCurrent('dislike');
+      // The server read sees the pre-insert state while the flag is
+      // delivered and drained from the outbox in the meantime.
+      api
+        ..failApplyFlag = false
+        ..staleHiddenRead = true
+        ..onFetchHidden = () => controller.syncPending();
+
+      await controller.refresh();
+
+      expect(api.flagged.single['card_id'], 1);
+      expect(controller.state.queue.map((c) => c.id), [2]);
     });
 
     test('a rating after a hide makes the rating the undoable action', () async {
