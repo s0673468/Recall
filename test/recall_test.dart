@@ -4894,7 +4894,7 @@ void main() {
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
-      expect(find.byTooltip('Undo'), findsNothing);
+      expect(find.byTooltip('Undo').hitTestable(), findsNothing);
 
       await tester.tap(find.text('Show answer'));
       await tester.pump();
@@ -4909,7 +4909,7 @@ void main() {
 
       expect(find.textContaining('first question'), findsOneWidget);
       expect(find.text('Show answer'), findsOneWidget);
-      expect(find.byTooltip('Undo'), findsNothing);
+      expect(find.byTooltip('Undo').hitTestable(), findsNothing);
     });
 
     testWidgets('the all-caught-up screen still offers undo', (tester) async {
@@ -5054,9 +5054,17 @@ void main() {
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
+      final dislikeBefore = tester.getCenter(
+        find.byKey(const Key('recall_flag_dislike')),
+      );
       await tester.tap(find.byKey(const Key('recall_flag_dislike')));
       await tester.pumpAndSettle();
 
+      // Undo appearing must not shift the flag buttons under the finger.
+      expect(
+        tester.getCenter(find.byKey(const Key('recall_flag_dislike'))),
+        dislikeBefore,
+      );
       expect(controller.state.current?.id, 712);
       expect(find.text('Hidden until Sunday review'), findsOneWidget);
       expect(find.byType(BottomSheet), findsNothing);

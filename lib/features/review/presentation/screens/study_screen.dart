@@ -340,12 +340,19 @@ class _Header extends StatelessWidget {
             icon: const Icon(Icons.delete_outline, size: 21),
             onPressed: onDelete,
           ),
-          if (onUndo != null)
-            IconButton(
+          // The undo slot is always reserved so the flag buttons never shift
+          // under a finger when undo appears after a hide or rating.
+          Visibility(
+            visible: onUndo != null,
+            maintainSize: true,
+            maintainAnimation: true,
+            maintainState: true,
+            child: IconButton(
               tooltip: 'Undo',
               icon: const Icon(Icons.undo, size: 20),
               onPressed: onUndo,
             ),
+          ),
           IconButton(
             tooltip: 'More options',
             icon: const Icon(Icons.more_horiz, size: 22),
