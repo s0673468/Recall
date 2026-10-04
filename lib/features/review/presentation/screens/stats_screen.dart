@@ -91,9 +91,39 @@ class StatsScreenState extends State<StatsScreen> {
     ]);
   }
 
+  /// Derived chart data, keyed by the exact inputs it was computed from. The
+  /// transforms walk the whole review log, so a retention-window change or a
+  /// tab revisit that serves the same log must not recompute every section.
+  final _derived = <String, ({List<Object?> inputs, Object? value})>{};
+
+  T _derive<T>(String key, List<Object?> inputs, T Function() compute) {
+    final hit = _derived[key];
+    if (hit != null && _sameInputs(hit.inputs, inputs)) return hit.value as T;
+    final value = compute();
+    _derived[key] = (inputs: inputs, value: value);
+    return value;
+  }
+
+  static bool _sameInputs(List<Object?> a, List<Object?> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i]) && a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
     final today = DateTime.now();
+    // Every transform below depends on the calendar day only.
+    final day = StatsService.dayOnly(today);
+    ({String recall, int reviews, int streak}) tiles(
+      List<ReviewLogEntry> log,
+    ) => _derive(
+      'tiles',
+      [log, day],
+      () => StatsService.tileStats(log, today: today),
+    );
     return RefreshIndicator(
       onRefresh: reload,
       // Eagerly build the small set of sections. Together with maintainState,
@@ -118,10 +148,14 @@ class StatsScreenState extends State<StatsScreen> {
               builder: (log) => RetentionPanel(
                 key: const Key('recall_retention_hero'),
                 hero: true,
-                summary: StatsService.computeRetention(
-                  log,
-                  now: today,
-                  windowDays: _retentionWindow,
+                summary: _derive(
+                  'retention',
+                  [log, day, _retentionWindow],
+                  () => StatsService.computeRetention(
+                    log,
+                    now: today,
+                    windowDays: _retentionWindow,
+                  ),
                 ),
                 windowDays: _retentionWindow,
                 onWindowChanged: (w) => setState(() => _retentionWindow = w),
@@ -132,7 +166,7 @@ class StatsScreenState extends State<StatsScreen> {
               future: _reviewLog,
               label: 'history',
               builder: (log) {
-                final t = StatsService.tileStats(log, today: today);
+                final t = tiles(log);
                 return RecallMetricStrip(
                   key: const Key('recall_stats_history_strip'),
                   metrics: [
@@ -153,7 +187,7 @@ class StatsScreenState extends State<StatsScreen> {
                 future: _reviewLog,
                 label: 'heatmap',
                 builder: (log) {
-                  final t = StatsService.tileStats(log, today: today);
+                  final t = tiles(log);
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -163,7 +197,11 @@ class StatsScreenState extends State<StatsScreen> {
                       ),
                       const SizedBox(height: UiSpacing.md),
                       ReviewHeatmap(
-                        days: StatsService.buildHeatmap(log, today: today),
+                        days: _derive(
+                          'heatmap',
+                          [log, day],
+                          () => StatsService.buildHeatmap(log, today: today),
+                        ),
                       ),
                     ],
                   );
@@ -177,7 +215,11 @@ class StatsScreenState extends State<StatsScreen> {
                 future: _dueDates,
                 label: 'forecast',
                 builder: (due) => DueForecastChart(
-                  days: StatsService.buildForecast(due, today: today),
+                  days: _derive(
+                    'forecast',
+                    [due, day],
+                    () => StatsService.buildForecast(due, today: today),
+                  ),
                 ),
               ),
             ),
@@ -188,11 +230,15 @@ class StatsScreenState extends State<StatsScreen> {
                 future: _conceptData,
                 label: 'concepts',
                 builder: (data) {
-                  final result = StatsService.computeNodeRetention(
-                    reviewLog: data.log,
-                    noteTags: data.tags,
-                    conceptNodes: data.nodes,
-                    now: today,
+                  final result = _derive(
+                    'concepts',
+                    [data.log, data.tags, data.nodes, day],
+                    () => StatsService.computeNodeRetention(
+                      reviewLog: data.log,
+                      noteTags: data.tags,
+                      conceptNodes: data.nodes,
+                      now: today,
+                    ),
                   );
                   return ConceptRetentionPanel(
                     ranked: result.ranked,

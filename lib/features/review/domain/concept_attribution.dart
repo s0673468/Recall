@@ -1,3 +1,4 @@
+import 'local_day.dart';
 import 'stats_models.dart';
 
 /// Pure rules for attributing reviewed notes to Recall concept nodes.
@@ -8,6 +9,7 @@ import 'stats_models.dart';
 abstract final class ConceptAttribution {
   static const String _nodeTagPrefix = 'node::';
   static const String _nodeNoneSentinel = 'none';
+  static final RegExp _whitespace = RegExp(r'\s+');
 
   /// Concept-node ids from a space-delimited `notes.tags` string,
   /// order-preserving and deduplicated, excluding the `node::none` sentinel.
@@ -16,7 +18,7 @@ abstract final class ConceptAttribution {
     if (tags == null || tags.isEmpty) return const [];
     final out = <String>[];
     final seen = <String>{};
-    for (final token in tags.split(RegExp(r'\s+'))) {
+    for (final token in tags.split(_whitespace)) {
       if (!token.startsWith(_nodeTagPrefix)) continue;
       final id = token.substring(_nodeTagPrefix.length);
       if (id.isEmpty || id == _nodeNoneSentinel) continue;
@@ -34,9 +36,10 @@ abstract final class ConceptAttribution {
     required DateTime today,
   }) {
     final targetDay = _dayOnly(today);
+    final dayOf = LocalDayMemo();
     final reviewedNodeIds = <String>{};
     for (final review in reviewLog) {
-      if (_dayOnly(review.at) != targetDay) continue;
+      if (dayOf(review.at) != targetDay) continue;
       final guid = review.guid;
       if (guid == null) continue;
       reviewedNodeIds.addAll(nodeTags(noteTags[guid]));
@@ -64,8 +67,9 @@ abstract final class ConceptAttribution {
       todayOnly.day - (days - 1),
     );
     final lastReviewed = <String, DateTime>{};
+    final dayOf = LocalDayMemo();
     for (final review in reviewLog) {
-      final day = _dayOnly(review.at);
+      final day = dayOf(review.at);
       if (day.isBefore(firstDay) || day.isAfter(todayOnly)) continue;
       final guid = review.guid;
       if (guid == null) continue;

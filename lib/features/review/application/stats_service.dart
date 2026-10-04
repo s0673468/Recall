@@ -1,6 +1,7 @@
 import '../data/recall_api.dart';
 import '../data/models.dart';
 import '../domain/concept_attribution.dart';
+import '../domain/local_day.dart';
 import '../domain/stats_models.dart';
 
 /// Owns the Stats screen's data access (via [RecallApi]) plus the pure
@@ -74,8 +75,9 @@ class StatsService {
     final totalDays = weeks * 7;
 
     final counts = <DateTime, int>{};
+    final dayOf = LocalDayMemo();
     for (final r in reviews) {
-      final day = dayOnly(r.at);
+      final day = dayOf(r.at);
       if (day.isBefore(gridStart) || day.isAfter(todayDay)) continue;
       counts[day] = (counts[day] ?? 0) + 1;
     }
@@ -146,9 +148,14 @@ class StatsService {
     // The API orders rows, but keeping this transform pure and order-safe makes
     // it usable with cached or test fixtures too. The previous review remains
     // available even when it falls outside the retention window.
+    final dayOf = LocalDayMemo();
     final ordered = List<ReviewLogEntry>.from(
-      reviews.where((r) => !dayOnly(r.at).isAfter(todayDay)),
-    )..sort((a, b) => a.at.compareTo(b.at));
+      reviews.where((r) => !dayOf(r.at).isAfter(todayDay)),
+    );
+    // The API already returns rows oldest-first; only sort when needed.
+    if (!_isChronological(ordered)) {
+      ordered.sort((a, b) => a.at.compareTo(b.at));
+    }
     final previousAtByCard = <int, DateTime>{};
     final previousStateAfterByCard = <int, int?>{};
 
@@ -243,8 +250,9 @@ class StatsService {
 
     final reviews = <String, int>{};
     final again = <String, int>{};
+    final dayOf = LocalDayMemo();
     for (final r in reviewLog) {
-      final day = dayOnly(r.at);
+      final day = dayOf(r.at);
       if (day.isBefore(cutoff) || day.isAfter(todayDay)) continue;
       final guid = r.guid;
       if (guid == null) continue;
@@ -297,15 +305,29 @@ class StatsService {
   }) {
     final todayDay = dayOnly(today);
     final cutoff = _shiftDay(todayDay, -windowDays);
-    final throughToday = reviews.where((r) => !dayOnly(r.at).isAfter(todayDay));
-    final windowed = throughToday.where((r) => !dayOnly(r.at).isBefore(cutoff));
-    final total = windowed.length;
-    final retained = windowed.where((r) => r.rating >= 2).length;
-    final recall = total == 0 ? '—' : '${(retained / total * 100).round()}%';
+    final dayOf = LocalDayMemo();
+    var total = 0;
+    var retained = 0;
     // Streak spans the whole log, not the recall window: building the day-set
-    // from `windowed` capped it at windowDays + 1.
-    final days = {for (final r in throughToday) dayOnly(r.at)};
+    // from the windowed rows capped it at windowDays + 1.
+    final days = <DateTime>{};
+    for (final r in reviews) {
+      final day = dayOf(r.at);
+      if (day.isAfter(todayDay)) continue;
+      days.add(day);
+      if (day.isBefore(cutoff)) continue;
+      total++;
+      if (r.rating >= 2) retained++;
+    }
+    final recall = total == 0 ? '—' : '${(retained / total * 100).round()}%';
     return (recall: recall, reviews: total, streak: _streak(days, today));
+  }
+
+  static bool _isChronological(List<ReviewLogEntry> reviews) {
+    for (var i = 1; i < reviews.length; i++) {
+      if (reviews[i].at.isBefore(reviews[i - 1].at)) return false;
+    }
+    return true;
   }
 
   static int _streak(Set<DateTime> days, DateTime today) {
