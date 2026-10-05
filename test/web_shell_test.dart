@@ -112,7 +112,14 @@ void main() {
           ? NavigationBar
           : NavigationRail,
     );
-    await tester.tap(find.descendant(of: chrome, matching: find.text(label)));
+    await tester.tap(
+      find.descendant(
+        of: chrome,
+        matching: chrome.evaluate().single.widget is NavigationRail
+            ? find.byTooltip(label)
+            : find.text(label),
+      ),
+    );
     await tester.pumpAndSettle();
   }
 
@@ -122,13 +129,16 @@ void main() {
     await pumpShell(tester, size: const Size(1440, 900));
     expect(find.byType(NavigationBar), findsNothing);
     final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
-    expect(rail.extended, isTrue);
+    expect(rail.extended, isFalse);
+    expect(rail.labelType, NavigationRailLabelType.none);
+    expect(tester.getSize(find.byType(NavigationRail)).width, 64);
+    expect(find.byTooltip('Recall'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byType(NavigationRail),
         matching: find.text('Recall'),
       ),
-      findsOneWidget,
+      findsNothing,
     );
     for (final (index, label) in [
       (1, 'Decks'),
@@ -194,7 +204,7 @@ void main() {
     );
     expect(study.width, lessThanOrEqualTo(640));
     expect(study.height, lessThanOrEqualTo(640));
-    expect(reading.width, inInclusiveRange(360, 460));
+    expect(reading.width, closeTo(study.width, 1));
     expect(reading.left, greaterThan(study.right));
     final current = controller.state.current;
     final search = find.descendant(
@@ -224,6 +234,10 @@ void main() {
     expect(
       tester.getSize(find.byType(StudyScreen)).height,
       lessThanOrEqualTo(640),
+    );
+    expect(
+      tester.getSize(find.byKey(const Key('recall_reading_column'))).width,
+      closeTo(tester.getSize(find.byType(StudyScreen)).width, 1),
     );
     expect(tester.takeException(), isNull);
   });
@@ -290,10 +304,7 @@ void main() {
       final rail = find.byType(NavigationRail);
       if (size.width >= 840) {
         expect(tester.widget<NavigationRail>(rail).selectedIndex, 1);
-        expect(
-          tester.widget<NavigationRail>(rail).extended,
-          size.width >= 1100,
-        );
+        expect(tester.widget<NavigationRail>(rail).extended, false);
       } else {
         expect(rail, findsNothing);
         expect(
@@ -352,7 +363,7 @@ void main() {
     expect(rail.scrollable, isTrue);
     final read = find.descendant(
       of: find.byType(NavigationRail),
-      matching: find.text('Read'),
+      matching: find.byTooltip('Read'),
     );
     await tester.ensureVisible(read);
     await tester.pumpAndSettle();
