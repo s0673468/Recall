@@ -72,7 +72,8 @@ bundle a password, service-role key, or automatic sign-in credentials. The
 existing Pages workflow deploys the protected `main` build after merge.
 The startup screen shows the website build's short commit ID (also available
 in the page's `recall-build` metadata). A quiet **Update ready** notice appears
-when a controlled tab has a new worker waiting. Open the notice for instructions,
+on desktop when a controlled tab has a new worker waiting. Narrow screens omit
+the notice to keep header actions reachable. Open the notice for instructions,
 or dismiss it and finish studying. It never reloads the page or changes the
 running session. Finish the session, close **all** Recall tabs and standalone
 PWA windows, then reopen Recall to let the versioned worker activate. Keep browser

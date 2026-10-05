@@ -121,6 +121,10 @@
       font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     }
     #recall-update-notice:not([hidden]) { display: flex; align-items: flex-start; }
+    /* Phone headers use this space for review actions. Keep them reachable. */
+    @media (max-width: 839px) {
+      #recall-update-notice:not([hidden]) { display: none; }
+    }
     #recall-update-notice summary {
       min-height: 44px; box-sizing: border-box; padding: 12px;
       cursor: pointer; color: #D4C18D;
