@@ -38,7 +38,11 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME).then((cache) =>
       // allSettled: a single failed fetch (mid-deploy 404) must not abort the
       // install — missing entries just fall back to the network at runtime.
-      Promise.allSettled(CORE.map((url) => cache.add(url)))
+      // A new version must not inherit the previous deploy from the browser's
+      // HTTP cache (Pages sends a ten-minute max-age for these same URLs).
+      Promise.allSettled(CORE.map((url) => cache.add(new Request(
+        new URL(url, self.location.href), { cache: 'reload' }
+      ))))
     )
   );
 });
@@ -76,7 +80,7 @@ async function cacheFirst(request) {
     ignoreSearch: request.mode === 'navigate',
   });
   if (cached) return cached;
-  const response = await fetch(request);
+  const response = await fetch(request, { cache: 'reload' });
   if (response.ok && response.type === 'basic') {
     try {
       await cache.put(request, response.clone());
