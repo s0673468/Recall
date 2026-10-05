@@ -5,7 +5,7 @@ import '../features/review/data/recall_api.dart';
 import '../features/review/presentation/widgets/desktop_reading_pane.dart';
 import '../theme/ui_tokens.dart';
 
-/// A bounded study desk: the card stays primary, reading sits alongside it.
+/// A bounded study desk with equal space for studying and reading.
 /// Keep both children mounted when the browser narrows or changes tabs.
 class DesktopStudyWorkspace extends StatelessWidget {
   final bool enabled;
@@ -28,7 +28,7 @@ class DesktopStudyWorkspace extends StatelessWidget {
       final desktop = enabled && MediaQuery.sizeOf(context).width >= 840;
       final split = enabled && constraints.maxWidth >= 1000 && scale < 1.6;
       final readingWidth = split
-          ? (constraints.maxWidth * .38).clamp(360.0, 460.0)
+          ? (constraints.maxWidth - UiSpacing.md * 2 - UiSpacing.xl) / 2
           : 0.0;
       return Padding(
         padding: EdgeInsets.symmetric(

@@ -222,7 +222,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               final webRail = _isWeb && constraints.maxWidth >= 840;
               final useRail =
                   webRail || (_nativeAndroid && constraints.maxWidth >= 600);
-              final extendedRail = webRail && constraints.maxWidth >= 1100;
               final content = Column(
                 children: [
                   SizedBox(
@@ -283,7 +282,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           RecallNavigationRail(
                             selectedIndex: _index,
                             onDestinationSelected: _selectIndex,
-                            extended: extendedRail,
                             onOpenSettings: webRail ? _openSettings : null,
                             showBrand: webRail,
                           ),
@@ -474,11 +472,12 @@ class RecallNavigationRail extends StatelessWidget {
     final accent = Theme.of(context).colorScheme.primary;
     return NavigationRail(
       extended: extended,
+      minWidth: showBrand ? 64 : null,
       minExtendedWidth: 208,
       scrollable: showBrand,
       selectedIndex: selectedIndex,
       onDestinationSelected: onDestinationSelected,
-      labelType: extended
+      labelType: extended || showBrand
           ? NavigationRailLabelType.none
           : NavigationRailLabelType.all,
       leading: showBrand
@@ -489,13 +488,21 @@ class RecallNavigationRail extends StatelessWidget {
                 UiSpacing.sm,
                 UiSpacing.xl,
               ),
-              child: Text(
-                UiBrand.appName,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                  color: UiColors.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              child: extended
+                  ? Text(
+                      UiBrand.appName,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: UiColors.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    )
+                  : const Tooltip(
+                      message: 'Recall',
+                      child: Icon(
+                        Icons.auto_stories_outlined,
+                        color: UiColors.textPrimary,
+                      ),
+                    ),
             )
           : null,
       trailingAtBottom: true,
@@ -532,23 +539,26 @@ class RecallNavigationRail extends StatelessWidget {
       unselectedLabelTextStyle: const TextStyle(color: UiColors.textMuted),
       destinations: const [
         NavigationRailDestination(
-          icon: Icon(Icons.style_outlined),
-          selectedIcon: Icon(Icons.style),
+          icon: Tooltip(message: 'Study', child: Icon(Icons.style_outlined)),
+          selectedIcon: Tooltip(message: 'Study', child: Icon(Icons.style)),
           label: Text('Study'),
         ),
         NavigationRailDestination(
-          icon: Icon(Icons.folder_outlined),
-          selectedIcon: Icon(Icons.folder),
+          icon: Tooltip(message: 'Decks', child: Icon(Icons.folder_outlined)),
+          selectedIcon: Tooltip(message: 'Decks', child: Icon(Icons.folder)),
           label: Text('Decks'),
         ),
         NavigationRailDestination(
-          icon: Icon(Icons.bar_chart_outlined),
-          selectedIcon: Icon(Icons.bar_chart),
+          icon: Tooltip(
+            message: 'Stats',
+            child: Icon(Icons.bar_chart_outlined),
+          ),
+          selectedIcon: Tooltip(message: 'Stats', child: Icon(Icons.bar_chart)),
           label: Text('Stats'),
         ),
         NavigationRailDestination(
-          icon: Icon(Icons.menu_book_outlined),
-          selectedIcon: Icon(Icons.menu_book),
+          icon: Tooltip(message: 'Read', child: Icon(Icons.menu_book_outlined)),
+          selectedIcon: Tooltip(message: 'Read', child: Icon(Icons.menu_book)),
           label: Text('Read'),
         ),
       ],
