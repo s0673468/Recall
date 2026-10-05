@@ -35,6 +35,7 @@ class RecallPrefsController extends ChangeNotifier {
   bool _hasStored = false;
   String? _ownerId;
   bool _ownerReady = false;
+  bool _applyingCloudUpdate = false;
   int _version = 0;
   Future<void> _localTail = Future<void>.value();
   Future<void> _syncTail = Future<void>.value();
@@ -42,6 +43,11 @@ class RecallPrefsController extends ChangeNotifier {
   RecallPrefs get value => _value;
   bool get hasStoredPrefs => _hasStored;
   String? get activeOwnerId => _ownerId;
+
+  /// True only while listeners receive a cloud refresh. Local settings edits
+  /// still apply immediately; an unsolicited device update may defer queue
+  /// reshaping until the current study card has been completed.
+  bool get applyingCloudUpdate => _applyingCloudUpdate;
 
   static String localKeyForOwner(String ownerId) =>
       '$_ownerLocalPrefix:${_ownerKey(ownerId)}';
@@ -203,7 +209,12 @@ class RecallPrefsController extends ChangeNotifier {
         );
         _value = next;
         _hasStored = true;
-        notifyListeners();
+        _applyingCloudUpdate = true;
+        try {
+          notifyListeners();
+        } finally {
+          _applyingCloudUpdate = false;
+        }
       });
     } catch (_) {
       debugPrint('Recall: local prefs sync unavailable (non-fatal)');

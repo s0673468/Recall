@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show AppScrollBehavior, AuthGate, AuthGateModel;
@@ -125,6 +126,9 @@ class _RecallRootState extends State<_RecallRoot> {
               api: widget.dependencies.api,
               prefs: widget.dependencies.recallPrefs,
               reminder: widget.dependencies.studyReminder,
+              foregroundSync: kIsWeb
+                  ? widget.dependencies.browserSync?.sync
+                  : null,
             ),
           );
         }

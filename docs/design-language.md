@@ -53,6 +53,12 @@ Native conventions remain where they improve ergonomics: Cupertino tab chrome,
 routes, action sheets, and time selection on iOS; Material navigation, the
 adaptive rail, back behavior, and system integration on Android.
 
+The website shares the Android content, type, colours, and study controls.
+Browser windows below 840 logical pixels use bottom navigation; wider windows
+use the rail, with extended labels from 1100 pixels. The rail adds Recall
+branding and direct access to Settings. Content stays at a comfortable 820
+pixel maximum width, and resizing preserves the screen and active study state.
+
 Launch surfaces use the charcoal canvas so neither platform flashes white
 before Flutter paints. The redesign does not change card content, scheduling,
 account boundaries, or offline synchronization.

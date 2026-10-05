@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 
@@ -31,6 +32,8 @@ class AppShell extends StatefulWidget {
   final RecallLinkSource? linkSource;
   final bool? nativeIos;
   final bool? nativeAndroid;
+  final bool? isWeb;
+  final Future<void> Function()? foregroundSync;
   final OperationalEventRecorder diagnostics;
 
   AppShell({
@@ -42,6 +45,8 @@ class AppShell extends StatefulWidget {
     this.linkSource,
     this.nativeIos,
     this.nativeAndroid,
+    this.isWeb,
+    this.foregroundSync,
     OperationalEventRecorder? diagnostics,
   }) : diagnostics = diagnostics ?? RecallDiagnostics.instance;
 
@@ -57,6 +62,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   late final bool _nativeIos = widget.nativeIos ?? recallRunsAsNativeIos();
   late final bool _nativeAndroid =
       widget.nativeAndroid ?? recallRunsAsNativeAndroid();
+  late final bool _isWeb = widget.isWeb ?? kIsWeb;
   late final RecallDeepLinkController _deepLinks;
 
   @override
@@ -92,11 +98,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   Future<void> _resumeAndReconcileStudyReminder() async {
-    await runRecallForegroundSync(
-      diagnostics: widget.diagnostics,
-      syncPending: widget.controller.syncPending,
-      refreshIfIdle: widget.controller.refreshIfIdle,
-    );
+    final foregroundSync = widget.foregroundSync;
+    if (foregroundSync != null) {
+      await foregroundSync();
+    } else {
+      await runRecallForegroundSync(
+        diagnostics: widget.diagnostics,
+        syncPending: widget.controller.syncPending,
+        refreshIfIdle: widget.controller.refreshIfIdle,
+      );
+    }
     _reconcileStudyReminder(force: true);
   }
 
@@ -202,7 +213,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           },
           builder: (context, busy) => LayoutBuilder(
             builder: (context, constraints) {
-              final useRail = _nativeAndroid && constraints.maxWidth >= 600;
+              final webRail = _isWeb && constraints.maxWidth >= 840;
+              final useRail =
+                  webRail || (_nativeAndroid && constraints.maxWidth >= 600);
+              final extendedRail = webRail && constraints.maxWidth >= 1100;
               final content = Column(
                 children: [
                   SizedBox(
@@ -252,21 +266,30 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   key: const Key('recall_flat_canvas'),
                   color: UiColors.canvas,
                   child: SafeArea(
-                    child: useRail
-                        ? Row(
-                            children: [
-                              RecallNavigationRail(
-                                selectedIndex: _index,
-                                onDestinationSelected: _selectIndex,
-                              ),
-                              const VerticalDivider(
-                                width: 1,
-                                color: UiColors.borderSubtle,
-                              ),
-                              Expanded(child: content),
-                            ],
-                          )
-                        : content,
+                    // Keep the keyed content in the same Row while resizing.
+                    // Moving it into/out of a Row would remount the
+                    // Study screen and reset library searches and scroll state.
+                    child: Row(
+                      children: [
+                        if (useRail)
+                          RecallNavigationRail(
+                            selectedIndex: _index,
+                            onDestinationSelected: _selectIndex,
+                            extended: extendedRail,
+                            onOpenSettings: webRail ? _openSettings : null,
+                            showBrand: webRail,
+                          ),
+                        if (useRail)
+                          const VerticalDivider(
+                            width: 1,
+                            color: UiColors.borderSubtle,
+                          ),
+                        Expanded(
+                          key: const ValueKey('recall_shell_content'),
+                          child: content,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 extendBody: _nativeIos,
@@ -421,24 +444,75 @@ class RecallBottomNavigation extends StatelessWidget {
   }
 }
 
-/// Material adaptive navigation for Android tablets and wide rotations.
+/// Material adaptive navigation for Android tablets and desktop browsers.
 class RecallNavigationRail extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
+  final bool extended;
+  final bool showBrand;
+  final VoidCallback? onOpenSettings;
 
   const RecallNavigationRail({
     super.key,
     required this.selectedIndex,
     required this.onDestinationSelected,
+    this.extended = false,
+    this.showBrand = false,
+    this.onOpenSettings,
   });
 
   @override
   Widget build(BuildContext context) {
     final accent = Theme.of(context).colorScheme.primary;
     return NavigationRail(
+      extended: extended,
+      minExtendedWidth: 208,
+      scrollable: showBrand,
       selectedIndex: selectedIndex,
       onDestinationSelected: onDestinationSelected,
-      labelType: NavigationRailLabelType.all,
+      labelType: extended
+          ? NavigationRailLabelType.none
+          : NavigationRailLabelType.all,
+      leading: showBrand
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(
+                UiSpacing.sm,
+                UiSpacing.lg,
+                UiSpacing.sm,
+                UiSpacing.xl,
+              ),
+              child: Text(
+                UiBrand.appName,
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: UiColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            )
+          : null,
+      trailingAtBottom: true,
+      trailing: onOpenSettings == null
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(bottom: UiSpacing.md),
+              child: extended
+                  ? TextButton.icon(
+                      key: const Key('recall_rail_settings'),
+                      onPressed: onOpenSettings,
+                      icon: const Icon(Icons.settings_outlined),
+                      label: const Text('Settings'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: UiColors.textMuted,
+                      ),
+                    )
+                  : IconButton(
+                      key: const Key('recall_rail_settings'),
+                      tooltip: 'Settings',
+                      onPressed: onOpenSettings,
+                      icon: const Icon(Icons.settings_outlined),
+                      color: UiColors.textMuted,
+                    ),
+            ),
       backgroundColor: UiColors.sidebar,
       indicatorColor: Colors.transparent,
       selectedIconTheme: IconThemeData(color: accent),

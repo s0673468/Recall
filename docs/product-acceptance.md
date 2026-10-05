@@ -28,6 +28,9 @@ Run the executable acceptance suite with:
 
 ```bash
 ./tool/flutterw test --no-pub test/production_scale_acceptance_test.dart
+./tool/flutterw test --no-pub --platform chrome \
+  test/production_scale_acceptance_test.dart test/web_shell_test.dart \
+  test/browser/browser_sync_platform_events_test.dart
 ./tool/flutterw build web --release --no-pub \
   -t tool/recall_acceptance.dart \
   --base-href /Recall/ \
@@ -38,6 +41,10 @@ The web harness accepts `RECALL_ACCEPTANCE_SCENARIO=rich`, `empty`, `offline`,
 `partial_stats_failure`, or `signed_out` as a compile-time Dart define. `empty`
 represents an account with no decks, cards, reviews, tags, concepts, or primers,
 not merely an empty Study queue.
+
+The fixture lives in `test/support` so both native and Chrome test compilers
+can resolve it. The separate acceptance entrypoint displays a TEST DATA banner;
+the normal website never imports that fixture or displays its banner.
 
 ## Routes and platform shells
 
@@ -54,10 +61,18 @@ not merely an empty Study queue.
 | Concept primers | Stats Browse concept primers | Pushes the standalone searchable primer library; selecting a row pushes Primer; back returns through both pages without changing review state. | Empty library; 72-row eager list; long search; nested back. |
 | System back | Android/back gesture | From Decks, Stats, or Read, first back selects Study. From a pushed page, back pops that page. | Back during tab animation; repeated back. |
 
-Platform equivalence is finite: Material bottom navigation covers web and
-narrow Android; Cupertino navigation and modals cover native iOS; Android at
-600 logical pixels or wider uses the rail. The content and state contracts are
-shared.
+Platform equivalence is finite: Material bottom navigation covers narrow web
+and Android; Cupertino navigation and modals cover native iOS; Android at
+600 logical pixels or wider uses the rail. Web uses the rail from 840 pixels
+and extended labels from 1100 pixels, with a direct Settings action. Resizing
+preserves the active card/reveal, selected tab, search, and screen state.
+The content and state contracts are shared.
+
+Browser sync acceptance also covers reconnect, focus, page visibility,
+serialized wake signals, bounded visible polling, replay-before-refresh,
+failure recovery, disposal, and remote settings arriving during a revealed
+card. Native-only reminder notifications and widgets are outside browser
+parity; see [the website contract](../WEB_SETUP.md).
 
 ## Study inventory
 

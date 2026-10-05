@@ -1,8 +1,8 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 import 'package:health_anki_flutter/app/recall_app.dart';
 
-import 'acceptance/recall_acceptance_fixture.dart';
+import '../test/support/recall_acceptance_fixture.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,8 +12,15 @@ void main() {
   );
   final scenario = AcceptanceScenario.parse(rawScenario);
   runApp(
-    RecallBootstrapApp(
-      loader: () => createSanitizedAcceptanceDependencies(scenario: scenario),
+    Directionality(
+      textDirection: TextDirection.ltr,
+      child: Banner(
+        message: 'TEST DATA',
+        location: BannerLocation.topEnd,
+        child: RecallBootstrapApp(
+          loader: () => createSanitizedAcceptanceDependencies(scenario: scenario),
+        ),
+      ),
     ),
   );
 }
