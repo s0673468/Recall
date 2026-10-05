@@ -68,6 +68,14 @@ and extended labels from 1100 pixels, with a direct Settings action. Resizing
 preserves the active card/reveal, selected tab, search, and screen state.
 The content and state contracts are shared.
 
+Desktop Study adds a bounded card on the left and an independently scrolling
+reading pane on the right when at least 1000 content pixels are available.
+Search sits near the top and full-library browsing expands on demand. Related
+primers open inline; going back completes existing remediation without moving
+or revealing the card. Tests cover query and primer-scroll preservation during
+card changes, resizing, and tab switches; keyboard input in reading cannot
+trigger Study shortcuts. Large text uses single-column Study and the Read tab.
+
 Browser sync acceptance also covers reconnect, focus, page visibility,
 serialized wake signals, bounded visible polling, replay-before-refresh,
 failure recovery, disposal, and remote settings arriving during a revealed

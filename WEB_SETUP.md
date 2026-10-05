@@ -10,8 +10,16 @@ study settings. It does not import a second copy of your collection.
 Wide browser windows use side navigation for Study, Decks, Stats, and Read,
 with a direct Settings action. Narrow windows keep the mobile bottom tabs.
 Resizing preserves the selected tab, search, scroll, and study session.
-Content keeps Recall's graphite canvas, yellow selection accent, typography,
-and comfortable reading width.
+The website uses the current quiet Android design: flat charcoal surfaces,
+warm text and a subdued yellow accent from the shared theme.
+
+Study on desktop is a workspace rather than a stretched phone screen. A
+bounded card and its reveal/rating controls sit on the left; connected concepts,
+recent reading and the searchable library sit on the right. Opening a primer
+keeps it in that reading pane while the card remains available. The two areas
+scroll independently. The companion appears when there is at least 1000 pixels
+of content width; narrower windows and large text retain the mobile Study view
+and Read tab. Card reveal, reading search and navigation survive resizing.
 
 The website includes reviewing and interval previews, undo, card flags and
 one-tap hiding, automatic and manual deck selection, statistics and forecasts,
@@ -62,8 +70,16 @@ From the repository root:
 Use only `SUPABASE_URL` and `SUPABASE_ANON_KEY` in build configuration. Never
 bundle a password, service-role key, or automatic sign-in credentials. The
 existing Pages workflow deploys the protected `main` build after merge.
-The versioned service worker activates a new bundle after old tabs close;
-close other Recall tabs and reopen if an older layout remains visible.
+The startup screen shows the website build's short commit ID (also available
+in the page's `recall-build` metadata). A quiet **Update ready** notice appears
+on desktop when a controlled tab has a new worker waiting. Narrow screens omit
+the notice to keep header actions reachable. Open the notice for instructions,
+or dismiss it and finish studying. It never reloads the page or changes the
+running session. Finish the session, close **all** Recall tabs and standalone
+PWA windows, then reopen Recall to let the versioned worker activate. Keep browser
+data: pending reviews, flags, and settings use existing durable browser outboxes.
+The notice arrives with this build; an older already-cached build still needs
+the close-all-tabs/reopen step before it can show the new notice.
 
 For isolated testing with synthetic data and no production connection, use
 the commands and workflow inventory in

@@ -56,8 +56,14 @@ adaptive rail, back behavior, and system integration on Android.
 The website shares the Android content, type, colours, and study controls.
 Browser windows below 840 logical pixels use bottom navigation; wider windows
 use the rail, with extended labels from 1100 pixels. The rail adds Recall
-branding and direct access to Settings. Content stays at a comfortable 820
-pixel maximum width, and resizing preserves the screen and active study state.
+branding and direct access to Settings. Study uses a bounded desktop workspace:
+the card sits on the left at no more than 640 pixels wide and 640 pixels tall,
+with an independently scrolling reading companion on the right when the
+available content width reaches 1000 pixels. Connected concepts open inline,
+so reading never replaces the current question, answer or rating controls.
+Other destinations retain an 820 pixel maximum width. Narrow windows and
+large text use the single-column view; reading remains available in its tab.
+Resizing preserves the screen, reading search and active study state.
 
 Launch surfaces use the charcoal canvas so neither platform flashes white
 before Flutter paints. The redesign does not change card content, scheduling,

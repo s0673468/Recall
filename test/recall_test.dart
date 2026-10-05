@@ -2926,7 +2926,7 @@ void main() {
     ) async {
       SharedPreferences.setMockInitialValues({});
       final api = _FakeRecallApi([
-        for (var id = 1; id <= 4; id++)
+        for (var id = 1; id <= 5; id++)
           _card(id: id, front: 'Question $id', back: 'Answer $id'),
       ]);
       final controller = ReviewController(
@@ -2964,11 +2964,20 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      Focus.of(tester.element(find.text('Good'))).requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
       expect(api.applied.map((entry) => entry['rating']), [
         Rating.again.value,
         Rating.hard.value,
         Rating.good.value,
         Rating.easy.value,
+        Rating.good.value,
       ]);
     });
 
