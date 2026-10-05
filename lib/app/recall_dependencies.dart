@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/background/background_sync_coordinator.dart';
+import '../core/background/browser_foreground_sync_coordinator.dart';
+import '../core/background/browser_sync_platform.dart';
 import '../core/config/recall_config.dart';
 import '../core/diagnostics/operational_diagnostics.dart';
 import '../features/auth/data/secure_session_storage.dart';
@@ -22,6 +24,7 @@ class RecallDependencies {
   final RecallPrefsController recallPrefs;
   final BackgroundSyncCoordinator backgroundSync;
   final StudyReminderController studyReminder;
+  final BrowserForegroundSyncCoordinator? browserSync;
 
   const RecallDependencies({
     required this.reviewController,
@@ -29,6 +32,7 @@ class RecallDependencies {
     required this.recallPrefs,
     required this.backgroundSync,
     required this.studyReminder,
+    this.browserSync,
   });
 
   static Future<RecallDependencies> create() async {
@@ -112,6 +116,12 @@ class RecallDependencies {
       if (restoredOwner != null) unawaited(prefs.syncOwner());
       startupStage = OperationalCauseCode.startupBackgroundFailed;
       await backgroundSync.start();
+      final browserSync = BrowserForegroundSyncCoordinator(
+        platform: createBrowserSyncPlatform(),
+        hasSession: () => controller.currentUser != null,
+        syncPending: controller.syncPending,
+        refreshIfIdle: () => controller.refreshIfIdle(maxAge: Duration.zero),
+      )..start();
 
       return RecallDependencies(
         reviewController: controller,
@@ -119,6 +129,7 @@ class RecallDependencies {
         recallPrefs: prefs,
         backgroundSync: backgroundSync,
         studyReminder: studyReminder,
+        browserSync: browserSync,
       );
     } catch (_) {
       unawaited(
@@ -160,6 +171,7 @@ class RecallDependencies {
   }
 
   void dispose() {
+    browserSync?.dispose();
     reviewController.dispose();
     recallPrefs.dispose();
     studyReminder.dispose();

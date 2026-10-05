@@ -54,10 +54,18 @@ not merely an empty Study queue.
 | Concept primers | Stats Browse concept primers | Pushes the standalone searchable primer library; selecting a row pushes Primer; back returns through both pages without changing review state. | Empty library; 72-row eager list; long search; nested back. |
 | System back | Android/back gesture | From Decks, Stats, or Read, first back selects Study. From a pushed page, back pops that page. | Back during tab animation; repeated back. |
 
-Platform equivalence is finite: Material bottom navigation covers web and
-narrow Android; Cupertino navigation and modals cover native iOS; Android at
-600 logical pixels or wider uses the rail. The content and state contracts are
-shared.
+Platform equivalence is finite: Material bottom navigation covers narrow web
+and Android; Cupertino navigation and modals cover native iOS; Android at
+600 logical pixels or wider uses the rail. Web uses the rail from 840 pixels
+and extended labels from 1100 pixels, with a direct Settings action. Resizing
+preserves the active card/reveal, selected tab, search, and screen state.
+The content and state contracts are shared.
+
+Browser sync acceptance also covers reconnect, focus, page visibility,
+serialized wake signals, bounded visible polling, replay-before-refresh,
+failure recovery, disposal, and remote settings arriving during a revealed
+card. Native-only reminder notifications and widgets are outside browser
+parity; see [the website contract](../WEB_SETUP.md).
 
 ## Study inventory
 

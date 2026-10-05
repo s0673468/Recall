@@ -123,7 +123,11 @@ class ReviewController extends ChangeNotifier {
     // startup hydration (prefs.load() before any queue load) the auth-driven
     // load() reads prefs.value directly, so a reload here would be premature.
     final queueAffecting = prev == null || !prev.sameQueueShape(next);
-    if (queueAffecting && _sessionLoaded) {
+    // An open website periodically receives settings from other devices.
+    // Keep a revealed/in-progress card, its timer and undo state in place;
+    // the next explicit or idle refresh reads the new queue preferences.
+    final preserveActiveCard = p.applyingCloudUpdate && _state.current != null;
+    if (queueAffecting && _sessionLoaded && !preserveActiveCard) {
       unawaited(refresh());
     } else {
       notifyListeners();

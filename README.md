@@ -232,3 +232,5 @@ never apply SQL to production automatically.
 See [ANDROID_SETUP.md](ANDROID_SETUP.md) for Android signing, safe device
 installation, platform behavior, and validation. See [IOS_SETUP.md](IOS_SETUP.md)
 for iOS signing, device installation, PWA cutover, and iPhone checks.
+See [WEB_SETUP.md](WEB_SETUP.md) for the synced website, browser layout,
+offline behavior, platform differences, and deployment.
