@@ -21,6 +21,7 @@ import '../features/settings/presentation/screens/settings_screen.dart';
 import '../theme/ui_tokens.dart';
 import 'recall_deep_links.dart';
 import 'recall_page_route.dart';
+import 'desktop_study_workspace.dart';
 
 export 'recall_page_route.dart' show buildRecallPageRoute;
 
@@ -139,12 +140,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   late final List<Widget> _pages = [
-    StudyScreen(
+    DesktopStudyWorkspace(
+      enabled: _isWeb,
       controller: widget.controller,
       api: widget.api,
-      store: widget.controller.store,
-      onOpenSettings: _openSettings,
-      nativeIos: _nativeIos,
+      study: StudyScreen(
+        controller: widget.controller,
+        api: widget.api,
+        store: widget.controller.store,
+        onOpenSettings: _openSettings,
+        nativeIos: _nativeIos,
+      ),
     ),
     DecksScreen(
       key: _decksKey,
@@ -247,7 +253,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                       child: Align(
                         alignment: Alignment.topCenter,
                         child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 820),
+                          constraints: BoxConstraints(
+                            maxWidth: _isWeb && _index == 0 ? 1280 : 820,
+                          ),
                           child: SizedBox.expand(
                             child: RecallAnimatedIndexedStack(
                               index: _index,

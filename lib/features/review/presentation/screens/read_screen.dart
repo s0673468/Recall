@@ -26,13 +26,27 @@ typedef _ReadData = ({
   List<LocalRemediationItem> remediation,
 });
 
+typedef OpenReadingPrimer =
+    Future<void> Function(ConceptPage page, List<ConceptNodeInfo> conceptNodes);
+
 /// Daily concept reading followed by the complete grouped primer library.
 class ReadScreen extends StatefulWidget {
   final RecallApi api;
   final LocalReviewStore store;
+  final OpenReadingPrimer? onOpenPrimer;
+  final List<String> relatedNodeIds;
+  final bool showHeader;
+  final bool libraryFirst;
 
-  ReadScreen({super.key, required this.api, LocalReviewStore? store})
-    : store = store ?? LocalReviewStore();
+  ReadScreen({
+    super.key,
+    required this.api,
+    LocalReviewStore? store,
+    this.onOpenPrimer,
+    this.relatedNodeIds = const [],
+    this.showHeader = true,
+    this.libraryFirst = false,
+  }) : store = store ?? LocalReviewStore();
 
   @override
   State<ReadScreen> createState() => ReadScreenState();
@@ -50,7 +64,6 @@ class ReadScreenState extends State<ReadScreen> {
   }
 
   void _fetch({bool refresh = false}) {
-    _searching = false;
     _data = () async {
       final results = await Future.wait<Object>([
         _service.loadReviewLog(refresh: refresh),
@@ -89,12 +102,17 @@ class ReadScreenState extends State<ReadScreen> {
     List<ConceptNodeInfo> conceptNodes, {
     bool remediation = false,
   }) async {
-    await Navigator.of(context).push(
-      buildRecallPageRoute<void>(
-        nativeIos: recallRunsAsNativeIos(),
-        builder: (_) => PrimerScreen(page: page, conceptNodes: conceptNodes),
-      ),
-    );
+    final openPrimer = widget.onOpenPrimer;
+    if (openPrimer != null) {
+      await openPrimer(page, conceptNodes);
+    } else {
+      await Navigator.of(context).push(
+        buildRecallPageRoute<void>(
+          nativeIos: recallRunsAsNativeIos(),
+          builder: (_) => PrimerScreen(page: page, conceptNodes: conceptNodes),
+        ),
+      );
+    }
     if (!remediation) return;
     await widget.store.completeRemediation(page.nodeId);
     if (mounted) setState(_fetch);
@@ -107,7 +125,8 @@ class ReadScreenState extends State<ReadScreen> {
       future: _data,
       builder: (context, snapshot) {
         late final Widget content;
-        if (snapshot.connectionState != ConnectionState.done) {
+        if (snapshot.connectionState != ConnectionState.done &&
+            !snapshot.hasData) {
           content = ListView(
             key: const ValueKey('read_loading'),
             physics: const AlwaysScrollableScrollPhysics(),
@@ -127,13 +146,22 @@ class ReadScreenState extends State<ReadScreen> {
             key: const ValueKey('read_error'),
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(UiSpacing.md),
-            children: const [
-              RecallPageHeader(title: 'Read'),
-              SizedBox(height: UiSpacing.xl),
-              RecallStatePanel(
+            children: [
+              if (widget.showHeader) const RecallPageHeader(title: 'Read'),
+              const SizedBox(height: UiSpacing.xl),
+              const RecallStatePanel(
                 icon: Icons.cloud_off_outlined,
                 title: 'Could not load reading',
-                message: 'Pull down to try loading your primers again.',
+                message: 'Try loading your primers again.',
+              ),
+              const SizedBox(height: UiSpacing.md),
+              Center(
+                child: TextButton.icon(
+                  key: const Key('recall_read_retry'),
+                  onPressed: () => unawaited(reload(refresh: true)),
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Try again'),
+                ),
               ),
             ],
           );
@@ -151,12 +179,49 @@ class ReadScreenState extends State<ReadScreen> {
             conceptPages: data.conceptPages,
             readTodayPages: todayPages,
           );
+          final pageByNode = {
+            for (final page in data.conceptPages) page.nodeId: page,
+          };
+          final relatedPages = [
+            for (final id in widget.relatedNodeIds) ?pageByNode[id],
+          ];
           final moduleByNode = {
             for (final node in data.conceptNodes) node.nodeId: node.module,
           };
           final chatPages = ConceptAttribution.recentChatPages(
             conceptPages: data.conceptPages,
             now: DateTime.now(),
+          );
+          final library = Column(
+            key: const Key('recall_read_library'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              RecallSectionLabel(
+                title: widget.libraryFirst || _searching
+                    ? 'Library'
+                    : 'More from the library',
+              ),
+              const SizedBox(height: UiSpacing.md),
+              PrimerLibraryContent(
+                pages: data.conceptPages,
+                collapsedBrowse: widget.libraryFirst,
+                conceptNodes: data.conceptNodes,
+                browseExcludedNodeIds: {
+                  for (final page in relatedPages) page.nodeId,
+                  for (final page in todayPages) page.nodeId,
+                  for (final page in rereadPages) page.nodeId,
+                  for (final page in chatPages) page.nodeId,
+                },
+                onOpenPrimer: (page) =>
+                    unawaited(_openPrimer(page, data.conceptNodes)),
+                onQueryChanged: (query) {
+                  final searching = query.trim().isNotEmpty;
+                  if (searching != _searching) {
+                    setState(() => _searching = searching);
+                  }
+                },
+              ),
+            ],
           );
           content = ListView(
             key: const ValueKey('read_content'),
@@ -169,8 +234,38 @@ class ReadScreenState extends State<ReadScreen> {
               UiSpacing.xl,
             ),
             children: [
-              const RecallPageHeader(title: 'Read'),
-              const SizedBox(height: UiSpacing.lg),
+              if (widget.showHeader) ...[
+                const RecallPageHeader(title: 'Read'),
+                const SizedBox(height: UiSpacing.lg),
+              ],
+              if (relatedPages.isNotEmpty && !_searching) ...[
+                const RecallSectionLabel(title: 'For this card'),
+                const SizedBox(height: UiSpacing.xs),
+                Text(
+                  'Open a concept when you want more context.',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: UiColors.textMuted),
+                ),
+                const SizedBox(height: UiSpacing.md),
+                RecallListGroup(
+                  key: const Key('recall_read_related'),
+                  children: [
+                    for (final page in relatedPages)
+                      PrimerRow(
+                        page: page,
+                        module: moduleByNode[page.nodeId],
+                        onTap: () =>
+                            unawaited(_openPrimer(page, data.conceptNodes)),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: UiSpacing.xl),
+              ],
+              if (widget.libraryFirst) ...[
+                library,
+                const SizedBox(height: UiSpacing.xl),
+              ],
               Visibility(
                 visible: !_searching,
                 maintainState: true,
@@ -247,25 +342,7 @@ class ReadScreenState extends State<ReadScreen> {
                   ],
                 ),
               ),
-              RecallSectionLabel(
-                title: _searching ? 'Library' : 'More from the library',
-              ),
-              const SizedBox(height: UiSpacing.md),
-              PrimerLibraryContent(
-                pages: data.conceptPages,
-                conceptNodes: data.conceptNodes,
-                browseExcludedNodeIds: {
-                  for (final page in todayPages) page.nodeId,
-                  for (final page in rereadPages) page.nodeId,
-                  for (final page in chatPages) page.nodeId,
-                },
-                onQueryChanged: (query) {
-                  final searching = query.trim().isNotEmpty;
-                  if (searching != _searching) {
-                    setState(() => _searching = searching);
-                  }
-                },
-              ),
+              if (!widget.libraryFirst) library,
             ],
           );
         }

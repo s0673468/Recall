@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -30,6 +31,7 @@ void main() {
     bool isWeb = true,
     bool nativeAndroid = false,
     bool nativeIos = false,
+    double textScale = 1,
     Future<void> Function()? foregroundSync,
   }) async {
     tester.view.physicalSize = size;
@@ -82,6 +84,12 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: buildRecallTheme(),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
         home: AppShell(
           controller: controller,
           api: api,
@@ -176,6 +184,79 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('wide web bounds the card beside an independent reading pane', (
+    tester,
+  ) async {
+    final controller = await pumpShell(tester, size: const Size(1440, 900));
+    final study = tester.getRect(find.byType(StudyScreen));
+    final reading = tester.getRect(
+      find.byKey(const Key('recall_reading_column')),
+    );
+    expect(study.width, lessThanOrEqualTo(640));
+    expect(study.height, lessThanOrEqualTo(640));
+    expect(reading.width, inInclusiveRange(360, 460));
+    expect(reading.left, greaterThan(study.right));
+    final current = controller.state.current;
+    final search = find.descendant(
+      of: find.byKey(const Key('recall_reading_column')),
+      matching: find.byKey(const Key('recall_primer_search')),
+    );
+    await tester.ensureVisible(search);
+    await tester.enterText(search, 'A reading search');
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
+    await tester.pumpAndSettle();
+    expect(controller.state.current, same(current));
+    expect(controller.state.showBack, isFalse);
+    expect(controller.state.reviewedThisSession, 0);
+    await tester.tap(find.byType(StudyScreen));
+    await tester.pumpAndSettle();
+    expect(controller.state.showBack, isFalse);
+    await tester.sendKeyEvent(LogicalKeyboardKey.space);
+    await tester.pumpAndSettle();
+    expect(controller.state.showBack, isTrue);
+    tester.view.physicalSize = const Size(1920, 1080);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byType(StudyScreen)).width,
+      lessThanOrEqualTo(640),
+    );
+    expect(
+      tester.getSize(find.byType(StudyScreen)).height,
+      lessThanOrEqualTo(640),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'reading search survives narrowing the browser and changing tabs',
+    (tester) async {
+      await pumpShell(tester, size: const Size(1440, 900));
+      final search = find.descendant(
+        of: find.byKey(const Key('recall_reading_column')),
+        matching: find.byKey(const Key('recall_primer_search')),
+      );
+      await tester.ensureVisible(search);
+      await tester.enterText(search, 'Retained reading query');
+      await tester.pumpAndSettle();
+      await select(tester, 'Stats');
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pumpAndSettle();
+      await select(tester, 'Study');
+      expect(
+        tester.getSize(find.byKey(const Key('recall_reading_column'))).width,
+        0,
+      );
+      tester.view.physicalSize = const Size(1440, 900);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(search).controller!.text,
+        'Retained reading query',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('resizing preserves the active card, reveal and library search', (
     tester,
   ) async {
@@ -245,6 +326,21 @@ void main() {
     expect(rail.extended, isFalse);
     expect(rail.leading, isNull);
     expect(rail.trailing, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('large browser text uses the single-column Study view', (
+    tester,
+  ) async {
+    await pumpShell(tester, size: const Size(1440, 900), textScale: 2);
+    expect(
+      tester.getSize(find.byKey(const Key('recall_reading_column'))).width,
+      0,
+    );
+    await tester.ensureVisible(find.text('Show answer'));
+    await tester.tap(find.text('Show answer'));
+    await tester.pumpAndSettle();
+    expect(find.text('Good'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

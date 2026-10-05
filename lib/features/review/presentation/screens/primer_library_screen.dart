@@ -53,6 +53,8 @@ class PrimerLibraryContent extends StatefulWidget {
   final List<ConceptNodeInfo> conceptNodes;
   final Set<String> browseExcludedNodeIds;
   final ValueChanged<String>? onQueryChanged;
+  final ValueChanged<ConceptPage>? onOpenPrimer;
+  final bool collapsedBrowse;
 
   const PrimerLibraryContent({
     super.key,
@@ -60,6 +62,8 @@ class PrimerLibraryContent extends StatefulWidget {
     required this.conceptNodes,
     this.browseExcludedNodeIds = const {},
     this.onQueryChanged,
+    this.onOpenPrimer,
+    this.collapsedBrowse = false,
   });
 
   @override
@@ -69,6 +73,7 @@ class PrimerLibraryContent extends StatefulWidget {
 class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
   final _searchController = TextEditingController();
   String _query = '';
+  bool _browseExpanded = false;
 
   @override
   void dispose() {
@@ -138,37 +143,56 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
           ),
         ),
         const SizedBox(height: UiSpacing.sm),
-        if (pages.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
-            child: Text(
-              query.isNotEmpty
-                  ? 'No primers match your search.'
-                  : widget.pages.isEmpty
-                  ? 'No primers available.'
-                  : 'All available primers are shown above.',
-              style: const TextStyle(color: UiColors.textMuted),
+        if (widget.collapsedBrowse && query.isEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('recall_primer_browse_toggle'),
+              onPressed: () =>
+                  setState(() => _browseExpanded = !_browseExpanded),
+              icon: Icon(
+                _browseExpanded ? Icons.expand_less : Icons.expand_more,
+                size: 18,
+              ),
+              label: Text(_browseExpanded ? 'Hide library' : 'Browse library'),
             ),
-          )
-        else
-          RecallListGroup(
-            children: [
-              for (final page in pages)
-                PrimerRow(
-                  page: page,
-                  module: moduleByNode[page.nodeId],
-                  onTap: () => Navigator.of(context).push(
-                    buildRecallPageRoute<void>(
-                      nativeIos: recallRunsAsNativeIos(),
-                      builder: (_) => PrimerScreen(
-                        page: page,
-                        conceptNodes: widget.conceptNodes,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
           ),
+        if (query.isNotEmpty || !widget.collapsedBrowse || _browseExpanded)
+          if (pages.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
+              child: Text(
+                query.isNotEmpty
+                    ? 'No primers match your search.'
+                    : widget.pages.isEmpty
+                    ? 'No primers available.'
+                    : widget.collapsedBrowse
+                    ? 'All available primers are in your reading list.'
+                    : 'All available primers are shown above.',
+                style: const TextStyle(color: UiColors.textMuted),
+              ),
+            )
+          else
+            RecallListGroup(
+              children: [
+                for (final page in pages)
+                  PrimerRow(
+                    page: page,
+                    module: moduleByNode[page.nodeId],
+                    onTap: () => widget.onOpenPrimer != null
+                        ? widget.onOpenPrimer!(page)
+                        : Navigator.of(context).push(
+                            buildRecallPageRoute<void>(
+                              nativeIos: recallRunsAsNativeIos(),
+                              builder: (_) => PrimerScreen(
+                                page: page,
+                                conceptNodes: widget.conceptNodes,
+                              ),
+                            ),
+                          ),
+                  ),
+              ],
+            ),
       ],
     );
   }

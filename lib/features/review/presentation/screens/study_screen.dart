@@ -276,7 +276,17 @@ class StudyScreen extends StatelessWidget {
         return Focus(
           autofocus: true,
           onKeyEvent: _handleReviewKey,
-          child: body,
+          child: Builder(
+            builder: (focusContext) => Listener(
+              behavior: HitTestBehavior.opaque,
+              // Reading owns keyboard focus while it is being used. A click
+              // back into Study restores its shortcuts without revealing.
+              // Web text fields unfocus on pointer-down outside their input.
+              // Restore Study afterward so that action cannot steal it back.
+              onPointerUp: (_) => Focus.of(focusContext).requestFocus(),
+              child: body,
+            ),
+          ),
         );
       },
     );

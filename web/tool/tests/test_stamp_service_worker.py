@@ -37,6 +37,11 @@ class StampServiceWorkerTests(unittest.TestCase):
             output = Path(directory)
             worker = output / "sw.js"
             worker.write_text("const VERSION = '__SW_VERSION__';\n", encoding="utf-8")
+            index = output / "index.html"
+            index.write_text(
+                '<meta name="recall-build" content="__RECALL_BUILD__">',
+                encoding="utf-8",
+            )
             tombstone = output / "flutter_service_worker.js"
             tombstone.write_text("", encoding="utf-8")
             version = "a" * 40
@@ -48,6 +53,10 @@ class StampServiceWorkerTests(unittest.TestCase):
                 f"const VERSION = '{version}';\n",
             )
             self.assertFalse(tombstone.exists())
+            self.assertEqual(
+                index.read_text(encoding="utf-8"),
+                f'<meta name="recall-build" content="{version}">',
+            )
 
     def test_rejects_an_invalid_version_without_changing_the_worker(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -69,6 +78,28 @@ class StampServiceWorkerTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 stamp_service_worker.finish_build(output, "b" * 40)
+
+    def test_rejects_invalid_shell_before_changing_worker(self) -> None:
+        for shell in ["no build marker", "__RECALL_BUILD__ __RECALL_BUILD__"]:
+            with self.subTest(shell=shell), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                worker = output / "sw.js"
+                original = "const VERSION = '__SW_VERSION__';\n"
+                worker.write_text(original, encoding="utf-8")
+                index = output / "index.html"
+                index.write_text(shell, encoding="utf-8")
+
+                with self.assertRaises(ValueError):
+                    stamp_service_worker.finish_build(output, "c" * 40)
+
+                self.assertEqual(worker.read_text(encoding="utf-8"), original)
+                self.assertEqual(index.read_text(encoding="utf-8"), shell)
+
+    def test_source_shell_has_one_marker_and_loads_the_update_notice(self) -> None:
+        shell = (SCRIPT.parents[1] / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(shell.count("__RECALL_BUILD__"), 1)
+        self.assertIn('<script src="update_notice.js"></script>', shell)
+        self.assertIn('window.recallWatchWebUpdates(registration)', shell)
 
 
 if __name__ == "__main__":
