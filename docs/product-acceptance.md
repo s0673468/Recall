@@ -28,6 +28,9 @@ Run the executable acceptance suite with:
 
 ```bash
 ./tool/flutterw test --no-pub test/production_scale_acceptance_test.dart
+./tool/flutterw test --no-pub --platform chrome \
+  test/production_scale_acceptance_test.dart test/web_shell_test.dart \
+  test/browser/browser_sync_platform_events_test.dart
 ./tool/flutterw build web --release --no-pub \
   -t tool/recall_acceptance.dart \
   --base-href /Recall/ \
@@ -38,6 +41,10 @@ The web harness accepts `RECALL_ACCEPTANCE_SCENARIO=rich`, `empty`, `offline`,
 `partial_stats_failure`, or `signed_out` as a compile-time Dart define. `empty`
 represents an account with no decks, cards, reviews, tags, concepts, or primers,
 not merely an empty Study queue.
+
+The fixture lives in `test/support` so both native and Chrome test compilers
+can resolve it. The separate acceptance entrypoint displays a TEST DATA banner;
+the normal website never imports that fixture or displays its banner.
 
 ## Routes and platform shells
 

@@ -13,7 +13,7 @@ import 'package:health_anki_flutter/navigation/app_shell.dart';
 import 'package:health_anki_flutter/navigation/recall_deep_links.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
-import '../tool/acceptance/recall_acceptance_fixture.dart';
+import 'support/recall_acceptance_fixture.dart';
 
 class _NoLinks implements RecallLinkSource {
   @override

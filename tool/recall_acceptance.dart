@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:health_anki_flutter/app/recall_app.dart';
 
-import 'acceptance/recall_acceptance_fixture.dart';
+import '../test/support/recall_acceptance_fixture.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();

@@ -4,7 +4,7 @@ import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
 import 'package:health_anki_flutter/features/settings/presentation/screens/settings_screen.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
-import '../tool/acceptance/recall_acceptance_fixture.dart';
+import 'support/recall_acceptance_fixture.dart';
 
 void main() {
   testWidgets('phone settings keep controls usable with large text', (

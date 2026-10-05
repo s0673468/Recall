@@ -10,7 +10,7 @@ import 'package:health_anki_flutter/features/review/presentation/screens/read_sc
 import 'package:health_anki_flutter/features/review/presentation/screens/stats_screen.dart';
 import 'package:health_anki_flutter/features/settings/presentation/screens/settings_screen.dart';
 
-import '../tool/acceptance/recall_acceptance_fixture.dart';
+import 'support/recall_acceptance_fixture.dart';
 
 void main() {
   const phoneSize = Size(411, 914);
