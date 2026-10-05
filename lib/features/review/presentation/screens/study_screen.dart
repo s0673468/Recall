@@ -35,9 +35,12 @@ class StudyScreen extends StatelessWidget {
     this.nativeIos,
   });
 
-  KeyEventResult _handleReviewKey(FocusNode _, KeyEvent event) {
+  KeyEventResult _handleReviewKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.space) {
+      // A focused button owns Space for activation. Only the study surface
+      // consumes the review shortcut, preventing the default scroll action.
+      if (!node.hasPrimaryFocus) return KeyEventResult.ignored;
       controller.flip();
     } else if (event.logicalKey == LogicalKeyboardKey.digit1) {
       unawaited(controller.rate(Rating.again));
@@ -47,10 +50,10 @@ class StudyScreen extends StatelessWidget {
       unawaited(controller.rate(Rating.good));
     } else if (event.logicalKey == LogicalKeyboardKey.digit4) {
       unawaited(controller.rate(Rating.easy));
+    } else {
+      return KeyEventResult.ignored;
     }
-    // Keep the event available to the focused control. In particular, Space
-    // must still activate a rating button reached through keyboard focus.
-    return KeyEventResult.ignored;
+    return KeyEventResult.handled;
   }
 
   Widget _completed(BuildContext context, Widget child) => Column(
