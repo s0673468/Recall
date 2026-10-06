@@ -76,9 +76,13 @@ void main() {
         'anon-key',
         httpClient: MockClient((request) async {
           requests.add(request);
-          final body = request.url.path.endsWith('/cards')
-              ? jsonEncode(rows)
-              : jsonEncode(successfulRows);
+          final query = request.url.queryParameters;
+          final source = request.url.path.endsWith('/cards')
+              ? rows
+              : successfulRows;
+          final offset = int.parse(query['offset'] ?? '0');
+          final count = int.parse(query['limit'] ?? '${source.length}');
+          final body = jsonEncode(source.skip(offset).take(count).toList());
           return http.Response(
             body,
             200,
@@ -92,7 +96,10 @@ void main() {
       final api = RecallApi(client);
 
       // A hidden card never takes a slot in the capped priority batch.
-      expect(await api.fetchContentRevalidationQueue(excludeCardIds: {41}), isEmpty);
+      expect(
+        await api.fetchContentRevalidationQueue(excludeCardIds: {41}),
+        isEmpty,
+      );
 
       final first = await api.fetchContentRevalidationQueue();
       expect(first.map((card) => card.id), [41]);

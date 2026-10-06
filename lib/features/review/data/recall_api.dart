@@ -38,7 +38,8 @@ class RecallApi implements ReviewReplayGateway {
   static const _duePageSize = 500;
   static const _statsPageSize = 500;
   static const contentRevalidationBatchSize = 20;
-  static const _contentRevalidationPageSize = 50;
+  static const _contentRevalidationPageSize = 250;
+  static const _contentRevalidationAckPageSize = 1000;
   static const _contentRevalidationScanLimit = 5000;
 
   String get device =>
@@ -409,11 +410,8 @@ class RecallApi implements ReviewReplayGateway {
     if (wanted == 0) return const [];
 
     final pending = <ReviewCard>[];
-    for (
-      var offset = 0;
-      offset < _contentRevalidationScanLimit && pending.length < wanted;
-      offset += _contentRevalidationPageSize
-    ) {
+    var offset = 0;
+    while (offset < _contentRevalidationScanLimit && pending.length < wanted) {
       PostgrestFilterBuilder<List<Map<String, dynamic>>> query = client
           .from('cards')
           .select(_cardSelect)
@@ -428,8 +426,16 @@ class RecallApi implements ReviewReplayGateway {
       }
       final rows = await query
           .order('id', ascending: true)
-          .range(offset, offset + _contentRevalidationPageSize - 1);
+          .range(
+            offset,
+            (offset + _contentRevalidationPageSize - 1)
+                .clamp(0, _contentRevalidationScanLimit - 1)
+                .toInt(),
+          );
       if (rows.isEmpty) break;
+      // A server may cap a response below the requested range. Only an empty
+      // page ends discovery; advancing by received rows cannot skip a gap.
+      offset += rows.length;
 
       final candidates = <({ReviewCard card, DateTime revision})>[];
       for (final raw in rows) {
@@ -444,39 +450,53 @@ class RecallApi implements ReviewReplayGateway {
         final earliest = candidates
             .map((candidate) => candidate.revision)
             .reduce((a, b) => a.isBefore(b) ? a : b);
-        final successfulRows = await client
-            .from('review_log')
-            .select('card_id,rating,rating_at')
-            .inFilter('card_id', [
-              for (final candidate in candidates) candidate.card.id,
-            ])
-            .gt('rating', 1)
-            .gt('rating_at', earliest.toIso8601String());
-        final acknowledged = <int, List<DateTime>>{};
-        for (final row in successfulRows) {
-          final cardId = (row['card_id'] as num?)?.toInt();
-          final rating = (row['rating'] as num?)?.toInt();
-          final ratingAt = DateTime.tryParse(row['rating_at'] as String? ?? '');
-          if (cardId != null &&
-              rating != null &&
-              isSuccessfulContentRevalidationRating(rating) &&
-              ratingAt != null) {
-            acknowledged.putIfAbsent(cardId, () => []).add(ratingAt.toUtc());
+        final revisions = {
+          for (final candidate in candidates)
+            candidate.card.id: candidate.revision,
+        };
+        final acknowledged = <int>{};
+        var logOffset = 0;
+        while (acknowledged.length < candidates.length) {
+          // review_log is append-only. Its unique ID provides stable paging
+          // even when reviews share a timestamp. Do not mistake a server cap
+          // for complete acknowledgement history.
+          final successfulRows = await client
+              .from('review_log')
+              .select('card_id,rating,rating_at')
+              .inFilter('card_id', revisions.keys.toList())
+              .gt('rating', 1)
+              .gt('rating_at', earliest.toIso8601String())
+              .order('id', ascending: true)
+              .range(
+                logOffset,
+                logOffset + _contentRevalidationAckPageSize - 1,
+              );
+          if (successfulRows.isEmpty) break;
+          logOffset += successfulRows.length;
+          for (final row in successfulRows) {
+            final cardId = (row['card_id'] as num?)?.toInt();
+            final rating = (row['rating'] as num?)?.toInt();
+            final ratingAt = DateTime.tryParse(
+              row['rating_at'] as String? ?? '',
+            );
+            final revision = revisions[cardId];
+            if (cardId != null &&
+                rating != null &&
+                isSuccessfulContentRevalidationRating(rating) &&
+                ratingAt != null &&
+                revision != null &&
+                ratingAt.toUtc().isAfter(revision)) {
+              acknowledged.add(cardId);
+            }
           }
         }
         for (final candidate in candidates) {
-          final isAcknowledged =
-              acknowledged[candidate.card.id]?.any(
-                (reviewedAt) => reviewedAt.isAfter(candidate.revision),
-              ) ??
-              false;
-          if (!isAcknowledged) {
+          if (!acknowledged.contains(candidate.card.id)) {
             pending.add(candidate.card.asContentRevalidationPending());
             if (pending.length == wanted) break;
           }
         }
       }
-      if (rows.length < _contentRevalidationPageSize) break;
     }
     return pending;
   }
