@@ -76,9 +76,13 @@ void main() {
         'anon-key',
         httpClient: MockClient((request) async {
           requests.add(request);
-          final body = request.url.path.endsWith('/cards')
-              ? jsonEncode(rows)
-              : jsonEncode(successfulRows);
+          final query = request.url.queryParameters;
+          final source = request.url.path.endsWith('/cards')
+              ? rows
+              : successfulRows;
+          final offset = int.parse(query['offset'] ?? '0');
+          final count = int.parse(query['limit'] ?? '${source.length}');
+          final body = jsonEncode(source.skip(offset).take(count).toList());
           return http.Response(
             body,
             200,
