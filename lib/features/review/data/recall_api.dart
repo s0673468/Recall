@@ -467,13 +467,18 @@ class RecallApi implements ReviewReplayGateway {
               .gt('rating', 1)
               .gt('rating_at', earliest.toIso8601String())
               .order('id', ascending: true)
-              .range(logOffset, logOffset + _contentRevalidationAckPageSize - 1);
+              .range(
+                logOffset,
+                logOffset + _contentRevalidationAckPageSize - 1,
+              );
           if (successfulRows.isEmpty) break;
           logOffset += successfulRows.length;
           for (final row in successfulRows) {
             final cardId = (row['card_id'] as num?)?.toInt();
             final rating = (row['rating'] as num?)?.toInt();
-            final ratingAt = DateTime.tryParse(row['rating_at'] as String? ?? '');
+            final ratingAt = DateTime.tryParse(
+              row['rating_at'] as String? ?? '',
+            );
             final revision = revisions[cardId];
             if (cardId != null &&
                 rating != null &&

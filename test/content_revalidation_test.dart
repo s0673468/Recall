@@ -96,7 +96,10 @@ void main() {
       final api = RecallApi(client);
 
       // A hidden card never takes a slot in the capped priority batch.
-      expect(await api.fetchContentRevalidationQueue(excludeCardIds: {41}), isEmpty);
+      expect(
+        await api.fetchContentRevalidationQueue(excludeCardIds: {41}),
+        isEmpty,
+      );
 
       final first = await api.fetchContentRevalidationQueue();
       expect(first.map((card) => card.id), [41]);
