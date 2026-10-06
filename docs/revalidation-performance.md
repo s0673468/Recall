@@ -44,6 +44,7 @@ Every observation, including the first, is retained. A delay model is a componen
 experiment and cannot establish real startup latency or device acceptance.
 
 Compare equivalent source/input/toolchain/cache states and preserve full results.
-Check real owning-device fresh reads, normal worker activation, interruptions,+freshness and resource costs before claiming user-visible latency gains. Cached
+Check real owning-device fresh reads, normal worker activation, interruptions,
+freshness and resource costs before claiming user-visible latency gains. Cached
 asset startup is not storage-cold startup; client RSS is not whole-job memory.
 Report p95 only with at least 20 observations and p99 with at least 100.
