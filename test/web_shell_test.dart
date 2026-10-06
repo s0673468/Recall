@@ -7,6 +7,8 @@ import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
+import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
+import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
 import 'package:health_anki_flutter/features/settings/presentation/screens/settings_screen.dart';
@@ -32,6 +34,7 @@ void main() {
     bool nativeAndroid = false,
     bool nativeIos = false,
     double textScale = 1,
+    bool relatedReading = false,
     Future<void> Function()? foregroundSync,
   }) async {
     tester.view.physicalSize = size;
@@ -53,6 +56,7 @@ void main() {
             front: 'What survives a browser resize?',
             back: 'The current study session and library state.',
             hasLatex: false,
+            tags: relatedReading ? 'node::rotation' : null,
             stability: null,
             difficulty: null,
             due: null,
@@ -63,9 +67,23 @@ void main() {
           ),
         ],
         reviews: const [],
-        noteTags: const {},
+        noteTags: relatedReading
+            ? const {'web-shell-sanitized-card': 'node::rotation'}
+            : const {},
         conceptNodes: const [],
-        conceptPages: const [],
+        conceptPages: relatedReading
+            ? [
+                ConceptPage(
+                  nodeId: 'rotation',
+                  title: 'Reading beside Study',
+                  bodyHtml: List.generate(
+                    40,
+                    (i) => '<p>Reading paragraph $i: a retained position.</p>',
+                  ).join(),
+                  updatedAt: now,
+                ),
+              ]
+            : const [],
       ),
     );
     final prefs = RecallPrefsController(api: api);
@@ -339,6 +357,146 @@ void main() {
     expect(rail.trailing, isNull);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('unfolded Android rotates into equal Study and related Reading', (
+    tester,
+  ) async {
+    final controller = await pumpShell(
+      tester,
+      size: const Size(704, 933),
+      isWeb: false,
+      nativeAndroid: true,
+      relatedReading: true,
+    );
+    expect(find.byKey(const Key('recall_reading_column')), findsNothing);
+    final studyElement = tester.element(find.byType(StudyScreen));
+    final current = controller.state.current;
+    await tester.tap(find.text('Show answer'));
+    await tester.pumpAndSettle();
+    tester.view.physicalSize = const Size(933, 704);
+    await tester.pumpAndSettle();
+    final study = tester.getRect(find.byType(StudyScreen));
+    final reading = tester.getRect(
+      find.byKey(const Key('recall_reading_column')),
+    );
+    expect(reading.width, closeTo(study.width, 1));
+    expect(reading.left - study.right, UiSpacing.md);
+    expect(reading.width, greaterThanOrEqualTo(340));
+    expect(find.text('For this card'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const Key('recall_read_related')),
+        matching: find.text('Reading beside Study'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final primerScroll = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(PrimerContent),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    primerScroll.position.jumpTo(180);
+    await tester.pumpAndSettle();
+    for (final size in [
+      const Size(704, 933),
+      const Size(412, 915),
+      const Size(933, 704),
+    ]) {
+      tester.view.physicalSize = size;
+      await tester.pumpAndSettle();
+      expect(tester.element(find.byType(StudyScreen)), same(studyElement));
+      expect(controller.state.current, same(current));
+      expect(controller.state.showBack, isTrue);
+      expect(tester.takeException(), isNull);
+    }
+    expect(find.byType(PrimerContent), findsOneWidget);
+    expect(primerScroll.position.pixels, 180);
+    await select(tester, 'Decks');
+    await select(tester, 'Study');
+    expect(find.byType(PrimerContent), findsOneWidget);
+    expect(primerScroll.position.pixels, 180);
+    expect(controller.state.reviewedThisSession, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Android companion keeps search across keyboard, fold and tabs', (
+    tester,
+  ) async {
+    final controller = await pumpShell(
+      tester,
+      size: const Size(933, 704),
+      isWeb: false,
+      nativeAndroid: true,
+      relatedReading: true,
+    );
+    final search = find.descendant(
+      of: find.byKey(const Key('recall_reading_column')),
+      matching: find.byKey(const Key('recall_primer_search')),
+    );
+    await tester.enterText(search, 'Reading beside');
+    tester.view.padding = const FakeViewPadding(
+      top: 24,
+      bottom: 24,
+      left: 24,
+      right: 24,
+    );
+    addTearDown(tester.view.resetPadding);
+    tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSize(find.byKey(const Key('recall_reading_column'))).width,
+      greaterThan(340),
+    );
+    expect(tester.takeException(), isNull);
+    tester.view.viewInsets = const FakeViewPadding();
+    tester.view.physicalSize = const Size(412, 915);
+    await tester.pumpAndSettle();
+    await select(tester, 'Read');
+    await select(tester, 'Study');
+    tester.view.physicalSize = const Size(933, 704);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(search).controller!.text, 'Reading beside');
+    expect(controller.state.showBack, isFalse);
+    expect(controller.state.reviewedThisSession, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final (size, textScale, split) in [
+    (const Size(800, 600), 1.0, true),
+    (const Size(1024, 768), 1.0, true),
+    (const Size(933, 704), 1.2, true),
+    (const Size(933, 704), 1.5, false),
+    (const Size(933, 704), 2.0, false),
+    (const Size(704, 933), 1.0, false),
+    (const Size(900, 900), 1.0, false),
+    (const Size(752, 476), 1.0, false),
+    (const Size(740, 600), 1.0, false),
+  ]) {
+    testWidgets('Android usable-space fallback at $size and scale $textScale', (
+      tester,
+    ) async {
+      await pumpShell(
+        tester,
+        size: size,
+        textScale: textScale,
+        isWeb: false,
+        nativeAndroid: true,
+      );
+      expect(
+        find.byKey(const Key('recall_reading_column')),
+        split ? findsOneWidget : findsNothing,
+      );
+      await tester.ensureVisible(find.text('Show answer'));
+      await tester.tap(find.text('Show answer'));
+      await tester.pumpAndSettle();
+      expect(find.text('Good'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('large browser text uses the single-column Study view', (
     tester,
