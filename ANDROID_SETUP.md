@@ -173,6 +173,12 @@ adb shell dumpsys package com.german.health_anki_flutter
 - Android 16+ edge-to-edge and predictive back are enabled. Narrow screens use a
   Material navigation bar; wide windows use a navigation rail and remain
   resizable across rotation and large-screen layouts.
+- On unfolded landscape windows with a short side of at least 600 logical pixels,
+  Study automatically shows the card beside its related Reading companion when
+  both panes have at least 340 logical pixels of width (scaled for larger text).
+  Portrait, narrow windows and very large text use one Study column. Rotating or
+  folding preserves the current card, reveal state, open primer and reading
+  position. The separate Read tab remains available in every layout.
 - Study haptics use platform feedback only for reveal, rating, undo, and queue
   completion. Android's system haptic setting is respected; no vibration
   permission is requested.

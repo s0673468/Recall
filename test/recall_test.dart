@@ -3454,9 +3454,26 @@ void main() {
           ),
         ),
       );
-      await tester.tap(find.text('Read'));
+      // At the default 800x600 Android test size, unfolded Study has its own
+      // persistent companion and the rail shows icons. Select the visible tab
+      // control; a hidden rail label is not a tap target.
+      await tester.tap(
+        find.descendant(
+          of: find.byType(NavigationRail),
+          matching: find.byIcon(Icons.menu_book_outlined),
+        ),
+      );
       await tester.pumpAndSettle();
+      expect(
+        tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
+        3,
+      );
     }
+
+    Finder inReadTab(Finder finder) => find.descendant(
+      of: find.byKey(const ValueKey('recall_tab_opacity_3')),
+      matching: finder,
+    );
 
     testWidgets('primer library search filters titles and modules', (
       tester,
@@ -3534,14 +3551,16 @@ void main() {
 
       await pumpShell(tester, api);
 
-      expect(find.byType(ReadScreen), findsOneWidget);
-      expect(find.text('Recent reading'), findsOneWidget);
-      expect(find.text('More from the library'), findsOneWidget);
-      expect(find.text('Vector geometry primer'), findsOneWidget);
-      expect(find.text('M00'), findsOneWidget);
+      expect(inReadTab(find.byType(ReadScreen)), findsOneWidget);
+      expect(inReadTab(find.text('Recent reading')), findsOneWidget);
+      expect(inReadTab(find.text('More from the library')), findsOneWidget);
+      expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
+      expect(inReadTab(find.text('M00')), findsOneWidget);
       expect(
-        find.text(
-          'Nothing reviewed in the last 3 days. Your full library is ready below.',
+        inReadTab(
+          find.text(
+            'Nothing reviewed in the last 3 days. Your full library is ready below.',
+          ),
         ),
         findsNothing,
       );
@@ -3573,10 +3592,13 @@ void main() {
 
       await pumpShell(tester, api);
 
-      expect(find.text('From your chats'), findsWidgets);
-      expect(find.byKey(const Key('recall_read_chats')), findsOneWidget);
-      expect(find.text('Entropy, from your chats'), findsOneWidget);
-      expect(find.text('Vector geometry primer'), findsOneWidget);
+      expect(inReadTab(find.text('From your chats')), findsWidgets);
+      expect(
+        inReadTab(find.byKey(const Key('recall_read_chats'))),
+        findsOneWidget,
+      );
+      expect(inReadTab(find.text('Entropy, from your chats')), findsOneWidget);
+      expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
     });
 
     testWidgets('shows the empty-today line while keeping the library', (
@@ -3603,13 +3625,15 @@ void main() {
       await pumpShell(tester, api);
 
       expect(
-        find.text(
-          'Nothing reviewed in the last 3 days. Your full library is ready below.',
+        inReadTab(
+          find.text(
+            'Nothing reviewed in the last 3 days. Your full library is ready below.',
+          ),
         ),
         findsOneWidget,
       );
-      expect(find.text('Vector geometry primer'), findsOneWidget);
-      expect(find.text('M00'), findsOneWidget);
+      expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
+      expect(inReadTab(find.text('M00')), findsOneWidget);
     });
 
     testWidgets('shows queued reread rows and clears one after reading', (

@@ -141,7 +141,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   late final List<Widget> _pages = [
     DesktopStudyWorkspace(
-      enabled: _isWeb,
+      enabled: _isWeb || _nativeAndroid,
+      nativeAndroid: _nativeAndroid,
       controller: widget.controller,
       api: widget.api,
       study: StudyScreen(
@@ -220,6 +221,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           builder: (context, busy) => LayoutBuilder(
             builder: (context, constraints) {
               final webRail = _isWeb && constraints.maxWidth >= 840;
+              final window = MediaQuery.sizeOf(context);
+              final unfoldedLandscape =
+                  _nativeAndroid &&
+                  window.width > window.height &&
+                  window.shortestSide >= 600;
+              final compactRail = webRail || unfoldedLandscape;
               final useRail =
                   webRail || (_nativeAndroid && constraints.maxWidth >= 600);
               final content = Column(
@@ -253,7 +260,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                         alignment: Alignment.topCenter,
                         child: ConstrainedBox(
                           constraints: BoxConstraints(
-                            maxWidth: _isWeb && _index == 0 ? 1280 : 820,
+                            maxWidth:
+                                (_isWeb || unfoldedLandscape) && _index == 0
+                                ? 1280
+                                : 820,
                           ),
                           child: SizedBox.expand(
                             child: RecallAnimatedIndexedStack(
@@ -282,8 +292,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                           RecallNavigationRail(
                             selectedIndex: _index,
                             onDestinationSelected: _selectIndex,
-                            onOpenSettings: webRail ? _openSettings : null,
-                            showBrand: webRail,
+                            onOpenSettings: compactRail ? _openSettings : null,
+                            showBrand: compactRail,
                           ),
                         if (useRail)
                           const VerticalDivider(
