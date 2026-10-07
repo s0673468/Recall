@@ -16,27 +16,35 @@ class SharedSchedulerBuildTest(unittest.TestCase):
         dart = os.environ.get("DART") or shutil.which("dart")
         self.assertIsNotNone(node, "Node is required for the compiled scheduler gate")
         self.assertIsNotNone(dart, "Use Dart from Recall's pinned Flutter SDK")
+        numeric = subprocess.run(
+            [node, "--test", "tool/scheduler/numeric_math.test.mjs"], cwd=ROOT,
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(numeric.returncode, 0, numeric.stdout + numeric.stderr)
         with tempfile.TemporaryDirectory(prefix="recall-scheduler-") as output:
             env = {**os.environ, "DART": dart}
             result = subprocess.run(
-                [node, "tool/scheduler/build.mjs", output, "--allow-unverified"], cwd=ROOT,
+                [node, "tool/scheduler/build.mjs", output], cwd=ROOT,
                 env=env, capture_output=True, text=True, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             verified = subprocess.run(
-                [node, "tool/scheduler/differential.mjs", output, "--allow-unverified"], cwd=ROOT,
+                [node, "tool/scheduler/differential.mjs", output], cwd=ROOT,
                 capture_output=True, text=True, timeout=60,
             )
             self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
             proof = json.loads(Path(output, "provenance.json").read_text())
             self.assertEqual(proof["vectors"], 34623)
+            self.assertEqual(proof["matched"], proof["vectors"])
+            self.assertEqual(proof["matchRatio"], 1)
+            self.assertTrue(proof["verified"])
+            self.assertEqual(proof["numericAdapterAlgorithm"], "double-double-small-exp/v1")
             self.assertEqual(proof["historyStates"], "0,1,2,3")
             self.assertEqual(proof["historyRatings"], "1,2,3,4")
             self.assertGreater(proof["historyLapseTransitions"], 0)
             self.assertEqual(proof["dueDates"], "exact")
             self.assertEqual(proof["verified"], proof["matched"] == proof["vectors"])
-            # Strict gate still refuses any float divergence. Publication may
-            # explicitly accept read/preview mode, never permit grading.
+            # No test exclusions or tolerance changes: strict parity must pass.
             strict = subprocess.run(
                 [node, "tool/scheduler/differential.mjs", output], cwd=ROOT,
                 capture_output=True, text=True, timeout=60,

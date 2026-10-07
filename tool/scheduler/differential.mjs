@@ -36,7 +36,11 @@ export async function verifyArtifact(directory, requireCertificate = true, corpu
       corpus.historyLapseTransitions < 1) {
     throw new Error('Incomplete golden corpus');
   }
-  const {schedule, compiledSourceSha256} = await import(pathToFileURL(resolve(engineFile)).href);
+  const {schedule, compiledSourceSha256, numericAdapterSha256, numericAdapterAlgorithm} = await import(pathToFileURL(resolve(engineFile)).href);
+  if (!/^[a-f0-9]{64}$/.test(numericAdapterSha256 || '') ||
+      numericAdapterAlgorithm !== 'double-double-small-exp/v1') {
+    throw new Error('Missing or unknown compiled numerical adapter identity');
+  }
   let matched = 0;
   let maxAbsoluteFloatError = 0;
   let dueComparisons = 0;
@@ -75,6 +79,7 @@ export async function verifyArtifact(directory, requireCertificate = true, corpu
     floatTolerance: 1e-9, maxAbsoluteFloatError, dueComparisons, exactDueComparisons,
     dueDates: exactDueComparisons === dueComparisons && exactReviewedAt ? 'exact' : 'mismatch',
     engineSha256: sha256(engineBytes), compiledJsSha256: compiledSourceSha256,
+    numericAdapterSha256, numericAdapterAlgorithm,
     vectorsSha256: sha256(vectorBytes)};
   if (requireCertificate) {
     const proof = JSON.parse(readFileSync(join(directory, 'provenance.json')));
