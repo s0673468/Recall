@@ -2981,6 +2981,9 @@ void main() {
         Rating.easy.value,
         Rating.good.value,
       ]);
+      // The inline sync notice is transient; advance its documented lifetime.
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
     });
 
     testWidgets('StudyScreen reparses revised content for the same card', (
@@ -3782,6 +3785,8 @@ void main() {
       expect(api.conceptPageReads, 1);
       await openTab(tester, 'Read');
       expect(longLogReads(api), 2);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
     });
 
     test('signing out drops the shared reads', () async {
@@ -4975,6 +4980,9 @@ void main() {
       final store = LocalReviewStore();
       final controller = build(api, store: store);
       await controller.load();
+      api.beforeQueue = () async => throw StateError('offline');
+      await controller.refresh();
+      expect(controller.state.offline, isTrue);
       await controller.hideCurrent('dislike');
       controller.flip();
       await controller.rate(Rating.good);
@@ -5083,21 +5091,51 @@ void main() {
     });
   });
 
+  testWidgets('sync Undo notice fits phone width and expires', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+    final controller = ReviewController(api: api, engine: FsrsEngine(), store: LocalReviewStore());
+    addTearDown(controller.dispose);
+    await controller.load();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body:
+      MediaQuery(data: const MediaQueryData(textScaler: TextScaler.linear(1.2)),
+        child: StudyScreen(controller: controller)))));
+    controller.flip();
+    await controller.rate(Rating.good);
+    await controller.syncPending();
+    await tester.pumpAndSettle();
+    expect(find.text('Synced reviews cannot be undone'), findsOneWidget);
+    expect(find.byTooltip('Undo').hitTestable(), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.text('Synced reviews cannot be undone'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   group('Undo UI', () {
     testWidgets('StudyScreen undo returns to the previous card front', (
       tester,
     ) async {
       SharedPreferences.setMockInitialValues({});
-      final controller = ReviewController(
-        api: _FakeRecallApi([
+      final api = _FakeRecallApi([
           _card(id: 601, front: 'first question', back: 'first answer'),
           _card(id: 602, front: 'second question', back: 'second answer'),
-        ]),
+        ]);
+      final controller = ReviewController(
+        api: api,
         engine: FsrsEngine(),
         store: LocalReviewStore(),
       );
       addTearDown(controller.dispose);
       await controller.load();
+      api.beforeQueue = () async => throw StateError('offline');
+      await controller.refresh();
+      expect(controller.state.offline, isTrue);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -5125,15 +5163,19 @@ void main() {
 
     testWidgets('the all-caught-up screen still offers undo', (tester) async {
       SharedPreferences.setMockInitialValues({});
-      final controller = ReviewController(
-        api: _FakeRecallApi([
+      final api = _FakeRecallApi([
           _card(id: 603, front: 'only question', back: 'only answer'),
-        ]),
+        ]);
+      final controller = ReviewController(
+        api: api,
         engine: FsrsEngine(),
         store: LocalReviewStore(),
       );
       addTearDown(controller.dispose);
       await controller.load();
+      api.beforeQueue = () async => throw StateError('offline');
+      await controller.refresh();
+      expect(controller.state.offline, isTrue);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -5147,8 +5189,7 @@ void main() {
       await tester.tap(find.text('Good'));
       await tester.pumpAndSettle();
 
-      // Rated the last card straight into the done state — a mis-tap here
-      // must still be recoverable.
+      // A never-attempted last rating remains recoverable on the done screen.
       expect(find.text('All caught up'), findsOneWidget);
       await tester.tap(find.text('Undo last rating'));
       await tester.pumpAndSettle();

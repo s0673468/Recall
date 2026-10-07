@@ -404,18 +404,20 @@ class _Header extends StatelessWidget {
           const SizedBox(width: 8),
           // The flag confirmation takes this slot for a moment instead of a
           // popup, so nothing ever covers the card or the rating buttons.
-          AnimatedSwitcher(
-            duration: RecallMotion.quick,
-            child: Semantics(
-              key: ValueKey(notice ?? 'session'),
-              liveRegion: notice != null,
-              child: Text(
-                notice ?? '$session done',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: notice == null
-                      ? UiColors.textMuted
-                      : UiColors.textSecondary,
+          Flexible(
+            child: AnimatedSwitcher(
+              duration: RecallMotion.quick,
+              child: Semantics(
+                key: ValueKey(notice ?? 'session'),
+                liveRegion: notice != null,
+                child: Text(
+                  notice ?? '$session done',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: notice == null
+                        ? UiColors.textMuted
+                        : UiColors.textSecondary,
+                  ),
                 ),
               ),
             ),
