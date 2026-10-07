@@ -1349,6 +1349,9 @@ void main() {
         expect(controller.state.reviewActivityKnown, isTrue);
         expect(controller.state.lastReviewedAt, isNull);
 
+        api.beforeQueue = () async => throw StateError('offline');
+        await controller.refresh();
+        expect(controller.state.offline, isTrue);
         controller.flip();
         await controller.rate(Rating.good);
         expect(controller.state.globalDueCount, 6);
@@ -1651,8 +1654,9 @@ void main() {
     test('successful study actions emit intentional native feedback', () async {
       SharedPreferences.setMockInitialValues({});
       final events = <String>[];
+      final api = _FakeRecallApi([_card()]);
       final controller = ReviewController(
-        api: _FakeRecallApi([_card()]),
+        api: api,
         engine: FsrsEngine(),
         store: LocalReviewStore(),
         haptics: ReviewHaptics(
@@ -1664,6 +1668,8 @@ void main() {
       );
       addTearDown(controller.dispose);
       await controller.load();
+      api.beforeQueue = () async => throw StateError('offline');
+      await controller.refresh();
 
       controller.flip();
       expect(events, ['reveal']);
@@ -5509,8 +5515,9 @@ void main() {
     );
 
     test('undo restores the catch-up slot and local progress', () async {
+      final api = _FakeRecallApi(_catchUpQueue(82));
       final controller = ReviewController(
-        api: _FakeRecallApi(_catchUpQueue(82)),
+        api: api,
         engine: FsrsEngine(),
         store: LocalReviewStore(),
         clock: () => DateTime.utc(2026, 8, 5, 12),
@@ -5519,6 +5526,9 @@ void main() {
 
       await controller.load();
       await controller.startCatchUp();
+      api.beforeQueue = () async => throw StateError('offline');
+      await controller.refresh();
+      expect(controller.state.offline, isTrue);
       final before = controller.state.catchUp;
       controller.flip();
       await controller.rate(Rating.good);
@@ -5546,8 +5556,7 @@ void main() {
             completedToday: 19,
           ),
         );
-        final controller = ReviewController(
-          api: _FakeRecallApi([
+        final api = _FakeRecallApi([
             _card(
               id: 904,
               state: 2,
@@ -5556,7 +5565,9 @@ void main() {
               due: now.subtract(const Duration(hours: 1)),
               lastReview: now.subtract(const Duration(days: 1)),
             ),
-          ]),
+          ]);
+        final controller = ReviewController(
+          api: api,
           engine: FsrsEngine(),
           store: store,
           clock: () => now,
@@ -5566,6 +5577,9 @@ void main() {
         await controller.load();
         expect(controller.state.catchUp.isActive, isTrue);
         expect(controller.state.catchUp.completedToday, 19);
+        api.beforeQueue = () async => throw StateError('offline');
+        await controller.refresh();
+        expect(controller.state.offline, isTrue);
         controller.flip();
         await controller.rate(Rating.good);
         expect(controller.state.catchUp.isNone, isTrue);
