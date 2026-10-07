@@ -9,7 +9,9 @@ class SyntheticRandom {
   int value = 0x5eed2026;
   int next(int bound) {
     value = (1664525 * value + 1013904223) & 0xffffffff;
-    return value % bound;
+    // Low bits of an LCG cycle with powers of two; use upper bits so paired
+    // rating/delay samples do not omit Again and Good from review histories.
+    return (value >> 8) % bound;
   }
 }
 
@@ -27,11 +29,14 @@ Map<String, dynamic> newCard(int id) => {
 void main(List<String> args) {
   final random = SyntheticRandom();
   final vectors = <Map<String, dynamic>>[];
+  final historyStates = <int>{};
+  final historyRatings = <int>{};
+  var historyLapseTransitions = 0;
   final dates = [
     '1999-12-31T23:59:59.999Z',
-    '2000-02-29T03:00:00.000Z',
+    '2000-02-29T03:00:00.000001Z',
     '2024-02-29T02:59:59.999Z',
-    '2026-10-06T03:00:00.000Z',
+    '2026-10-06T03:00:00.123456Z',
     '2038-01-19T03:14:07.000Z',
     '2099-12-31T23:59:59.999Z',
   ];
@@ -60,6 +65,8 @@ void main(List<String> args) {
     // reviews, lapses, and reviews exactly at the scheduled instant.
     for (var step = 0; step < 3 + history % 9; step++) {
       final rating = 1 + random.next(4);
+      historyStates.add(card['state'] as int);
+      historyRatings.add(rating);
       final request = <String, dynamic>{
         'operation': 'review',
         'card': card,
@@ -69,6 +76,9 @@ void main(List<String> args) {
       };
       record(request, 'history');
       final result = scheduleRequest(request) as Map<String, dynamic>;
+      if ((result['lapses'] as int) > (card['lapses'] as int)) {
+        historyLapseTransitions++;
+      }
       card = {...card, ...result, 'last_review': result['reviewedAt']};
       now = DateTime.parse(
         result['due'] as String,
@@ -146,12 +156,22 @@ void main(List<String> args) {
       }
     }
   }
+  if (historyStates.length != 4 ||
+      historyRatings.length != 4 ||
+      historyLapseTransitions == 0) {
+    throw StateError(
+      'Synthetic histories must cover all states, ratings and lapses',
+    );
+  }
   final output = jsonEncode({
     'schema': 'recall.scheduler-vectors/v1',
     'seed': '0x5eed2026',
     'histories': histories,
     'fsrsVersion': '2.0.1',
     'vectorCount': vectors.length,
+    'historyStates': (historyStates.toList()..sort()).join(','),
+    'historyRatings': (historyRatings.toList()..sort()).join(','),
+    'historyLapseTransitions': historyLapseTransitions,
     'vectors': vectors,
   });
   if (args.isEmpty) {

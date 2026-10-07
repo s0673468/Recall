@@ -31,7 +31,8 @@ writeFileSync(join(output, 'engine.mjs'), `${compiled}\n` +
   'export const schedule = (request) => JSON.parse(nativeSchedule(JSON.stringify(request)));\n');
 writeFileSync(join(output, 'THIRD_PARTY_LICENSES.txt'), readFileSync(join(root, 'tool/scheduler/THIRD_PARTY_LICENSES.txt')));
 writeFileSync(join(output, 'vectors.json.gz'), gzipSync(readFileSync(join(output, 'vectors.json')), {level: 9}));
-const proof = await verifyArtifact(output, false);
+const allowUnverified = process.argv.includes('--allow-unverified');
+const proof = await verifyArtifact(output, false, null, !allowUnverified);
 const sourceFiles = ['lib/features/review/application/fsrs_engine.dart',
   'lib/features/review/data/models.dart', 'pubspec.lock',
   'tool/scheduler/protocol.dart', 'tool/scheduler/compile_entry.dart',
@@ -44,4 +45,4 @@ writeFileSync(join(output, 'provenance.json'), JSON.stringify(proof, null, 2) + 
 rmSync(join(output, 'engine.js'), {force: true});
 rmSync(join(output, 'engine.js.deps'), {force: true});
 rmSync(join(output, 'vectors.json'), {force: true});
-console.log(`${proof.matched}/${proof.vectors} matched. Verified engine ${proof.engineSha256}.`);
+console.log(`${proof.matched}/${proof.vectors} matched; grading ${proof.verified ? 'enabled' : 'disabled'}. Engine ${proof.engineSha256}.`);
