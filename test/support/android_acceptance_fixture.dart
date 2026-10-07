@@ -87,6 +87,14 @@ class AndroidAcceptanceApi extends SanitizedRecallApi {
       }
       for (final row in _journal) {
         if (row['owner'] == owner && row['event'] == event) {
+          final original = row['entry'] as Map;
+          if (original['card_id'] != entry['card_id'] ||
+              original['rating'] != entry['rating'] ||
+              original['last_review'] != entry['last_review']) {
+            throw StateError(
+              'Conflicting payload for an invented review event',
+            );
+          }
           return row['id'] as int;
         }
       }

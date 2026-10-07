@@ -47,6 +47,11 @@ void main() {
       expect(await restored.applyReview(event), 20001);
       expect(restored.reviewLog, hasLength(1));
       expect(restored.appliedReviewCardIds, [1]);
+      await expectLater(
+        restored.applyReview({...event, 'card_id': 2}),
+        throwsStateError,
+      );
+      expect(restored.reviewLog, hasLength(1));
     },
   );
 
