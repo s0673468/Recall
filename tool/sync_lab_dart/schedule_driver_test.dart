@@ -1,6 +1,6 @@
-/// Owned synthetic lab adapter. Run only under an admitted resource budget.
-/// This bridge never opens an Internet connection; actual RecallApi requests
-/// are serialized to the controlling scratch-SQL runner over a Unix socket.
+// Owned synthetic lab adapter. Run only under an admitted resource budget.
+// This bridge never opens an Internet connection; actual RecallApi requests
+// are serialized to the controlling scratch-SQL runner over a Unix socket.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -14,9 +14,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../lib/features/review/data/local_review_store.dart';
-import '../../lib/features/review/data/recall_api.dart';
-import '../../lib/features/review/data/review_replay.dart';
+import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
+import 'package:health_anki_flutter/features/review/data/recall_api.dart';
+import 'package:health_anki_flutter/features/review/data/review_replay.dart';
 import 'file_preferences.dart';
 
 class _Device {
@@ -97,8 +97,11 @@ class _Driver {
     }
     preferences.deviceId = deviceId;
     if (op == 'open') {
-      if (devices.containsKey(deviceId))
+      if (devices.containsKey(deviceId)) {
         throw StateError('Device already open');
+      }
+      // This Flutter test bridge lives under tool/, outside analyzer test discovery.
+      // ignore: invalid_use_of_visible_for_testing_member
       SharedPreferences.resetStatic();
       final store = LocalReviewStore();
       // Force this instance to obtain its device's preferences before another
@@ -159,12 +162,15 @@ class _Driver {
         device.userId = userId;
         return {'userId': userId, 'ownerScope': store.activeOwnerScope};
       case 'reopen':
+        // This Flutter test bridge lives under tool/, outside analyzer test discovery.
+        // ignore: invalid_use_of_visible_for_testing_member
         SharedPreferences.resetStatic();
         final fresh = LocalReviewStore();
         await fresh.installId();
         if (device.userId != null) await fresh.activateOwner(device.userId!);
-        if (device.userId == null && store.ownerAware)
+        if (device.userId == null && store.ownerAware) {
           await fresh.releaseOwner();
+        }
         device.store = fresh;
         return {'reopened': true, 'ownerScope': fresh.activeOwnerScope};
       case 'failNextWrite':
@@ -181,8 +187,9 @@ class _Driver {
           if (!await store.markReviewAttempted(
             queued['client_id'] as Object,
             ownerScope: ownerScope,
-          ))
+          )) {
             continue;
+          }
           final logId = await device.api.applyReview(queued);
           trace.add({
             'surface': 'RecallApi.applyReview',
@@ -249,126 +256,123 @@ class _Driver {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  test(
-    'synthetic real-client schedule bridge',
-    () async {
-      final socketPath = Platform.environment['SYNC_LAB_SOCKET'];
-      final prefsPath = Platform.environment['SYNC_LAB_PREFS_DIR'];
-      if (socketPath == null || prefsPath == null) {
-        throw StateError(
-          'Explicit owned SYNC_LAB_SOCKET and SYNC_LAB_PREFS_DIR required',
-        );
-      }
-      final directory = Directory(prefsPath);
-      if (File('${directory.path}/.sync-lab-owned').readAsStringSync() !=
-          'recall-sync-lab-synthetic-v1\n') {
-        throw StateError('Missing scratch ownership marker');
-      }
-      if ((directory.statSync().mode & 0x3f) != 0) {
-        throw StateError('Preferences directory must be private 0700');
-      }
-      final preferences = LabFilePreferences(directory);
-      SharedPreferencesStorePlatform.instance = preferences;
-      final socket = await Socket.connect(
-        InternetAddress(socketPath, type: InternetAddressType.unix),
-        0,
+  test('synthetic real-client schedule bridge', () async {
+    final socketPath = Platform.environment['SYNC_LAB_SOCKET'];
+    final prefsPath = Platform.environment['SYNC_LAB_PREFS_DIR'];
+    if (socketPath == null || prefsPath == null) {
+      throw StateError(
+        'Explicit owned SYNC_LAB_SOCKET and SYNC_LAB_PREFS_DIR required',
       );
-      final driver = _Driver(socket, preferences);
-      final finished = Completer<void>();
-      Future<void> tail = Future.value();
-      final subscription = socket
-          .cast<List<int>>()
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen(
-            (line) {
-              final frame = jsonDecode(line) as Map<String, dynamic>;
-              if (frame['kind'] == 'transport_result') {
-                final pending = driver.pending[frame['requestId']];
-                if (pending == null || pending.isCompleted) {
-                  driver.send({
-                    'kind': 'protocol_error',
-                    'error': 'Unknown transport reply',
-                    'requestId': frame['requestId'],
-                  });
-                } else {
-                  pending.complete(frame);
-                }
+    }
+    final directory = Directory(prefsPath);
+    if (File('${directory.path}/.sync-lab-owned').readAsStringSync() !=
+        'recall-sync-lab-synthetic-v1\n') {
+      throw StateError('Missing scratch ownership marker');
+    }
+    if ((directory.statSync().mode & 0x3f) != 0) {
+      throw StateError('Preferences directory must be private 0700');
+    }
+    final preferences = LabFilePreferences(directory);
+    SharedPreferencesStorePlatform.instance = preferences;
+    final socket = await Socket.connect(
+      InternetAddress(socketPath, type: InternetAddressType.unix),
+      0,
+    );
+    final driver = _Driver(socket, preferences);
+    final finished = Completer<void>();
+    Future<void> tail = Future.value();
+    final subscription = socket
+        .cast<List<int>>()
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen(
+          (line) {
+            final frame = jsonDecode(line) as Map<String, dynamic>;
+            if (frame['kind'] == 'transport_result') {
+              final pending = driver.pending[frame['requestId']];
+              if (pending == null || pending.isCompleted) {
+                driver.send({
+                  'kind': 'protocol_error',
+                  'error': 'Unknown transport reply',
+                  'requestId': frame['requestId'],
+                });
+              } else {
+                pending.complete(frame);
+              }
+              return;
+            }
+            tail = tail.then((_) async {
+              if (frame['op'] == 'shutdown') {
+                driver.send({
+                  'kind': 'result',
+                  'id': frame['id'],
+                  'ok': true,
+                  'result': {'shutdown': true},
+                });
+                if (!finished.isCompleted) finished.complete();
                 return;
               }
-              tail = tail.then((_) async {
-                if (frame['op'] == 'shutdown') {
-                  driver.send({
-                    'kind': 'result',
-                    'id': frame['id'],
-                    'ok': true,
-                    'result': {'shutdown': true},
-                  });
-                  if (!finished.isCompleted) finished.complete();
-                  return;
-                }
-                driver.trace.clear();
-                preferences.trace.clear();
-                try {
-                  final result = await driver.execute(frame);
-                  driver.send({
-                    'kind': 'result',
-                    'id': frame['id'],
-                    'deviceId': frame['deviceId'],
-                    'ok': true,
-                    'result': result,
-                    'trace': [...driver.trace, ...preferences.trace],
-                  });
-                } catch (error, stack) {
-                  driver.send({
-                    'kind': 'result',
-                    'id': frame['id'],
-                    'deviceId': frame['deviceId'],
-                    'ok': false,
-                    'errorType': '${error.runtimeType}',
-                    'error': '$error',
-                    'trace': [...driver.trace, ...preferences.trace],
-                    'stack': '$stack',
-                  });
-                }
-              });
-            },
-            onError: (Object error, StackTrace stack) {
-              if (!finished.isCompleted) finished.completeError(error, stack);
-            },
-            onDone: () {
-              if (!finished.isCompleted)
-                finished.completeError(
-                  StateError('Runner disconnected without shutdown'),
-                );
-            },
-          );
-      driver.send({
-        'kind': 'ready',
-        'protocol': 'recall-sync-lab-dart-v1',
-        'countsAsSchedule': false,
-        'sourceHashes': {
-          for (final path in [
-            'lib/features/review/data/review_replay.dart',
-            'lib/features/review/data/recall_api.dart',
-            'lib/features/review/data/local_review_store.dart',
-            'lib/features/review/application/review_controller.dart',
-            'tool/sync_lab_dart/schedule_driver_test.dart',
-            'tool/sync_lab_dart/file_preferences.dart',
-            'tool/sync_lab_dart/replay_driver.dart',
-          ])
-            path: sha256.convert(File(path).readAsBytesSync()).toString(),
-        },
-      });
-      try {
-        await finished.future;
-        await tail;
-      } finally {
-        await subscription.cancel();
-        await driver.close();
-        await socket.close();
-      }
-    },
-    timeout: const Timeout(Duration(minutes: 25)),
-  );
+              driver.trace.clear();
+              preferences.trace.clear();
+              try {
+                final result = await driver.execute(frame);
+                driver.send({
+                  'kind': 'result',
+                  'id': frame['id'],
+                  'deviceId': frame['deviceId'],
+                  'ok': true,
+                  'result': result,
+                  'trace': [...driver.trace, ...preferences.trace],
+                });
+              } catch (error, stack) {
+                driver.send({
+                  'kind': 'result',
+                  'id': frame['id'],
+                  'deviceId': frame['deviceId'],
+                  'ok': false,
+                  'errorType': '${error.runtimeType}',
+                  'error': '$error',
+                  'trace': [...driver.trace, ...preferences.trace],
+                  'stack': '$stack',
+                });
+              }
+            });
+          },
+          onError: (Object error, StackTrace stack) {
+            if (!finished.isCompleted) finished.completeError(error, stack);
+          },
+          onDone: () {
+            if (!finished.isCompleted) {
+              finished.completeError(
+                StateError('Runner disconnected without shutdown'),
+              );
+            }
+          },
+        );
+    driver.send({
+      'kind': 'ready',
+      'protocol': 'recall-sync-lab-dart-v1',
+      'countsAsSchedule': false,
+      'sourceHashes': {
+        for (final path in [
+          'lib/features/review/data/review_replay.dart',
+          'lib/features/review/data/recall_api.dart',
+          'lib/features/review/data/local_review_store.dart',
+          'lib/features/review/application/review_controller.dart',
+          'tool/sync_lab_dart/schedule_driver_test.dart',
+          'tool/sync_lab_dart/file_preferences.dart',
+          'tool/sync_lab_dart/replay_driver.dart',
+        ])
+          path: sha256.convert(File(path).readAsBytesSync()).toString(),
+      },
+    });
+    try {
+      await finished.future;
+      await tail;
+    } finally {
+      await subscription.cancel();
+      await driver.close();
+      await socket.close();
+    }
+  }, timeout: const Timeout(Duration(minutes: 25)));
 }

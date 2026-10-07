@@ -1,5 +1,5 @@
-/// Synthetic on-disk platform adapter, not evidence of native/browser plugin
-/// behavior. Production SharedPreferences + LocalReviewStore run unchanged.
+// Synthetic on-disk platform adapter, not evidence of native/browser plugin
+// behavior. Production SharedPreferences + LocalReviewStore run unchanged.
 import 'dart:convert';
 import 'dart:io';
 

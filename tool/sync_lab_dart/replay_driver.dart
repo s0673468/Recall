@@ -1,9 +1,9 @@
-/// Transport-free production replay probe. This is NOT a counted SQL schedule.
-/// Input/output: one JSON object per line; errors are explicit, never passes.
+// Transport-free production replay probe. This is NOT a counted SQL schedule.
+// Input/output: one JSON object per line; errors are explicit, never passes.
 import 'dart:convert';
 import 'dart:io';
 
-import '../../lib/features/review/data/review_replay.dart';
+import 'package:health_anki_flutter/features/review/data/review_replay.dart';
 
 void main() async {
   await for (final line

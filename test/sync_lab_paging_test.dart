@@ -1,5 +1,5 @@
-/// Synthetic real-API pagination qualification. A lower transport cap is a
-/// controlled configuration hypothesis, not a claim about deployed PostgREST.
+// Synthetic real-API pagination qualification. A lower transport cap is a
+// controlled configuration hypothesis, not a claim about deployed PostgREST.
 import 'dart:convert';
 import 'dart:math' as math;
 
