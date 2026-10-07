@@ -5911,6 +5911,8 @@ void main() {
       expect(find.textContaining('2/20 today'), findsNothing);
       expect(find.textContaining('about 5 days left'), findsNothing);
       await _captureVisual(tester, 'catch-up-partial-day');
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
     });
   });
 
