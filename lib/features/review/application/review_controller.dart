@@ -1211,6 +1211,7 @@ class ReviewController extends ChangeNotifier {
     final undo = _UndoRecord(
       clientId: await store.newEventId(),
       card: card,
+      outcome: outcome,
       index: _state.index,
       catchUp: _state.catchUp,
       catchUpSourceQueue: List<ReviewCard>.unmodifiable(_catchUpSourceQueue),
@@ -1692,9 +1693,10 @@ class ReviewController extends ChangeNotifier {
 
   /// Revert the most recent rating. If its review is still in the outbox this
   /// is a pure local operation (drop the entry); if it already synced, the
-  /// card's pre-rating scheduling state is written back and the review_log
-  /// row it produced is deleted (the accepted append-only exception). Either
-  /// way the card returns to the front of the queue, question side up, and
+  /// card's pre-rating scheduling state is written back only while its exact
+  /// log and outcome still own the remote card. A superseded or uncertain
+  /// remote undo expires and refreshes instead of rewinding this queue. After
+  /// a confirmed undo, the card returns to the front of the queue, question side up, and
   /// the elapsed-time stopwatch restarts.
   ///
   /// Exclusive: while it runs, [rate] no-ops — otherwise a rating landing
@@ -1738,8 +1740,19 @@ class ReviewController extends ChangeNotifier {
           await api.undoReview({
             ...api.restoreEntry(u.card),
             'review_log_id': u.reviewLogId,
+            'client_id': u.clientId,
+            'expected_last_review': u.outcome.reviewedAt.toIso8601String(),
+            'expected_reps': u.outcome.reps,
+            'expected_lapses': u.outcome.lapses,
           });
           RecallReadCache.of(api).reviewsChanged();
+        } on UndoConflictException {
+          // The remote review wins. Never rewind the queue from this stale
+          // snapshot; a fresh load replaces it with authoritative card state.
+          RecallReadCache.of(api).reviewsChanged();
+          await refresh();
+          _showFlagNotice('This review can no longer be undone.');
+          return;
         } catch (_) {
           // Cloud restore failed (offline?). The rating stands; hand the
           // snapshot back so the user can simply tap undo again — unless a
@@ -1992,6 +2005,7 @@ class _HideUndoRecord {
 class _UndoRecord {
   final String clientId;
   final ReviewCard card;
+  final ReviewOutcome outcome;
   final int index;
   final CatchUpView catchUp;
   final List<ReviewCard> catchUpSourceQueue;
@@ -2003,6 +2017,7 @@ class _UndoRecord {
   _UndoRecord({
     required this.clientId,
     required this.card,
+    required this.outcome,
     required this.index,
     required this.catchUp,
     required this.catchUpSourceQueue,

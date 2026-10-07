@@ -430,6 +430,7 @@ class _FakeRecallApi implements RecallApi {
   /// Every restore entry undoReview received, in order.
   final List<Map<String, dynamic>> undone = [];
   bool failUndoReview = false;
+  bool uncertainAfterUndoRestore = false;
   bool signedOut = false;
 
   /// Awaited inside undoReview — lets tests hold the cloud undo open.
@@ -560,10 +561,20 @@ class _FakeRecallApi implements RecallApi {
   Future<void> undoReview(Map<String, dynamic> e) async {
     await beforeUndoReview?.call();
     if (failUndoReview) throw StateError('undo failed');
+    final cardId = (e['card_id'] as num).toInt();
+    final row = server.cards[cardId];
+    final ownedLog = server.reviewLog.any((log) =>
+        log['id'] == e['review_log_id'] &&
+        log['card_id'] == cardId &&
+        log['client_event_id'] == e['client_id']);
+    if (!ownedLog || row == null ||
+        row.lastReview != DateTime.tryParse(e['expected_last_review'] as String) ||
+        row.reps != e['expected_reps'] || row.lapses != e['expected_lapses']) {
+      throw const UndoConflictException();
+    }
     undone.add(e);
-    // Undo is a straight restore of the pre-rating snapshot (unguarded, like
-    // production) plus the log-row delete.
-    server.cards[(e['card_id'] as num).toInt()]?.patch(e);
+    row.patch(e);
+    if (uncertainAfterUndoRestore) throw const UndoConflictException();
     server.deleteLog(e['review_log_id']);
   }
 
@@ -591,6 +602,7 @@ class _FakeRecallApi implements RecallApi {
   @override
   Map<String, dynamic> restoreEntry(ReviewCard card) => {
     'card_id': card.id,
+    'guid': card.guid,
     'stability': card.stability,
     'difficulty': card.difficulty,
     'due': card.due?.toIso8601String(),
@@ -4443,12 +4455,86 @@ void main() {
         );
         expect(restore['cloud_seen'], isTrue);
         expect(restore['review_log_id'], 901);
+        expect(restore['client_id'], api.applied.single['client_id']);
+        expect(restore['expected_last_review'], api.applied.single['last_review']);
+        expect(restore['expected_reps'], api.applied.single['reps']);
+        expect(restore['expected_lapses'], api.applied.single['lapses']);
         expect(controller.state.index, 0);
         expect(controller.state.showBack, isFalse);
         expect(controller.state.reviewedThisSession, 0);
         expect(controller.canUndo, isFalse);
       },
     );
+
+    for (final tiedTimestamp in [false, true]) {
+      test('synced undo expires after a ${tiedTimestamp ? 'tied-time' : 'newer'} web review', () async {
+        final card = scheduledCard();
+        final api = _FakeRecallApi([card, _card(id: 6)]);
+        final controller = build(api);
+        await controller.load();
+        controller.flip();
+        await controller.rate(Rating.good);
+        await controller.syncPending();
+        final phoneAt = DateTime.parse(api.applied.single['last_review'] as String);
+        final web = _FakeRecallApi([card], server: api.server, deviceLabel: 'web');
+        final outcome = FsrsEngine().review(web._project(card), Rating.again,
+          now: tiedTimestamp ? phoneAt : phoneAt.add(const Duration(seconds: 1)));
+        await web.applyReview({...web.reviewEntry(card, outcome), 'client_id': 'invented-web-event'});
+        final remote = api.server.cards[card.id]!;
+        final schedule = (remote.reps, remote.lapses, remote.lastReview, remote.due, remote.stability, remote.difficulty);
+        final logs = List<Map<String, dynamic>>.from(api.server.reviewLog);
+        final fetches = api.queueFetches;
+
+        await controller.undo();
+
+        expect((remote.reps, remote.lapses, remote.lastReview, remote.due, remote.stability, remote.difficulty), schedule);
+        expect(api.server.reviewLog, logs);
+        expect(api.undone, isEmpty);
+        expect(controller.canUndo, isFalse);
+        expect(api.queueFetches, greaterThan(fetches));
+        expect(controller.state.current!.reps, remote.reps);
+        expect(controller.state.current!.due, remote.due);
+        expect(controller.flagNotice, 'This review can no longer be undone.');
+      });
+    }
+
+    test('a missing owned log expires synced undo without restoring the card', () async {
+      final api = _FakeRecallApi([scheduledCard(), _card(id: 6)]);
+      final controller = build(api);
+      await controller.load();
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+      final remote = api.server.cards[5]!;
+      final reps = remote.reps;
+      final due = remote.due;
+      api.server.deleteLog(901);
+      await controller.undo();
+      expect(remote.reps, reps);
+      expect(remote.due, due);
+      expect(api.undone, isEmpty);
+      expect(controller.canUndo, isFalse);
+      expect(controller.state.current!.reps, reps);
+    });
+
+    test('uncertain two-step cloud undo expires and refreshes instead of retrying', () async {
+      final api = _FakeRecallApi([scheduledCard(), _card(id: 6)]);
+      final controller = build(api);
+      await controller.load();
+      controller.flip();
+      await controller.rate(Rating.good);
+      await controller.syncPending();
+      api.uncertainAfterUndoRestore = true;
+      final fetches = api.queueFetches;
+      await controller.undo();
+      expect(controller.canUndo, isFalse);
+      expect(api.queueFetches, greaterThan(fetches));
+      expect(controller.state.current!.reps, api.server.cards[5]!.reps);
+      expect(api.server.reviewLog, hasLength(1));
+      expect(api.undone, hasLength(1));
+      await controller.undo();
+      expect(api.undone, hasLength(1));
+    });
 
     test('only the most recent rating can be undone, once', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
