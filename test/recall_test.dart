@@ -4477,10 +4477,19 @@ void main() {
         await controller.syncPending();
         final phoneAt = DateTime.parse(api.applied.single['last_review'] as String);
         final web = _FakeRecallApi([card], server: api.server, deviceLabel: 'web');
-        final outcome = FsrsEngine().review(web._project(card), Rating.again,
+        final webCard = web._project(card);
+        final outcome = FsrsEngine().review(webCard, Rating.again,
           now: tiedTimestamp ? phoneAt : phoneAt.add(const Duration(seconds: 1)));
-        await web.applyReview({...web.reviewEntry(card, outcome), 'client_id': 'invented-web-event'});
+        final entry = {...web.reviewEntry(webCard, outcome), 'client_id': 'invented-web-event'};
         final remote = api.server.cards[card.id]!;
+        // Web uses the deployed transactional RPC: each distinct UUID bumps
+        // counters even at tied timestamps. The fake's ordinary applyReview
+        // models the older fallback, whose equality heuristic loses that rep.
+        final reps = remote.reps + 1;
+        final lapses = remote.lapses + (entry['lapsed'] == true ? 1 : 0);
+        if (!tiedTimestamp) remote.patch(entry);
+        remote.patch({'reps': reps, 'lapses': lapses, 'cloud_seen': true});
+        api.server.appendLog(entry, clientEventId: entry['client_id'] as String);
         final schedule = (remote.reps, remote.lapses, remote.lastReview, remote.due, remote.stability, remote.difficulty);
         final logs = List<Map<String, dynamic>>.from(api.server.reviewLog);
         final fetches = api.queueFetches;
