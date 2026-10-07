@@ -123,10 +123,21 @@ class AndroidAcceptanceApi extends SanitizedRecallApi {
 /// Uses real Android preferences and platform channels in a separate test app.
 Future<RecallDependencies> createAndroidAcceptanceDependencies() async {
   final preferences = await SharedPreferences.getInstance();
-  final api = AndroidAcceptanceApi(
-    preferences: preferences,
-    dataset: SanitizedRecallDataset.productionScale(),
+  final corpus = SanitizedRecallDataset.productionScale();
+  final localNow = corpus.now.toLocal();
+  final today = DateTime(localNow.year, localNow.month, localNow.day);
+  // Begin with due work and no study today so the native reminder's positive
+  // eligibility path is reachable. New actual fixture reviews then disable it.
+  final dataset = SanitizedRecallDataset(
+    now: corpus.now,
+    decks: corpus.decks,
+    cards: corpus.cards,
+    reviews: corpus.reviews.where((row) => row.at.isBefore(today)).toList(),
+    noteTags: corpus.noteTags,
+    conceptNodes: corpus.conceptNodes,
+    conceptPages: corpus.conceptPages,
   );
+  final api = AndroidAcceptanceApi(preferences: preferences, dataset: dataset);
   await api.restore();
   final store = LocalReviewStore();
   final prefs = RecallPrefsController(api: api);
@@ -159,7 +170,7 @@ Future<RecallDependencies> createAndroidAcceptanceDependencies() async {
       await store.releaseOwner();
     },
   );
-  await controller.initialize();
+  if (owner != null) await controller.initialize();
   final background = BackgroundSyncCoordinator(
     platform: const MethodChannelBackgroundSyncPlatform(),
     sync: controller.syncPendingInBackground,

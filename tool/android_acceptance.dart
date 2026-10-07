@@ -14,17 +14,17 @@ void main() {
       'This entrypoint requires the isolated Android acceptance build',
     );
   }
-  runApp(const _AcceptanceApp());
+  runApp(const AndroidAcceptanceApp());
 }
 
-class _AcceptanceApp extends StatefulWidget {
-  const _AcceptanceApp();
+class AndroidAcceptanceApp extends StatefulWidget {
+  const AndroidAcceptanceApp({super.key});
 
   @override
-  State<_AcceptanceApp> createState() => _AcceptanceAppState();
+  State<AndroidAcceptanceApp> createState() => _AcceptanceAppState();
 }
 
-class _AcceptanceAppState extends State<_AcceptanceApp> {
+class _AcceptanceAppState extends State<AndroidAcceptanceApp> {
   RecallDependencies? dependencies;
 
   Future<RecallDependencies> load() async {
