@@ -6,6 +6,20 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// A separate package keeps invented acceptance preferences away from Recall.
+// The explicit target guard prevents accidentally distributing this identity.
+val androidAcceptance = providers.gradleProperty("recallAndroidAcceptance").orNull.let {
+    when (it) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException("recallAndroidAcceptance must be true or false")
+    }
+}
+if (androidAcceptance &&
+    !providers.gradleProperty("target").orNull.orEmpty().endsWith("tool/android_acceptance.dart")) {
+    throw GradleException("Android acceptance requires tool/android_acceptance.dart")
+}
+
 // Staging on a compute host must never provision or fall back to a signing key.
 // The resulting APK needs the retained identity and preflight before delivery.
 val unsignedReleaseArtifact = providers.gradleProperty("recallUnsignedRelease").orNull.let {
@@ -49,6 +63,9 @@ val usesPrivateReleaseKey =
 val hasReleaseSigning = usesHistoricalContinuityKey || usesPrivateReleaseKey
 
 gradle.taskGraph.whenReady {
+    if (androidAcceptance && allTasks.any { it.name.contains("Release") }) {
+        throw GradleException("Android acceptance is a debug-only fixture")
+    }
     if (!unsignedReleaseArtifact && !hasReleaseSigning &&
         allTasks.any { it.name.contains("Release") }) {
         throw GradleException(
@@ -65,6 +82,9 @@ android {
     // Flutter's target SDK 36 until the Android 17 behavior change is accepted.
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
+    if (androidAcceptance) {
+        sourceSets.getByName("debug").manifest.srcFile("src/acceptance/AndroidManifest.xml")
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -73,6 +93,7 @@ android {
 
     defaultConfig {
         applicationId = "com.german.health_anki_flutter"
+        if (androidAcceptance) applicationIdSuffix = ".acceptance"
         minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

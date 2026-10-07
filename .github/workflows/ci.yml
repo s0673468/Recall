@@ -118,6 +118,31 @@ jobs:
             cat "$report"
           fi
 
+      - name: Build isolated Android acceptance fixture
+        env:
+          ORG_GRADLE_PROJECT_recallAndroidAcceptance: 'true'
+        run: >-
+          ./tool/flutterw build apk --debug --no-pub
+          --no-android-gradle-daemon --target-platform android-arm64
+          -t tool/android_acceptance.dart
+          --dart-define=RECALL_ANDROID_ACCEPTANCE=true
+
+      - name: Verify acceptance package and network isolation
+        run: |
+          python3 tool/check_android_acceptance_apk.py build/app/outputs/flutter-apk/app-debug.apk \
+            --apkanalyzer "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" \
+            > build/app/outputs/flutter-apk/acceptance-identity.json
+
+      - name: Retain invented-data APK for admitted emulator acceptance
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-acceptance-${{ github.sha }}
+          path: |
+            build/app/outputs/flutter-apk/app-debug.apk
+            build/app/outputs/flutter-apk/acceptance-identity.json
+          if-no-files-found: error
+          retention-days: 1
+
   flag-report:
     timeout-minutes: 10
     runs-on: ubuntu-latest
