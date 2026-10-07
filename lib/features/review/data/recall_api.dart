@@ -893,135 +893,12 @@ class RecallApi implements ReviewReplayGateway {
     'client_event_id': ?clientEventId,
   };
 
-  /// Restore only the exact review this device still owns. A newer review,
-  /// missing receipt, or another event's log expires undo without writing.
-  /// The guarded card update is the undo's compare-and-swap point; only its
-  /// success permits removal of the exact owned log row. The existing two
-  /// writes remain non-atomic: readback resolves a lost delete response and
-  /// expires uncertain undo rather than repeating the scheduling restore.
+  /// Remote Undo needs an atomic server contract. The legacy two-write path
+  /// can overwrite another device or leave scheduling and logs inconsistent.
+  /// Keep this compatibility entry point fail-closed before any transport.
+  static const syncedUndoPolicy = 'never-attempted-local-only-v1';
+
   Future<void> undoReview(Map<String, dynamic> e) async {
-    final ownerId = currentUser?.id;
-    final cardId = e['card_id'];
-    final guid = e['guid'];
-    final logId = e['review_log_id'];
-    final eventId = e['client_id'];
-    final expectedAt = e['expected_last_review'];
-    final expectedReps = e['expected_reps'];
-    final expectedLapses = e['expected_lapses'];
-    if (ownerId == null ||
-        cardId is! int ||
-        cardId <= 0 ||
-        guid is! String ||
-        guid.isEmpty ||
-        logId is! int ||
-        logId <= 0 ||
-        eventId is! String ||
-        eventId.isEmpty ||
-        expectedAt is! String ||
-        DateTime.tryParse(expectedAt) == null ||
-        expectedReps is! int ||
-        expectedReps <= 0 ||
-        expectedLapses is! int ||
-        expectedLapses < 0) {
-      throw const UndoConflictException();
-    }
-    void requireOwner() {
-      if (currentUser?.id != ownerId) throw const UndoConflictException();
-    }
-
-    Future<Map<String, dynamic>?> ownedLog() => client
-        .from('review_log')
-        .select('id,card_id,guid,user_id,client_event_id')
-        .eq('id', logId)
-        .eq('card_id', cardId)
-        .eq('guid', guid)
-        .eq('user_id', ownerId)
-        .eq('client_event_id', eventId)
-        .maybeSingle();
-    final log = await ownedLog();
-    requireOwner();
-    if (log == null ||
-        log['id'] != logId ||
-        log['card_id'] != cardId ||
-        log['guid'] != guid ||
-        log['user_id'] != ownerId ||
-        log['client_event_id'] != eventId) {
-      throw const UndoConflictException();
-    }
-    final restored = <String, dynamic>{
-      'stability': e['stability'],
-      'difficulty': e['difficulty'],
-      'due': e['due'],
-      'state': e['state'],
-      'reps': e['reps'],
-      'lapses': e['lapses'],
-      'last_review': e['last_review'],
-      'cloud_seen': e['cloud_seen'],
-    };
-    final updated = await client
-        .from('cards')
-        .update(restored)
-        .eq('id', cardId)
-        .eq('guid', guid)
-        .eq('user_id', ownerId)
-        .eq('last_review', expectedAt)
-        .eq('reps', expectedReps)
-        .eq('lapses', expectedLapses)
-        .select('id');
-    requireOwner();
-    if (updated.length != 1 || updated.single['id'] != cardId) {
-      throw const UndoConflictException();
-    }
-    try {
-      await client
-          .from('review_log')
-          .delete()
-          .eq('id', logId)
-          .eq('card_id', cardId)
-          .eq('guid', guid)
-          .eq('user_id', ownerId)
-          .eq('client_event_id', eventId);
-    } catch (_) {
-      // It may already be deleted. Resolve with reads only; never repeat the
-      // restore or delete after an uncertain response.
-    }
-    try {
-      requireOwner();
-      final remaining = await ownedLog();
-      requireOwner();
-      final card = await client
-          .from('cards')
-          .select(
-            'id,guid,user_id,stability,difficulty,due,state,reps,lapses,last_review,cloud_seen',
-          )
-          .eq('id', cardId)
-          .eq('guid', guid)
-          .eq('user_id', ownerId)
-          .maybeSingle();
-      requireOwner();
-      bool sameTime(Object? left, Object? right) {
-        if (left == null || right == null) return left == right;
-        if (left is! String || right is! String) return false;
-        final a = DateTime.tryParse(left), b = DateTime.tryParse(right);
-        return a != null && b != null && a.isAtSameMomentAs(b);
-      }
-
-      if (remaining == null &&
-          card != null &&
-          card['id'] == cardId &&
-          card['guid'] == guid &&
-          card['user_id'] == ownerId &&
-          restored.entries.every(
-            (entry) => entry.key == 'last_review' || entry.key == 'due'
-                ? sameTime(card[entry.key], entry.value)
-                : card[entry.key] == entry.value,
-          )) {
-        return;
-      }
-    } catch (_) {
-      // Readback failed or the owner changed: expire the local undo slot and
-      // reload authoritative state instead of offering another blind attempt.
-    }
     throw const UndoConflictException();
   }
 
@@ -1318,11 +1195,10 @@ String recallDeviceLabel({
   };
 }
 
-/// The saved undo no longer owns the current server review. Unlike a network
-/// failure, this expires the local undo slot and refreshes authoritative state.
+/// Synced or attempted reviews require an atomic server Undo contract.
 class UndoConflictException implements Exception {
   const UndoConflictException();
 
   @override
-  String toString() => 'This review can no longer be undone.';
+  String toString() => 'Synced reviews cannot be undone';
 }

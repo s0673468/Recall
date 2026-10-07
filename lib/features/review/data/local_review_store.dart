@@ -259,7 +259,11 @@ class LocalReviewStore {
     final key = _storageKey(_outboxKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readOutbox(prefs, key)..add(entry);
+      final list = _readOutbox(prefs, key)
+        ..add({
+          ...entry,
+          'delivery_attempted': entry['delivery_attempted'] ?? false,
+        });
       await _writeList(prefs, key, list);
       return list.length;
     });
@@ -273,6 +277,21 @@ class LocalReviewStore {
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       return _readOutbox(prefs, key);
+    });
+  }
+
+  /// Durably close the local Undo window before sending, including attempts
+  /// whose response may be lost. Serialized with removal so only one wins.
+  Future<bool> markReviewAttempted(Object clientId, {String? ownerScope}) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
+    return _withOutboxLock(() async {
+      final prefs = await _prefs;
+      final list = _readOutbox(prefs, key);
+      final index = list.indexWhere((e) => e['client_id'] == clientId);
+      if (index < 0) return false;
+      list[index]['delivery_attempted'] = true;
+      await _writeList(prefs, key, list);
+      return true;
     });
   }
 
@@ -298,16 +317,18 @@ class LocalReviewStore {
     });
   }
 
-  /// Drop the queued review whose `client_id` matches — the not-yet-flushed
-  /// rating the user just undid. Returns whether an entry was removed (false
-  /// means a flush already delivered it) and the new pending count.
+  /// Remove only a positively never-attempted queued review. Legacy entries
+  /// without this marker are uncertain and remain deliverable. Returns the
+  /// removal result and pending count; never drops an ambiguous server commit.
   Future<({bool removed, int remaining})> removeEntry(Object clientId) {
     final key = _storageKey(_outboxKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       final list = _readOutbox(prefs, key);
       final before = list.length;
-      list.removeWhere((e) => e['client_id'] == clientId);
+      list.removeWhere(
+        (e) => e['client_id'] == clientId && e['delivery_attempted'] == false,
+      );
       if (list.length != before) {
         await _writeList(prefs, key, list);
       }

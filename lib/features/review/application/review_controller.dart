@@ -1211,7 +1211,6 @@ class ReviewController extends ChangeNotifier {
     final undo = _UndoRecord(
       clientId: await store.newEventId(),
       card: card,
-      outcome: outcome,
       index: _state.index,
       catchUp: _state.catchUp,
       catchUpSourceQueue: List<ReviewCard>.unmodifiable(_catchUpSourceQueue),
@@ -1280,7 +1279,7 @@ class ReviewController extends ChangeNotifier {
       );
     }
     // Sync behind the UI — the next card must never wait on the network.
-    unawaited(_flushOutbox());
+    if (!_state.offline) unawaited(_flushOutbox());
   }
 
   Future<CatchUpView> _recordCatchUpReview(ReviewCard card) async {
@@ -1691,13 +1690,9 @@ class ReviewController extends ChangeNotifier {
   /// queue restore.
   bool get undoInFlight => _undoInFlight;
 
-  /// Revert the most recent rating. If its review is still in the outbox this
-  /// is a pure local operation (drop the entry); if it already synced, the
-  /// card's pre-rating scheduling state is written back only while its exact
-  /// log and outcome still own the remote card. A superseded or uncertain
-  /// remote undo expires and refreshes instead of rewinding this queue. After
-  /// a confirmed undo, the card returns to the front of the queue, question side up, and
-  /// the elapsed-time stopwatch restarts.
+  /// Undo only a review that has never been sent. Once sending begins, even
+  /// a lost response can represent a committed review. Remote Undo stays
+  /// unavailable until an atomic server contract exists.
   ///
   /// Exclusive: while it runs, [rate] no-ops — otherwise a rating landing
   /// during the awaits below would be rewound over by the queue restore.
@@ -1709,59 +1704,22 @@ class ReviewController extends ChangeNotifier {
     _undoInFlight = true;
     notifyListeners(); // hide the undo affordance for the duration
     try {
-      // Let any in-flight flush settle first, so the review is definitively
-      // either delivered (u.flushed, with its review_log id captured) or
-      // still sitting in the outbox — never racing between the two. _undo
-      // stays set while waiting: the flush hook needs it to capture the id.
+      // A sender closes the Undo slot before its RPC. Wait for an already
+      // running sender; never treat a missing acknowledgement as unsent.
       while (_flushTask != null) {
         try {
           await _flushTask;
         } catch (_) {}
       }
-      if (!identical(_undo, u)) return; // superseded/expired while waiting
+      if (!identical(_undo, u)) return;
       _undo = null;
       _interactionGeneration++;
-
-      int? pendingAfterRemove;
-      if (!u.flushed) {
-        final result = await store.removeEntry(u.clientId);
-        pendingAfterRemove = result.remaining;
-        if (!result.removed && !u.flushed) {
-          // Neither queued nor delivered — should be unreachable with the
-          // flush settled above. Bail rather than restore state that never
-          // applied.
-          _catchUpSourceQueue = u.catchUpSourceQueue;
-          debugPrint('Recall: undo skipped — review neither queued nor synced');
-          return;
-        }
+      final result = await store.removeEntry(u.clientId);
+      if (!result.removed) {
+        _showFlagNotice('Synced reviews cannot be undone');
+        return;
       }
-      if (u.flushed) {
-        try {
-          await api.undoReview({
-            ...api.restoreEntry(u.card),
-            'review_log_id': u.reviewLogId,
-            'client_id': u.clientId,
-            'expected_last_review': u.outcome.reviewedAt.toIso8601String(),
-            'expected_reps': u.outcome.reps,
-            'expected_lapses': u.outcome.lapses,
-          });
-          RecallReadCache.of(api).reviewsChanged();
-        } on UndoConflictException {
-          // The remote review wins. Never rewind the queue from this stale
-          // snapshot; a fresh load replaces it with authoritative card state.
-          RecallReadCache.of(api).reviewsChanged();
-          await refresh();
-          _showFlagNotice('This review can no longer be undone.');
-          return;
-        } catch (_) {
-          // Cloud restore failed (offline?). The rating stands; hand the
-          // snapshot back so the user can simply tap undo again — unless a
-          // newer rating claimed the slot while this call was in flight.
-          debugPrint('Recall: undo failed (offline?)');
-          _undo ??= u;
-          return;
-        }
-      }
+      final pendingAfterRemove = result.remaining;
       final reviewed = _state.reviewedThisSession;
       final globalDueCount = _state.globalDueCount;
       await _restoreCatchUpState(u.catchUp);
@@ -1779,7 +1737,7 @@ class ReviewController extends ChangeNotifier {
           reviewActivityKnown: u.previousReviewActivityKnown,
           // Read after every await above, so the badge can't be restored to
           // a count captured before a concurrent flush updated it.
-          pendingSync: pendingAfterRemove ?? _state.pendingSync,
+          pendingSync: pendingAfterRemove,
           catchUp: u.catchUp,
         ),
       );
@@ -1849,16 +1807,21 @@ class ReviewController extends ChangeNotifier {
     for (final entry in pending) {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       try {
-        final logId = await api.applyReview(entry);
-        sent++;
-        // If this delivery was the still-undoable rating, remember the log
-        // row it produced so an undo can target exactly that row.
-        final u = _undo;
-        if (u != null && u.clientId == entry['client_id']) {
-          u
-            ..flushed = true
-            ..reviewLogId = logId;
+        final eventId = entry['client_id'];
+        // Persist before transport. If Undo already removed it, skip this
+        // stale read; otherwise this event remains replayable after any loss.
+        if (eventId != null &&
+            !await store.markReviewAttempted(eventId, ownerScope: ownerScope)) {
+          break;
         }
+        if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
+        final u = _undo;
+        if (u != null && u.clientId == eventId) {
+          _undo = null;
+          _showFlagNotice('Synced reviews cannot be undone');
+        }
+        await api.applyReview(entry);
+        sent++;
       } catch (_) {
         debugPrint('Recall: review sync deferred (offline?)');
         break;
@@ -2005,19 +1968,15 @@ class _HideUndoRecord {
 class _UndoRecord {
   final String clientId;
   final ReviewCard card;
-  final ReviewOutcome outcome;
   final int index;
   final CatchUpView catchUp;
   final List<ReviewCard> catchUpSourceQueue;
   final DateTime? previousLastReviewedAt;
   final bool previousReviewActivityKnown;
-  bool flushed = false;
-  int? reviewLogId;
 
   _UndoRecord({
     required this.clientId,
     required this.card,
-    required this.outcome,
     required this.index,
     required this.catchUp,
     required this.catchUpSourceQueue,
