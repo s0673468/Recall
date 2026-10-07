@@ -49,7 +49,9 @@ class _Driver {
       'userId': devices[deviceId]?.userId,
       'method': request.method,
       'path': request.url.path,
+      'url': request.url.toString(),
       'query': request.url.queryParametersAll,
+      'headers': request.headers,
       'body': request.body,
     };
     trace.add({...frame, 'surface': 'RecallApi.http'});
@@ -208,6 +210,105 @@ class _Driver {
         };
       case 'applyReview':
         return {'logId': await device.api.applyReview(entry)};
+      case 'flushFlags':
+        final ownerScope = store.activeOwnerScope;
+        final ownerId = device.userId;
+        if (ownerId == null || !store.isActiveOwner(ownerId)) {
+          throw StateError('Flag flush requires an active synthetic owner');
+        }
+        var delivered = 0;
+        for (final queued in await store.flagOutbox(ownerScope: ownerScope)) {
+          // This adapter exercises the real API and durable store. It does
+          // not claim to exercise the controller's session-race guards.
+          if (queued['op'] == 'dismiss') {
+            await device.api.dismissFlag(
+              cardId: (queued['card_id'] as num).toInt(),
+              clientEventId: queued['client_id'].toString(),
+            );
+          } else {
+            await device.api.applyFlag(queued);
+          }
+          trace.add({
+            'surface': queued['op'] == 'dismiss'
+                ? 'RecallApi.dismissFlag'
+                : 'RecallApi.applyFlag',
+            'eventId': queued['client_id'],
+          });
+          if (command['failAckWrite'] == true && delivered == 0) {
+            preferences.failNextWrite = true;
+          }
+          await store.removeFirstFlag(1, ownerScope: ownerScope);
+          delivered++;
+        }
+        return {
+          'delivered': delivered,
+          'pending': (await store.flagOutbox(ownerScope: ownerScope)).length,
+          'surface': 'RecallApi+LocalReviewStore.adapter',
+        };
+      case 'fetchHiddenCardIds':
+        final ids = (await device.api.fetchHiddenCardIds()).toList()..sort();
+        return {'cardIds': ids, 'surface': 'RecallApi.fetchHiddenCardIds'};
+      case 'fetchQueue':
+        final included = command['includedDeckIds'] as List?;
+        final excluded = command['excludeCardIds'] as List? ?? const [];
+        final cards = await device.api.fetchQueue(
+          deckId: (command['deckId'] as num?)?.toInt(),
+          includedDeckIds: included?.map((id) => (id as num).toInt()).toSet(),
+          newLimit: (command['newLimit'] as num?)?.toInt() ?? 20,
+          excludeCardIds: excluded.map((id) => (id as num).toInt()).toSet(),
+        );
+        trace.add({
+          'surface': 'RecallApi.fetchQueue',
+          'count': cards.length,
+          'cardIds': [for (final card in cards) card.id],
+        });
+        return {
+          'cards': [for (final card in cards) card.toJson()],
+          'cardIds': [for (final card in cards) card.id],
+          'count': cards.length,
+          'surface': 'RecallApi.fetchQueue',
+        };
+      case 'readCardStates':
+        final cards = <Map<String, dynamic>>[];
+        for (final id in command['cardIds'] as List) {
+          final cardId = (id as num).toInt();
+          final state = await device.api.readCardState(cardId);
+          cards.add({
+            'id': cardId,
+            'exists': state != null,
+            if (state != null) ...{
+              'reps': state.reps,
+              'lapses': state.lapses,
+              'last_review': state.lastReview?.toUtc().toIso8601String(),
+              'last_review_unreadable': state.lastReviewUnreadable,
+            },
+          });
+        }
+        trace.add({
+          'surface': 'RecallApi.readCardState',
+          'cardIds': command['cardIds'],
+        });
+        return {'cards': cards, 'surface': 'RecallApi.readCardState'};
+      case 'readCardSnapshot':
+        final ids = (command['cardIds'] as List)
+            .map((id) => (id as num).toInt())
+            .toList();
+        if (ids.isEmpty) {
+          throw const FormatException('Snapshot requires explicit cardIds');
+        }
+        // Unlike fetchQueue this also sees future-due cards. Values come from
+        // the real SDK SELECT response, never the generator or a local model.
+        final cards = await device.client
+            .from('cards')
+            .select('id,stability,difficulty,due,state,reps,lapses,last_review')
+            .inFilter('id', ids)
+            .order('id');
+        trace.add({
+          'surface': 'SupabaseClient.cards.select',
+          'cardIds': ids,
+          'count': cards.length,
+        });
+        return {'cards': cards, 'surface': 'SupabaseClient.cards.select'};
       case 'legacyMerge':
         return {
           'values': mergeReviewIntoCard(
