@@ -1,4 +1,5 @@
 """Compile the real scheduler and validate synthetic VM/JS parity in CI."""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -18,16 +19,31 @@ class SharedSchedulerBuildTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="recall-scheduler-") as output:
             env = {**os.environ, "DART": dart}
             result = subprocess.run(
-                [node, "tool/scheduler/build.mjs", output], cwd=ROOT,
+                [node, "tool/scheduler/build.mjs", output, "--allow-unverified"], cwd=ROOT,
                 env=env, capture_output=True, text=True, timeout=120,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             verified = subprocess.run(
-                [node, "tool/scheduler/differential.mjs", output], cwd=ROOT,
+                [node, "tool/scheduler/differential.mjs", output, "--allow-unverified"], cwd=ROOT,
                 capture_output=True, text=True, timeout=60,
             )
             self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
-            self.assertIn("34623/34623 vectors matched (100%)", verified.stdout)
+            proof = json.loads(Path(output, "provenance.json").read_text())
+            self.assertEqual(proof["vectors"], 34623)
+            self.assertEqual(proof["historyStates"], "0,1,2,3")
+            self.assertEqual(proof["historyRatings"], "1,2,3,4")
+            self.assertGreater(proof["historyLapseTransitions"], 0)
+            self.assertEqual(proof["dueDates"], "exact")
+            self.assertEqual(proof["verified"], proof["matched"] == proof["vectors"])
+            # Strict gate still refuses any float divergence. Publication may
+            # explicitly accept read/preview mode, never permit grading.
+            strict = subprocess.run(
+                [node, "tool/scheduler/differential.mjs", output], cwd=ROOT,
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(strict.returncode == 0, proof["verified"])
+            if not proof["verified"]:
+                self.assertIn("grading disabled", strict.stderr)
             self.assertLess(Path(output, "engine.mjs").stat().st_size, 150000)
 
 

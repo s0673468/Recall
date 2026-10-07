@@ -24,26 +24,56 @@ export function compare(actual, expected, path = '$') {
   }
 }
 
-export async function verifyArtifact(directory, requireCertificate = true, corpusPath = null) {
+export async function verifyArtifact(directory, requireCertificate = true, corpusPath = null, requirePerfect = true) {
   const engineFile = join(directory, 'engine.mjs');
   const vectorsFile = corpusPath || join(directory, 'vectors.json.gz');
   const engineBytes = readFileSync(engineFile);
   const vectorBytes = readFileSync(vectorsFile);
   const corpus = JSON.parse(gunzipSync(vectorBytes));
   if (corpus.schema !== 'recall.scheduler-vectors/v1' || corpus.histories < 3000 ||
-      corpus.vectorCount !== corpus.vectors.length || corpus.vectorCount < 30000) {
+      corpus.vectorCount !== corpus.vectors.length || corpus.vectorCount < 30000 ||
+      corpus.historyStates !== '0,1,2,3' || corpus.historyRatings !== '1,2,3,4' ||
+      corpus.historyLapseTransitions < 1) {
     throw new Error('Incomplete golden corpus');
   }
   const {schedule, compiledSourceSha256} = await import(pathToFileURL(resolve(engineFile)).href);
   let matched = 0;
-  for (const vector of corpus.vectors) {
-    compare(schedule(vector.request), vector.expected, `vector[${matched}]`);
-    matched++;
+  let maxAbsoluteFloatError = 0;
+  let dueComparisons = 0;
+  let exactDueComparisons = 0;
+  let exactReviewedAt = true;
+  function measure(actual, expected, key = '') {
+    if (typeof expected === 'number') {
+      maxAbsoluteFloatError = Math.max(maxAbsoluteFloatError, Math.abs(actual - expected));
+    } else if (expected && typeof expected === 'object') {
+      for (const [childKey, child] of Object.entries(expected)) measure(actual?.[childKey], child, childKey);
+    } else if (key === 'due') {
+      dueComparisons++;
+      if (actual === expected) exactDueComparisons++;
+    } else if (key === 'reviewedAt' && actual !== expected) {
+      exactReviewedAt = false;
+    }
   }
-  const result = {schema: 'recall.scheduler-proof/v1', verified: true,
+  const differences = [];
+  let index = 0;
+  for (const vector of corpus.vectors) {
+    const actual = schedule(vector.request);
+    measure(actual, vector.expected);
+    try {
+      compare(actual, vector.expected, `vector[${index}]`);
+      matched++;
+    } catch (error) {
+      differences.push({index, message:error.message});
+    }
+    index++;
+  }
+  const result = {schema: 'recall.scheduler-proof/v1', verified: matched === corpus.vectorCount,
     engine: 'Dart FsrsEngine compiled with dart2js', fsrsVersion: corpus.fsrsVersion,
-    histories: corpus.histories, vectors: corpus.vectorCount, matched, matchRatio: 1,
-    floatTolerance: 1e-9, dueDates: 'exact',
+    histories: corpus.histories, vectors: corpus.vectorCount, matched, matchRatio: matched / corpus.vectorCount,
+    historyStates: corpus.historyStates, historyRatings: corpus.historyRatings,
+    historyLapseTransitions: corpus.historyLapseTransitions,
+    floatTolerance: 1e-9, maxAbsoluteFloatError, dueComparisons, exactDueComparisons,
+    dueDates: exactDueComparisons === dueComparisons && exactReviewedAt ? 'exact' : 'mismatch',
     engineSha256: sha256(engineBytes), compiledJsSha256: compiledSourceSha256,
     vectorsSha256: sha256(vectorBytes)};
   if (requireCertificate) {
@@ -52,10 +82,13 @@ export async function verifyArtifact(directory, requireCertificate = true, corpu
       if (proof[key] !== value) throw new Error(`Scheduler certificate mismatch: ${key}`);
     }
   }
-  return result;
+  if (requirePerfect && !result.verified) {
+    throw new Error(`${matched}/${corpus.vectorCount} match; grading disabled: ${differences[0].message}`);
+  }
+  return {...result, differences};
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const result = await verifyArtifact(resolve(process.argv[2] || 'build/scheduler'));
-  console.log(`${result.matched}/${result.vectors} vectors matched (100%); exact due dates, floats <= 1e-9`);
+  const result = await verifyArtifact(resolve(process.argv[2] || 'build/scheduler'), true, null, !process.argv.includes('--allow-unverified'));
+  console.log(`${result.matched}/${result.vectors} vectors matched (${(100 * result.matchRatio).toFixed(4)}%); grading ${result.verified ? 'enabled' : 'disabled'}; due dates ${result.dueDates}, floats <= 1e-9`);
 }
