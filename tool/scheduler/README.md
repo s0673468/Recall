@@ -40,10 +40,27 @@ The source/compiler/asset hashes bind either report to the actual engine.
 Consumers must rerun the verifier at their build gate, use the same engine asset,
 and disable grading when the proof is false, missing, incomplete or stale.
 
-Dart JS and WASM were both evaluated. With complete random histories, one extreme
-stability of about 452,207 days differs by roughly 2.15e-9 between the M1 native
-VM and web math; all 34,879 compared due dates remain exact. Neither web target
-currently meets the strict grading threshold across the full corpus. The fallback
-can show interval previews, but must not schedule or enqueue graded reviews. Golden fixtures
+Dart JS and WASM were both evaluated. The native VM computes
+`exp(0.017157218632938013)` as `1.0173052490937204`; V8 rounds to its upper
+neighbor. FSRS subtracts one, amplifying the one-ULP difference into 2.15e-9
+stability for an extreme synthetic history. A 100-digit independent oracle
+confirms the native result is correctly rounded.
+
+The compiled module now uses a **module-local** numerical adapter over the
+conventional small positive exponential range `[0, ln(2)/2]`. Error-free TwoSum
+and split-product transforms keep double-double intermediates in the positive
+Taylor series before the final binary64 result. This also avoids double rounding
+from a plain `1 + expm1(x)`. Outside that range the original Math backend is used;
+global Math, native Dart, FSRS formulas, package versions and the native corpus
+are unchanged. The proof binds the adapter's source hash as well as the compiled
+Dart source and complete engine bytes.
+
+All 34,623 original native vectors now pass at the unchanged 1e-9 tolerance,
+with 34,879 exact due comparisons. `numeric_math.test.mjs` independently checks
+529 100-digit oracle cases, including the failing argument and its adjacent
+binary64 values, tiny arguments and the range boundary. Regenerate that synthetic
+oracle with `python3 tool/scheduler/generate_numeric_oracle.py`.
+
+ Golden fixtures
 belong in tests and must never be downloaded in normal app use. Generated output
 is ignored build data, rather than committed source in this public repository.
