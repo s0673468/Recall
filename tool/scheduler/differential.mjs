@@ -90,5 +90,5 @@ export async function verifyArtifact(directory, requireCertificate = true, corpu
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const result = await verifyArtifact(resolve(process.argv[2] || 'build/scheduler'), true, null, !process.argv.includes('--allow-unverified'));
-  console.log(`${result.matched}/${result.vectors} vectors matched (${(100 * result.matchRatio).toFixed(4)}%); grading ${result.verified ? 'enabled' : 'disabled'}; due dates ${result.dueDates}, floats <= 1e-9`);
+  console.log(`${result.matched}/${result.vectors} vectors matched (${(100 * result.matchRatio).toFixed(4)}%); grading ${result.verified ? 'enabled' : 'disabled'}; due dates ${result.dueDates}, float tolerance 1e-9; max error ${result.maxAbsoluteFloatError}`);
 }
