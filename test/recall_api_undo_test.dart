@@ -66,7 +66,7 @@ class _Transport {
       );
 
   Future<http.Response> send(http.Request request) async {
-    if (request.url.path.endsWith('/token'))
+    if (request.url.path.endsWith('/token')) {
       return json(request, {
         'access_token': 'invented-access',
         'token_type': 'bearer',
@@ -82,15 +82,18 @@ class _Transport {
           'created_at': '2026-10-01T00:00:00Z',
         },
       });
-    if (request.url.path.endsWith('/logout'))
+    }
+    if (request.url.path.endsWith('/logout')) {
       return http.Response('', 204, request: request);
+    }
     requests.add(request);
     if (request.method == 'GET') {
-      if (patched && failReadback)
+      if (patched && failReadback) {
         return json(request, {
           'code': '08006',
           'message': 'invented readback outage',
         }, status: 503);
+      }
       if (request.url.path.endsWith('/review_log')) {
         await beforeLogRead?.call();
         return json(request, log == null ? [] : [log]);
@@ -99,11 +102,12 @@ class _Transport {
     }
     if (request.method == 'PATCH') {
       beforePatch?.call();
-      if (failPatch)
+      if (failPatch) {
         return json(request, {
           'code': '08006',
           'message': 'invented outage',
         }, status: 503);
+      }
       final query = request.url.queryParameters;
       final matches = [
         'id',
@@ -121,10 +125,11 @@ class _Transport {
       ]);
     }
     if (request.method == 'DELETE') {
-      if (deleteFailure == 'before')
+      if (deleteFailure == 'before') {
         throw http.ClientException(
           'Invented delete response failed before commit',
         );
+      }
       final query = request.url.queryParameters;
       if (log != null &&
           [
@@ -133,13 +138,15 @@ class _Transport {
             'guid',
             'user_id',
             'client_event_id',
-          ].every((key) => query[key] == 'eq.${log![key]}'))
+          ].every((key) => query[key] == 'eq.${log![key]}')) {
         log = null;
+      }
       afterDelete?.call();
-      if (deleteFailure == 'after')
+      if (deleteFailure == 'after') {
         throw http.ClientException(
           'Invented response lost after delete commit',
         );
+      }
       return http.Response('', 204, request: request);
     }
     throw StateError('Unexpected invented request');
