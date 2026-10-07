@@ -31,6 +31,7 @@ class _Driver {
   final Socket socket;
   final LabFilePreferences preferences;
   final devices = <String, _Device>{};
+  final preferenceDevices = <String>{};
   final pending = <int, Completer<Map<String, dynamic>>>{};
   final trace = <Map<String, dynamic>>[];
   int sequence = 0;
@@ -91,8 +92,60 @@ class _Driver {
     }
   }
 
+  Future<Map<String, dynamic>> reset() async {
+    // Commands are serialized by the socket listener. A reset is allowed only
+    // after the prior command and all its transport callbacks have settled.
+    if (pending.isNotEmpty) {
+      throw StateError('Reset requires no outstanding transport callbacks');
+    }
+    final directory = preferences.directory;
+    if (File('${directory.path}/.sync-lab-owned').readAsStringSync() !=
+            'recall-sync-lab-synthetic-v1\n' ||
+        (directory.statSync().mode & 0x3f) != 0) {
+      throw StateError(
+        'Reset requires the private owned preferences directory',
+      );
+    }
+    for (final device in devices.values) {
+      await device.client.dispose();
+    }
+    if (pending.isNotEmpty) {
+      throw StateError('Client disposal left outstanding transport callbacks');
+    }
+    final clearedDeviceIds = preferenceDevices.toList()..sort();
+    // A schedule's armed storage fault must not leak into the next schedule.
+    preferences.failNextWrite = false;
+    for (final deviceId in clearedDeviceIds) {
+      preferences.deviceId = deviceId;
+      if (!await preferences.clear() ||
+          (await preferences.getAll()).isNotEmpty) {
+        throw StateError('Could not clear owned device preferences: $deviceId');
+      }
+    }
+    // This lab bridge deliberately resets the production preference singleton
+    // only at the boundary between independent synthetic schedules.
+    // ignore: invalid_use_of_visible_for_testing_member
+    SharedPreferences.resetStatic();
+    devices.clear();
+    preferenceDevices.clear();
+    preferences.deviceId = null;
+    preferences.trace.clear();
+    trace.clear();
+    // Keep sequence monotonic: a late transport reply must never match a new
+    // schedule's request after reset.
+    return {
+      'reset': true,
+      'devices': devices.length,
+      'pendingTransports': pending.length,
+      'stores': preferenceDevices.length,
+      'clearedDeviceIds': clearedDeviceIds,
+      'storageEmpty': true,
+    };
+  }
+
   Future<Object?> execute(Map<String, dynamic> command) async {
     final op = command['op'] as String;
+    if (op == 'reset') return reset();
     final deviceId = command['deviceId'] as String;
     if (!RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(deviceId)) {
       throw const FormatException('Unsafe deviceId');
@@ -105,6 +158,7 @@ class _Driver {
       // This Flutter test bridge lives under tool/, outside analyzer test discovery.
       // ignore: invalid_use_of_visible_for_testing_member
       SharedPreferences.resetStatic();
+      preferenceDevices.add(deviceId);
       final store = LocalReviewStore();
       // Force this instance to obtain its device's preferences before another
       // instance resets the SharedPreferences singleton.
