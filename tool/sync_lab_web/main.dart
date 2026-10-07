@@ -73,6 +73,7 @@ class _BrowserDriver {
         return http.Response(
           body,
           status,
+          request: request,
           headers: {
             'content-type': 'application/json',
             ...Map<String, String>.from(response['headers'] as Map? ?? {}),
