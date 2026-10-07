@@ -236,10 +236,12 @@ void main() {
     await tester.tap(find.text('Good'));
     await tester.pumpAndSettle();
     expect(dependencies.reviewController.state.reviewedThisSession, 1);
-    expect(find.byTooltip('Undo'), findsOneWidget);
-    await tester.tap(find.byTooltip('Undo'));
+    expect(find.byTooltip('Undo').hitTestable(), findsNothing);
+    expect(find.text('Synced reviews cannot be undone'), findsOneWidget);
+    await dependencies.reviewController.undo();
+    expect(dependencies.reviewController.state.reviewedThisSession, 1);
+    await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
-    expect(dependencies.reviewController.state.reviewedThisSession, 0);
 
     await tester.tap(navigationLabel('Decks'));
     await tester.pumpAndSettle();

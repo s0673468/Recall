@@ -686,6 +686,7 @@ class RecallApi implements ReviewReplayGateway {
   /// uses (see [undoReview]).
   Map<String, dynamic> restoreEntry(ReviewCard card) => {
     'card_id': card.id,
+    'guid': card.guid,
     'stability': card.stability,
     'difficulty': card.difficulty,
     'due': card.due?.toIso8601String(),
@@ -892,30 +893,13 @@ class RecallApi implements ReviewReplayGateway {
     'client_event_id': ?clientEventId,
   };
 
-  /// Undo one already-synced review: write the pre-rating scheduling state
-  /// back to the cards row (same columns [applyReview] touches, including the
-  /// snapshotted cloud_seen) and delete the review_log row it produced.
-  /// review_log is otherwise append-only — this single-row delete is the
-  /// accepted exception (single user; keeps retention stats clean).
-  Future<void> undoReview(Map<String, dynamic> e) async {
-    await client
-        .from('cards')
-        .update({
-          'stability': e['stability'],
-          'difficulty': e['difficulty'],
-          'due': e['due'],
-          'state': e['state'],
-          'reps': e['reps'],
-          'lapses': e['lapses'],
-          'last_review': e['last_review'],
-          'cloud_seen': e['cloud_seen'],
-        })
-        .eq('id', e['card_id']);
+  /// Remote Undo needs an atomic server contract. The legacy two-write path
+  /// can overwrite another device or leave scheduling and logs inconsistent.
+  /// Keep this compatibility entry point fail-closed before any transport.
+  static const syncedUndoPolicy = 'never-attempted-local-only-v1';
 
-    final logId = e['review_log_id'];
-    if (logId != null) {
-      await client.from('review_log').delete().eq('id', logId);
-    }
+  Future<void> undoReview(Map<String, dynamic> e) async {
+    throw const UndoConflictException();
   }
 
   /// Insert one queued note flag into `note_flags`. Its durable client event
@@ -1209,4 +1193,12 @@ String recallDeviceLabel({
     TargetPlatform.android => 'android',
     _ => 'desktop',
   };
+}
+
+/// Synced or attempted reviews require an atomic server Undo contract.
+class UndoConflictException implements Exception {
+  const UndoConflictException();
+
+  @override
+  String toString() => 'Synced reviews cannot be undone';
 }
