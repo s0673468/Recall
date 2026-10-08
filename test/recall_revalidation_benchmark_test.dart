@@ -102,6 +102,20 @@ void main() {
             lane = 'ordinary_due';
             // One overlaps the material lane; retain the ordinary other card.
             result = [row(700421), row(799999, revised: false)];
+            // Both fixtures share a due time. Honor the real keyset's ID
+            // tie-breaker instead of replaying the first page indefinitely.
+            final cursor = q['or'];
+            if (cursor != null) {
+              final match = RegExp(r'id\.gt\.(\d+)').firstMatch(cursor);
+              expect(match, isNotNull, reason: cursor);
+              final afterId = int.parse(match!.group(1)!);
+              final due = DateTime.parse(
+                result.first['due'] as String,
+              ).toUtc().toIso8601String();
+              expect(cursor, '(due.gt.$due,and(due.eq.$due,id.gt.$afterId))');
+              result = result.where((r) => (r['id'] as int) > afterId).toList();
+            }
+            result = result.take(int.parse(q['limit']!)).toList();
           } else {
             lane = 'ordinary_other';
             result = [];
@@ -132,6 +146,13 @@ void main() {
       try {
         final queue = await RecallApi(client).fetchQueue(includedDeckIds: {1});
         elapsed.stop();
+        expect(
+          trace
+              .where((request) => request['lane'] == 'ordinary_due')
+              .map((request) => request['rows']),
+          [2, 0],
+          reason: 'A short due page still needs an empty exhaustion page.',
+        );
         expect(queue.map((x) => x.id).toList(), [
           for (var i = 420; i < 440; i++) 700000 + i,
           799999,

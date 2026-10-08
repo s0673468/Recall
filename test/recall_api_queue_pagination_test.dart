@@ -45,7 +45,9 @@ void main() {
           cursors.add(request.url.queryParameters['or']);
           rows = duePage == 1
               ? [for (var i = 0; i < 500; i++) _dueRow(i)]
-              : [_dueRow(500)];
+              : duePage == 2
+              ? [_dueRow(500)]
+              : [];
         } else {
           rows = const [];
         }
@@ -62,13 +64,15 @@ void main() {
 
     final queue = await RecallApi(client).fetchQueue(newLimit: 20);
 
-    expect(duePage, 2);
+    expect(duePage, 3);
     expect(orders, [
+      'due.asc.nullslast,id.asc.nullslast',
       'due.asc.nullslast,id.asc.nullslast',
       'due.asc.nullslast,id.asc.nullslast',
     ]);
     expect(cursors.first, isNull);
-    expect(cursors.last, contains('id.gt.499'));
+    expect(cursors[1], contains('id.gt.499'));
+    expect(cursors.last, contains('id.gt.500'));
     expect(queue, hasLength(501));
     expect(queue.last.id, 500);
   });

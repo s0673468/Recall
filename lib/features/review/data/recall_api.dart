@@ -517,11 +517,20 @@ class RecallApi implements ReviewReplayGateway {
           .order('due', ascending: true)
           .order('id', ascending: true)
           .limit(_duePageSize);
-      rows.addAll(page);
-      if (page.length < _duePageSize) return rows;
+      // A server-side cap can be lower than our requested limit. Only an
+      // empty keyset page proves exhaustion; a short page can still have peers.
+      if (page.isEmpty) return rows;
       final last = page.last;
-      afterDue = DateTime.parse(last['due'] as String);
-      afterId = (last['id'] as num).toInt();
+      final nextDue = DateTime.parse(last['due'] as String);
+      final nextId = (last['id'] as num).toInt();
+      if (afterDue != null &&
+          (nextDue.isBefore(afterDue) ||
+              (nextDue.isAtSameMomentAs(afterDue) && nextId <= afterId!))) {
+        throw StateError('Due-card pagination did not advance');
+      }
+      rows.addAll(page);
+      afterDue = nextDue;
+      afterId = nextId;
     }
   }
 
