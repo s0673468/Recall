@@ -6243,6 +6243,8 @@ void main() {
             await _captureVisual(tester, 'ios-settings');
             debugDefaultTargetPlatformOverride = null;
           }
+          // Flutter verifies debug overrides before addTearDown callbacks run.
+          debugDefaultTargetPlatformOverride = null;
         },
         tags: appleMobile ? const ['apple-mobile'] : const [],
       );
