@@ -52,26 +52,21 @@ class RatingBar extends StatelessWidget {
 
   Widget _button(Rating rating, String label, Color color) {
     final primary = rating == Rating.good;
-    return Semantics(
-      label: label,
-      button: true,
-      excludeSemantics: true,
-      child: FilledButton(
-        onPressed: enabled ? () => onRate(rating) : null,
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(0, 48),
-          backgroundColor: primary ? UiColors.primary : UiColors.panel,
-          foregroundColor: primary ? UiColors.canvas : color,
-          padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(UiRadius.md),
-            side: BorderSide(
-              color: primary ? UiColors.primary : UiColors.border,
-            ),
+    return FilledButton(
+      onPressed: enabled ? () => onRate(rating) : null,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(0, 48),
+        backgroundColor: primary ? UiColors.primary : UiColors.panel,
+        foregroundColor: primary ? UiColors.canvas : color,
+        padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(UiRadius.md),
+          side: BorderSide(
+            color: primary ? UiColors.primary : UiColors.border,
           ),
         ),
-        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
       ),
+      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
     );
   }
 }
