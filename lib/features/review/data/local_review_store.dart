@@ -255,15 +255,22 @@ class LocalReviewStore {
 
   /// Append one review; returns the new pending count so the caller can
   /// update its badge without re-reading + re-decoding the whole outbox.
-  Future<int> enqueueReview(Map<String, dynamic> entry) {
-    final key = _storageKey(_outboxKey);
+  Future<int> enqueueReview(
+    Map<String, dynamic> entry, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readOutbox(prefs, key)
-        ..add({
-          ...entry,
-          'delivery_attempted': entry['delivery_attempted'] ?? false,
-        });
+      final list = _readOutbox(prefs, key);
+      // A producer may lose its session while waiting for another local write.
+      // Cancel only before append; an already durable event is never removed.
+      if (canWrite != null && !canWrite()) return list.length;
+      list.add({
+        ...entry,
+        'delivery_attempted': entry['delivery_attempted'] ?? false,
+      });
       await _writeList(prefs, key, list);
       return list.length;
     });
@@ -351,10 +358,15 @@ class LocalReviewStore {
     }
   }
 
-  Future<void> saveCatchUpState(CatchUpLocalState state) {
-    final key = _storageKey(catchUpKey);
+  Future<void> saveCatchUpState(
+    CatchUpLocalState state, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) {
+    final key = _storageKey(catchUpKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
+      if (canWrite != null && !canWrite()) return;
       final written = await prefs.setString(key, jsonEncode(state.toJson()));
       if (!written) throw LocalOutboxWriteException(key);
     });
@@ -498,8 +510,10 @@ class LocalReviewStore {
   Future<List<LocalRemediationItem>> enqueueRemediation(
     Iterable<String> nodeIds, {
     DateTime? now,
+    String? ownerScope,
+    bool Function()? canWrite,
   }) {
-    final key = _storageKey(remediationKey);
+    final key = _storageKey(remediationKey, ownerScope: ownerScope);
     final queuedAt = now ?? DateTime.now();
     final today = _dayKey(queuedAt);
     return _withOutboxLock(() async {
@@ -508,6 +522,7 @@ class LocalReviewStore {
           .where((item) => item.dayKey == today)
           .take(maxDailyRemediations)
           .toList();
+      if (canWrite != null && !canWrite()) return current;
       final seen = {for (final item in current) item.nodeId};
       for (final nodeId in nodeIds) {
         final normalized = nodeId.trim();
