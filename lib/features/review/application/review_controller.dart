@@ -479,8 +479,9 @@ class ReviewController extends ChangeNotifier {
     // Cold start: paint the cached snapshot immediately (a card in hand beats
     // a spinner) and let the network fetch below replace it in the background.
     // Not on a deck switch — the snapshot holds the previous filter's queue.
-    _hiddenCardIds = {...await _loadHiddenCardsQuietly(), ..._hidesInFlight};
-    if (loadToken != _loadSequence) return;
+    final cachedHidden = await _loadHiddenCardsQuietly();
+    if (loadToken != _loadSequence || cachedHidden == null) return;
+    _hiddenCardIds = {...cachedHidden, ..._hidesInFlight};
     var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
       final snapshot = await store.loadSnapshot(deckId: _state.deckFilter);
@@ -1697,17 +1698,28 @@ class ReviewController extends ChangeNotifier {
   /// The cached hidden set plus the durable flag outbox. The outbox is the
   /// crash-safe record: the cache write after a hide is best-effort, so a
   /// queued hide must count even if the cache never saw it.
-  Future<Set<int>> _loadHiddenCardsQuietly() async {
+  /// Returns null when another load or account superseded these reads.
+  Future<Set<int>?> _loadHiddenCardsQuietly() async {
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    bool stillCurrent() =>
+        loadToken == _loadSequence &&
+        ownerId == api.currentUser?.id &&
+        _flushStillOwnsSession(ownerId, ownerScope);
+    if (!stillCurrent()) return null;
     Set<int> cached;
     try {
       cached = await store.hiddenCardIds();
     } catch (_) {
       cached = _hiddenCardIds;
     }
+    if (!stillCurrent()) return null;
     try {
-      return _applyPendingFlagOps(cached, await store.flagOutbox());
+      final pending = await store.flagOutbox(ownerScope: ownerScope);
+      return stillCurrent() ? _applyPendingFlagOps(cached, pending) : null;
     } catch (_) {
-      return cached;
+      return stillCurrent() ? cached : null;
     }
   }
 
@@ -1733,28 +1745,46 @@ class ReviewController extends ChangeNotifier {
   /// have not synced. A failed read keeps the local set, so an outage never
   /// brings hidden cards back.
   Future<void> _refreshHiddenCards() async {
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    bool stillCurrent() =>
+        loadToken == _loadSequence &&
+        ownerId == api.currentUser?.id &&
+        _flushStillOwnsSession(ownerId, ownerScope);
+    if (!stillCurrent()) return;
     final before = _hiddenCardIds;
     // Read the local queue before the server: a flag delivered between the
     // two reads is then either still queued here or already visible there.
     final List<Map<String, dynamic>> pending;
     try {
-      pending = await store.flagOutbox();
+      pending = await store.flagOutbox(ownerScope: ownerScope);
     } catch (_) {
       return;
     }
+    if (!stillCurrent()) return;
     Set<int>? server;
     try {
       server = await api.fetchHiddenCardIds();
     } catch (_) {
       server = null;
     }
+    if (!stillCurrent()) return;
     if (server == null) {
       // Offline: the server truth is unknown, but queued hides are durable
       // and must still apply on top of the local set.
       final local = _applyPendingFlagOps(_hiddenCardIds, pending);
       if (!setEquals(local, _hiddenCardIds)) {
         _hiddenCardIds = local;
-        unawaited(_quietly(() => store.replaceHiddenCards(local)));
+        unawaited(
+          _quietly(
+            () => store.replaceHiddenCards(
+              local,
+              ownerScope: ownerScope,
+              canWrite: stillCurrent,
+            ),
+          ),
+        );
       }
       return;
     }
@@ -1765,7 +1795,15 @@ class ReviewController extends ChangeNotifier {
       ..removeAll(before.difference(_hiddenCardIds))
       ..addAll(_hidesInFlight);
     _hiddenCardIds = next;
-    unawaited(_quietly(() => store.replaceHiddenCards(next)));
+    unawaited(
+      _quietly(
+        () => store.replaceHiddenCards(
+          next,
+          ownerScope: ownerScope,
+          canWrite: stillCurrent,
+        ),
+      ),
+    );
   }
 
   Future<void> _quietly(Future<void> Function() write) async {
