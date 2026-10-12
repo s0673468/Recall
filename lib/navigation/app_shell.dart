@@ -484,7 +484,7 @@ class RecallNavigationRail extends StatelessWidget {
       extended: extended,
       minWidth: showBrand ? 64 : null,
       minExtendedWidth: 208,
-      scrollable: showBrand,
+      scrollable: true,
       selectedIndex: selectedIndex,
       onDestinationSelected: onDestinationSelected,
       labelType: extended || showBrand
