@@ -14,7 +14,7 @@ void main() {
       recallRunsAsNativeIos(isWeb: true, targetPlatform: TargetPlatform.iOS),
       isFalse,
     );
-  });
+  }, tags: const ['apple-mobile']);
 
   test('native Android detection excludes the web build', () {
     expect(
@@ -59,7 +59,7 @@ void main() {
     expect(bar.backgroundColor?.a, lessThan(1));
     expect(bar.items.map((item) => item.label), contains('Read'));
     expect(find.byType(NavigationBar), findsNothing);
-  });
+  }, tags: const ['apple-mobile']);
 
   testWidgets(
     'Material navigation highlights the destination without a filled pill',
@@ -116,17 +116,20 @@ void main() {
     expect(rail.indicatorColor, Colors.transparent);
   });
 
-  test('settings navigation uses the platform-appropriate transition', () {
+  test('native iOS settings use the Cupertino transition', () {
     final iosRoute = buildRecallPageRoute<void>(
       nativeIos: true,
       builder: (_) => const SizedBox(),
     );
+    expect(iosRoute, isA<CupertinoPageRoute<void>>());
+  }, tags: const ['apple-mobile']);
+
+  test('Android and web settings use the Material transition', () {
     final webRoute = buildRecallPageRoute<void>(
       nativeIos: false,
       builder: (_) => const SizedBox(),
     );
 
-    expect(iosRoute, isA<CupertinoPageRoute<void>>());
     expect(webRoute, isA<MaterialPageRoute<void>>());
   });
 }

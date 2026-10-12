@@ -56,7 +56,7 @@ jobs:
         run: ./tool/flutterw analyze
 
       - name: flutter test
-        run: ./tool/flutterw test --reporter=failures-only
+        run: ./tool/flutterw test --reporter=failures-only --exclude-tags apple-mobile
 
       - name: Test pinned Flutter tooling
         run: python3 -m unittest discover -s tool/tests -p 'test_*.py'
@@ -137,6 +137,8 @@ jobs:
         run: python -m unittest discover -s tools/flag_report/tests -p 'test_*.py'
 
   testflight-helper:
+    # Retired under the Android/web platform policy; preserve the check context.
+    if: false
     timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
@@ -170,6 +172,8 @@ jobs:
         run: python -m unittest discover -s tools/fsrs_optimize/tests -p 'test_*.py'
 
   ios-native:
+    # Retired under the Android/web platform policy; preserve the check context.
+    if: false
     timeout-minutes: 40
     # Public repo: native Apple tests use a GitHub-hosted Mac, never the M1 hub.
     runs-on: macos-latest
