@@ -842,9 +842,17 @@ class ReviewController extends ChangeNotifier {
     ];
   }
 
-  Future<void> _saveCatchUpStateQuietly(CatchUpLocalState state) async {
+  Future<void> _saveCatchUpStateQuietly(
+    CatchUpLocalState state, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) async {
     try {
-      await store.saveCatchUpState(state);
+      await store.saveCatchUpState(
+        state,
+        ownerScope: ownerScope,
+        canWrite: canWrite,
+      );
     } catch (_) {
       debugPrint('Recall: catch-up progress save failed (non-fatal)');
     }
@@ -1195,6 +1203,24 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> _rateVisibleCard(ReviewCard card, Rating rating) async {
     _interactionGeneration++;
+    final session = _state;
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final sourceQueue = List<ReviewCard>.unmodifiable(_catchUpSourceQueue);
+    final countsTowardsGlobalDue = _countsTowardsGlobalDue(card);
+    bool sessionCurrent() =>
+        loadToken == _loadSequence &&
+        ownerScope == store.activeOwnerScope &&
+        ownerId == api.currentUser?.id &&
+        (!store.ownerAware ||
+            (ownerId != null && store.isActiveOwner(ownerId))) &&
+        session.deckFilter == _state.deckFilter;
+    bool ratingCurrent() =>
+        sessionCurrent() &&
+        session.index == _state.index &&
+        identical(card, _state.current);
+
     final reviewedAt = clock().toUtc();
     final outcome = engine.review(card, rating, now: reviewedAt);
     final shownAt = _cardShownAt;
@@ -1208,14 +1234,18 @@ class ReviewController extends ChangeNotifier {
     // Snapshot everything undo needs BEFORE the rating takes effect. The
     // queue's ReviewCard still holds the pre-rating scheduling state (rating
     // never mutates it), so the card itself is the snapshot.
+    final clientId = await store.newEventId();
+    // A deck/account change before commit cancels this producer. Recheck in
+    // the store lock too, since enqueue can wait behind another local write.
+    if (!ratingCurrent()) return;
     final undo = _UndoRecord(
-      clientId: await store.newEventId(),
+      clientId: clientId,
       card: card,
-      index: _state.index,
-      catchUp: _state.catchUp,
-      catchUpSourceQueue: List<ReviewCard>.unmodifiable(_catchUpSourceQueue),
-      previousLastReviewedAt: _state.lastReviewedAt,
-      previousReviewActivityKnown: _state.reviewActivityKnown,
+      index: session.index,
+      catchUp: session.catchUp,
+      catchUpSourceQueue: sourceQueue,
+      previousLastReviewedAt: session.lastReviewedAt,
+      previousReviewActivityKnown: session.reviewActivityKnown,
     );
     // Two jobs, both of which need this id to be unique forever: it is how an
     // undo finds its own entry in the durable outbox, AND the `client_event_id`
@@ -1225,14 +1255,23 @@ class ReviewController extends ChangeNotifier {
     // enqueueReview is local storage (fast, and it must land before the next
     // card so the review can never be lost); it also returns the new pending
     // count so advancing doesn't re-read + re-decode the whole outbox.
-    final pending = await store.enqueueReview(entry);
-    _catchUpSourceQueue = [
-      for (final sourceCard in _catchUpSourceQueue)
-        if (sourceCard.id != card.id) sourceCard,
-    ];
+    final pending = await store.enqueueReview(
+      entry,
+      ownerScope: ownerScope,
+      canWrite: ratingCurrent,
+    );
+    // Once appended, keep the exact event in its original namespace even if
+    // presentation changed; it must not advance or create Undo in a new queue.
+    if (!ratingCurrent()) return;
     if (remediationNodeIds.isNotEmpty) {
       try {
-        await store.enqueueRemediation(remediationNodeIds, now: clock());
+        await store.enqueueRemediation(
+          remediationNodeIds,
+          now: clock(),
+          ownerScope: ownerScope,
+          canWrite: ratingCurrent,
+        );
+        if (!ratingCurrent()) return;
         _remediationRevision++;
       } catch (_) {
         // The review is durable and must still advance if the disposable
@@ -1240,10 +1279,23 @@ class ReviewController extends ChangeNotifier {
         debugPrint('Recall: remediation enqueue skipped (non-fatal)');
       }
     }
+    final catchUp = await _recordCatchUpReview(
+      session.catchUp,
+      countsTowardsGlobalDue: countsTowardsGlobalDue,
+      ownerScope: ownerScope,
+      canWrite: ratingCurrent,
+    );
+    if (!ratingCurrent()) return;
+    // A background load may refresh the upcoming source while this rating
+    // awaits persistence. Remove only the rated card from that live source.
+    _catchUpSourceQueue = [
+      for (final sourceCard in _catchUpSourceQueue)
+        if (sourceCard.id != card.id) sourceCard,
+    ];
     _undo = undo; // replaces any previous record — undo is single-level
     _hideUndo = null;
     _clearFlagNotice();
-    final catchUp = await _recordCatchUpReview(card);
+    if (!ratingCurrent()) return;
     haptics.rating();
     final globalDueCount = _state.globalDueCount;
     _set(
@@ -1255,11 +1307,12 @@ class ReviewController extends ChangeNotifier {
         reviewActivityKnown: true,
         pendingSync: pending,
         catchUp: catchUp,
-        globalDueCount: !_countsTowardsGlobalDue(card) || globalDueCount == null
+        globalDueCount: !countsTowardsGlobalDue || globalDueCount == null
             ? globalDueCount
             : (globalDueCount - 1).clamp(0, globalDueCount),
       ),
     );
+    if (!sessionCurrent()) return;
     if (_state.isDone) {
       haptics.completion();
     }
@@ -1282,9 +1335,15 @@ class ReviewController extends ChangeNotifier {
     if (!_state.offline) unawaited(_flushOutbox());
   }
 
-  Future<CatchUpView> _recordCatchUpReview(ReviewCard card) async {
-    final current = _state.catchUp;
-    if (!_countsTowardsGlobalDue(card) || current.dueCount <= 0) return current;
+  Future<CatchUpView> _recordCatchUpReview(
+    CatchUpView current, {
+    required bool countsTowardsGlobalDue,
+    required String? ownerScope,
+    required bool Function() canWrite,
+  }) async {
+    if (!canWrite() || !countsTowardsGlobalDue || current.dueCount <= 0) {
+      return current;
+    }
 
     final now = clock();
     final local = current.isActive
@@ -1293,6 +1352,7 @@ class ReviewController extends ChangeNotifier {
             now,
           )
         : null;
+    if (!canWrite()) return current;
     final dueCount = math.max(0, current.dueCount - 1);
     var mode = current.mode;
     var completedToday = current.completedToday;
@@ -1307,7 +1367,11 @@ class ReviewController extends ChangeNotifier {
         (current.isDismissed && dueCount <= current.threshold)) {
       mode = CatchUpMode.none;
       completedToday = 0;
-      await _saveCatchUpStateQuietly(CatchUpLocalState.none);
+      await _saveCatchUpStateQuietly(
+        CatchUpLocalState.none,
+        ownerScope: ownerScope,
+        canWrite: canWrite,
+      );
     } else if (current.isActive) {
       await _saveCatchUpStateQuietly(
         CatchUpLocalState(
@@ -1315,6 +1379,8 @@ class ReviewController extends ChangeNotifier {
           dayKey: BacklogCatchUp.dayKey(now),
           completedToday: completedToday,
         ),
+        ownerScope: ownerScope,
+        canWrite: canWrite,
       );
     }
 
