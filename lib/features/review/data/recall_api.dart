@@ -553,8 +553,8 @@ class RecallApi implements ReviewReplayGateway {
         .toIso8601String();
 
     final logSelect = deckId == null && included == null
-        ? 'card_id'
-        : 'card_id,cards!inner(notes!inner(deck_id))';
+        ? 'id,card_id'
+        : 'id,card_id,cards!inner(notes!inner(deck_id))';
     var todayQ = client
         .from('review_log')
         .select(logSelect)
@@ -566,30 +566,64 @@ class RecallApi implements ReviewReplayGateway {
       final ids = included.toList()..sort();
       todayQ = todayQ.inFilter('cards.notes.deck_id', ids);
     }
-    final todayRows = await todayQ;
-    final todayCardIds = {
-      for (final row in todayRows)
-        if (row['card_id'] != null) (row['card_id'] as num).toInt(),
-    };
+    final todayCardIds = await _fetchIntroductionCardIds(todayQ);
     if (todayCardIds.isEmpty) return 0;
 
-    var priorQ = client
-        .from('review_log')
-        .select(logSelect)
-        .inFilter('card_id', todayCardIds.toList())
-        .lt('rating_at', startIso);
-    if (deckId != null) {
-      priorQ = priorQ.eq('cards.notes.deck_id', deckId);
-    } else if (included != null) {
-      final ids = included.toList()..sort();
-      priorQ = priorQ.inFilter('cards.notes.deck_id', ids);
+    // Keep the prior-history URL bounded even after a large review day.
+    // A batch of 100 numeric IDs also leaves room for the existing deck filter.
+    const priorCardBatchSize = 100;
+    final sortedTodayIds = todayCardIds.toList()..sort();
+    final seenBefore = <int>{};
+    for (
+      var offset = 0;
+      offset < sortedTodayIds.length;
+      offset += priorCardBatchSize
+    ) {
+      final batch = sortedTodayIds
+          .skip(offset)
+          .take(priorCardBatchSize)
+          .toList();
+      var priorQ = client
+          .from('review_log')
+          .select(logSelect)
+          .inFilter('card_id', batch)
+          .lt('rating_at', startIso);
+      if (deckId != null) {
+        priorQ = priorQ.eq('cards.notes.deck_id', deckId);
+      } else if (included != null) {
+        final ids = included.toList()..sort();
+        priorQ = priorQ.inFilter('cards.notes.deck_id', ids);
+      }
+      seenBefore.addAll(await _fetchIntroductionCardIds(priorQ));
     }
-    final priorRows = await priorQ;
-    final seenBefore = {
-      for (final row in priorRows)
-        if (row['card_id'] != null) (row['card_id'] as num).toInt(),
-    };
     return todayCardIds.difference(seenBefore).length;
+  }
+
+  Future<Set<int>> _fetchIntroductionCardIds(
+    PostgrestFilterBuilder<List<Map<String, dynamic>>> query,
+  ) async {
+    final cardIds = <int>{};
+    int? afterId;
+    while (true) {
+      var pageQuery = query;
+      if (afterId != null) pageQuery = pageQuery.gt('id', afterId);
+      // review_log is append-only; its unique ID is stable even when reviews
+      // share a timestamp. A short capped page does not prove exhaustion.
+      final page = await pageQuery
+          .order('id', ascending: true)
+          .limit(_statsPageSize);
+      if (page.isEmpty) return cardIds;
+      final nextId = (page.last['id'] as num).toInt();
+      if (afterId != null && nextId <= afterId) {
+        throw StateError('Introduction-history pagination did not advance');
+      }
+      for (final row in page) {
+        if (row['card_id'] != null) {
+          cardIds.add((row['card_id'] as num).toInt());
+        }
+      }
+      afterId = nextId;
+    }
   }
 
   /// A bonus batch for "Keep going" after the daily queue is done: cards due

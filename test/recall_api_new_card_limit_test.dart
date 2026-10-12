@@ -19,14 +19,16 @@ void main() {
           requests.add(request);
           final path = request.url.path;
           if (path.endsWith('/review_log')) {
-            final rows = request.url.query.contains('card_id=in.')
+            final rows = request.url.queryParameters.containsKey('id')
+                ? <Map<String, dynamic>>[]
+                : request.url.query.contains('card_id=in.')
                 ? [
-                    {'card_id': 2},
+                    {'id': 1, 'card_id': 2},
                   ]
                 : [
-                    {'card_id': 1},
-                    {'card_id': 1},
-                    {'card_id': 2},
+                    {'id': 1, 'card_id': 1},
+                    {'id': 2, 'card_id': 1},
+                    {'id': 3, 'card_id': 2},
                   ];
             return http.Response(
               jsonEncode(rows),
@@ -73,14 +75,16 @@ void main() {
         if (path.endsWith('/review_log')) {
           final selectedDeck =
               request.url.queryParameters['cards.notes.deck_id'];
-          final rows = selectedDeck == 'eq.2'
+          final rows = request.url.queryParameters.containsKey('id')
+              ? <Map<String, dynamic>>[]
+              : selectedDeck == 'eq.2'
               ? [
-                  {'card_id': 2},
+                  {'id': 1, 'card_id': 2},
                 ]
               : request.url.query.contains('card_id=in.')
               ? <Map<String, dynamic>>[]
               : [
-                  {'card_id': 1},
+                  {'id': 1, 'card_id': 1},
                 ];
           return http.Response(
             jsonEncode(rows),
