@@ -53,8 +53,7 @@ class _SignedInRecallApi implements RecallApi {
   Future<List<DateTime>> fetchDueDates({
     Set<int>? includedDeckIds,
     Set<int> excludeCardIds = const {},
-  }) async =>
-      const [];
+  }) async => const [];
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -66,11 +65,15 @@ class _NoopBackgroundSyncPlatform implements BackgroundSyncPlatform {
 }
 
 void main() {
+  test('historical iOS host has no second device lock', () {
+    final plist = File('ios/Runner/Info.plist').readAsStringSync();
+    expect(plist, isNot(contains('NSFaceIDUsageDescription')));
+  }, tags: const ['apple-mobile']);
+
   test('a restored Recall session opens without a second device lock', () {
     final app = File('lib/app/recall_app.dart').readAsStringSync();
     final dependencies = File('pubspec.yaml').readAsStringSync();
     final resolvedDependencies = File('pubspec.lock').readAsStringSync();
-    final plist = File('ios/Runner/Info.plist').readAsStringSync();
     final androidHost = File(
       'android/app/src/main/kotlin/com/german/health_anki_flutter/'
       'MainActivity.kt',
@@ -83,7 +86,6 @@ void main() {
     expect(androidHost, contains('SharedPreferencesPlugin'));
     expect(androidHost, isNot(contains('LocalAuthPlugin')));
     expect(androidHost, isNot(contains('FlutterPasskeysPlugin')));
-    expect(plist, isNot(contains('NSFaceIDUsageDescription')));
     expect(
       File(
         'lib/features/auth/presentation/widgets/biometric_unlock_gate.dart',

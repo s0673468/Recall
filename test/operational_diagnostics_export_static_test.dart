@@ -19,7 +19,7 @@ void main() {
       contains('RecallOperationalDiagnosticsPlugin.swift in Sources'),
     );
     expect(main, contains('MethodChannelOperationalEventExporter'));
-  });
+  }, tags: const ['apple-mobile']);
 
   test('native mirror pins privacy, size, and atomic-write contracts', () {
     final source = File(
@@ -43,5 +43,5 @@ void main() {
     ]) {
       expect(source, isNot(contains(forbidden)));
     }
-  });
+  }, tags: const ['apple-mobile']);
 }

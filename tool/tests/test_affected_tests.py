@@ -56,14 +56,14 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(selector.plan(self.root, [name])["full"])
 
-    def test_native_changes_include_flutter_contracts_and_native_lane(self):
+    def test_retired_apple_source_keeps_flutter_contracts_without_native_execution(self):
         result = selector.plan(self.root, ["ios/Runner/Bridge.swift"])
-        self.assertEqual(result["native_lanes"], ["ios"])
+        self.assertEqual(result["native_lanes"], [])
         self.assertEqual(result["flutter_tests"], ["test"])
 
-    def test_native_runner_change_requires_its_native_lane(self):
+    def test_retired_apple_runner_does_not_enable_a_native_lane(self):
         result = selector.plan(self.root, ["tool/run_ios_tests.py"])
-        self.assertIn("ios", result["native_lanes"])
+        self.assertEqual(result["native_lanes"], [])
         self.assertIn("tool/tests", result["python_suites"])
 
     def test_combined_plan_does_not_repeat_python_wrapper_suites(self):
@@ -72,6 +72,16 @@ class SelectionTests(unittest.TestCase):
         for suite in ("tools/semantic_review/tests", "tools/flag_report/tests", "scripts/tests"):
             self.assertFalse(any(suite in cmd for cmd in commands))
         self.assertTrue(any("tools/recall_sync/tests" in cmd for cmd in commands))
+
+    def test_full_plan_keeps_android_web_and_never_launches_apple(self):
+        result = selector.plan(self.root, ["pubspec.lock"])
+        self.assertEqual(result["native_lanes"], ["android"])
+        self.assertNotIn("scripts/tests", result["python_suites"])
+        commands = selector.commands(result, "all", 2)
+        self.assertTrue(any("apk" in cmd for cmd in commands))
+        self.assertTrue(any("web" in cmd for cmd in commands))
+        self.assertTrue(any("--exclude-tags=apple-mobile" in cmd for cmd in commands))
+        self.assertFalse(any("ios" in cmd or "tool/run_ios_tests.py" in cmd for cmd in commands))
 
     def test_conditional_import_selects_both_platform_consumers(self):
         self.write("lib/b.dart", "import 'c.dart' if (dart.library.io) 'a.dart';")

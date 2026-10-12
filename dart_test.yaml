@@ -1,0 +1,5 @@
+# Recall application validation covers Android and web.
+# Retain historical Apple tests without executing them in a default full gate.
+tags:
+  apple-mobile:
+    skip: "Apple mobile validation is retired; Recall supports Android and web."
