@@ -432,7 +432,6 @@ class _FakeRecallApi implements RecallApi {
   bool commitThenThrowReview = false;
   bool signedOut = false;
 
-
   /// Mirrors `RecallApi.applyReview` step for step: suppress a duplicate off
   /// the log's uniqueness constraint, merge through the *production* replay
   /// algorithm, then append the log row. Only the transport is fake.
@@ -722,12 +721,15 @@ void main() {
       recallDeviceLabel(isWeb: false, targetPlatform: TargetPlatform.iOS),
       'ios',
     );
+  }, tags: const ['apple-mobile']);
+
+  test('review events identify Android and web clients', () {
     expect(
       recallDeviceLabel(isWeb: false, targetPlatform: TargetPlatform.android),
       'android',
     );
     expect(
-      recallDeviceLabel(isWeb: true, targetPlatform: TargetPlatform.iOS),
+      recallDeviceLabel(isWeb: true, targetPlatform: TargetPlatform.android),
       'web',
     );
   });
@@ -3200,7 +3202,7 @@ void main() {
       final tabBarTop = tester.getRect(find.byType(CupertinoTabBar)).top;
       expect(tabBarTop - ratingBottom, greaterThanOrEqualTo(UiSpacing.sm));
       expect(tester.takeException(), isNull);
-    });
+    }, tags: const ['apple-mobile']);
   });
 
   group('Decks screen', () {
@@ -3470,7 +3472,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
+        tester
+            .widget<NavigationRail>(find.byType(NavigationRail))
+            .selectedIndex,
         3,
       );
     }
@@ -4358,14 +4362,25 @@ void main() {
   group('ReviewController undo', () {
     setUp(() => SharedPreferences.setMockInitialValues({}));
 
-    ReviewController build(_FakeRecallApi api, {LocalReviewStore? store, DateTime Function()? clock}) {
-      final controller = ReviewController(api: api, engine: FsrsEngine(),
-        store: store ?? LocalReviewStore(), clock: clock ?? DateTime.now);
+    ReviewController build(
+      _FakeRecallApi api, {
+      LocalReviewStore? store,
+      DateTime Function()? clock,
+    }) {
+      final controller = ReviewController(
+        api: api,
+        engine: FsrsEngine(),
+        store: store ?? LocalReviewStore(),
+        clock: clock ?? DateTime.now,
+      );
       addTearDown(controller.dispose);
       return controller;
     }
 
-    Future<void> offline(_FakeRecallApi api, ReviewController controller) async {
+    Future<void> offline(
+      _FakeRecallApi api,
+      ReviewController controller,
+    ) async {
       await controller.load(); // persist invented snapshot
       api.beforeQueue = () async => throw StateError('offline');
       await controller.refresh();
@@ -4407,146 +4422,193 @@ void main() {
       expect(api.applied.single['card_id'], 1);
     });
 
-    test('successful delivery closes Undo without any remote restore', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      final controller = build(api);
-      await controller.load();
-      controller.flip();
-      await controller.rate(Rating.good);
-      await controller.syncPending();
-      final logs = List<Map<String, dynamic>>.from(api.server.reviewLog);
-      final reps = api.server.cards[1]!.reps;
-      await controller.undo();
-      await controller.undo();
-      expect(controller.state.index, 1);
-      expect(controller.state.reviewedThisSession, 1);
-      expect(api.server.cards[1]!.reps, reps);
-      expect(api.server.reviewLog, logs);
-      expect(api.undone, isEmpty);
-      expect(controller.canUndo, isFalse);
-      expect(controller.flagNotice, 'Synced reviews cannot be undone');
-    });
-
-    for (final tied in [false, true]) {
-      test('a ${tied ? 'tied-time' : 'newer'} web review cannot be rewound', () async {
+    test(
+      'successful delivery closes Undo without any remote restore',
+      () async {
         final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
         final controller = build(api);
         await controller.load();
         controller.flip();
         await controller.rate(Rating.good);
         await controller.syncPending();
-        final remote = api.server.cards[1]!;
-        final at = DateTime.parse(api.applied.single['last_review'] as String);
-        remote.patch({'reps': remote.reps + 1, 'lapses': remote.lapses + 1,
-          'last_review': (tied ? at : at.add(const Duration(seconds: 1))).toIso8601String()});
-        final tuple = (remote.reps, remote.lapses, remote.lastReview);
+        final logs = List<Map<String, dynamic>>.from(api.server.reviewLog);
+        final reps = api.server.cards[1]!.reps;
         await controller.undo();
-        expect((remote.reps, remote.lapses, remote.lastReview), tuple);
-        expect(api.undone, isEmpty);
+        await controller.undo();
         expect(controller.state.index, 1);
+        expect(controller.state.reviewedThisSession, 1);
+        expect(api.server.cards[1]!.reps, reps);
+        expect(api.server.reviewLog, logs);
+        expect(api.undone, isEmpty);
         expect(controller.canUndo, isFalse);
-      });
+        expect(controller.flagNotice, 'Synced reviews cannot be undone');
+      },
+    );
+
+    for (final tied in [false, true]) {
+      test(
+        'a ${tied ? 'tied-time' : 'newer'} web review cannot be rewound',
+        () async {
+          final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+          final controller = build(api);
+          await controller.load();
+          controller.flip();
+          await controller.rate(Rating.good);
+          await controller.syncPending();
+          final remote = api.server.cards[1]!;
+          final at = DateTime.parse(
+            api.applied.single['last_review'] as String,
+          );
+          remote.patch({
+            'reps': remote.reps + 1,
+            'lapses': remote.lapses + 1,
+            'last_review': (tied ? at : at.add(const Duration(seconds: 1)))
+                .toIso8601String(),
+          });
+          final tuple = (remote.reps, remote.lapses, remote.lastReview);
+          await controller.undo();
+          expect((remote.reps, remote.lapses, remote.lastReview), tuple);
+          expect(api.undone, isEmpty);
+          expect(controller.state.index, 1);
+          expect(controller.canUndo, isFalse);
+        },
+      );
     }
 
-    test('Undo waits for an in-flight send and refuses after its acknowledgement', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      final gate = Completer<void>();
-      api.beforeApplyReview = () => gate.future;
-      await controller.load();
-      controller.flip();
-      await controller.rate(Rating.good);
-      final undoing = controller.undo();
-      await Future<void>.delayed(Duration.zero);
-      expect((await store.outbox()).single['delivery_attempted'], isTrue);
-      gate.complete();
-      await undoing;
-      await controller.syncPending();
-      expect(controller.state.index, 1);
-      expect(controller.canUndo, isFalse);
-      expect(api.applied, hasLength(1));
-      expect(api.undone, isEmpty);
-    });
+    test(
+      'Undo waits for an in-flight send and refuses after its acknowledgement',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        final gate = Completer<void>();
+        api.beforeApplyReview = () => gate.future;
+        await controller.load();
+        controller.flip();
+        await controller.rate(Rating.good);
+        final undoing = controller.undo();
+        await Future<void>.delayed(Duration.zero);
+        expect((await store.outbox()).single['delivery_attempted'], isTrue);
+        gate.complete();
+        await undoing;
+        await controller.syncPending();
+        expect(controller.state.index, 1);
+        expect(controller.canUndo, isFalse);
+        expect(api.applied, hasLength(1));
+        expect(api.undone, isEmpty);
+      },
+    );
 
-    test('lost acknowledgement retains marked event for exact-once replay', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])..commitThenThrowReview = true;
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
-      controller.flip();
-      await controller.rate(Rating.good);
-      await controller.undo(); // wait for the first, ambiguous attempt
-      final pending = (await store.outbox()).single;
-      final eventId = pending['client_id'];
-      final reps = api.server.cards[1]!.reps;
-      await controller.undo();
-      expect(controller.state.index, 1);
-      expect(controller.canUndo, isFalse);
-      expect((await LocalReviewStore().outbox()).single['delivery_attempted'], isTrue);
-      expect((await store.removeEntry(eventId as Object)).removed, isFalse);
-      expect(api.server.reviewLog, hasLength(1));
-      api.commitThenThrowReview = false;
-      await controller.syncPending();
-      expect(await store.outbox(), isEmpty);
-      expect(api.server.cards[1]!.reps, reps);
-      expect(api.server.reviewLog, hasLength(1));
-      expect(api.server.reviewLog.single['client_event_id'], eventId);
-      expect(api.undone, isEmpty);
-    });
+    test(
+      'lost acknowledgement retains marked event for exact-once replay',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+          ..commitThenThrowReview = true;
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
+        controller.flip();
+        await controller.rate(Rating.good);
+        await controller.undo(); // wait for the first, ambiguous attempt
+        final pending = (await store.outbox()).single;
+        final eventId = pending['client_id'];
+        final reps = api.server.cards[1]!.reps;
+        await controller.undo();
+        expect(controller.state.index, 1);
+        expect(controller.canUndo, isFalse);
+        expect(
+          (await LocalReviewStore().outbox()).single['delivery_attempted'],
+          isTrue,
+        );
+        expect((await store.removeEntry(eventId as Object)).removed, isFalse);
+        expect(api.server.reviewLog, hasLength(1));
+        api.commitThenThrowReview = false;
+        await controller.syncPending();
+        expect(await store.outbox(), isEmpty);
+        expect(api.server.cards[1]!.reps, reps);
+        expect(api.server.reviewLog, hasLength(1));
+        expect(api.server.reviewLog.single['client_event_id'], eventId);
+        expect(api.undone, isEmpty);
+      },
+    );
 
-    test('failure before commit still expires Undo and preserves replay', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])..failApplyReview = true;
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
-      controller.flip();
-      await controller.rate(Rating.good);
-      await controller.syncPending();
-      await controller.undo();
-      expect(controller.state.index, 1);
-      expect(controller.canUndo, isFalse);
-      expect((await store.outbox()).single['delivery_attempted'], isTrue);
-      api.failApplyReview = false;
-      await controller.syncPending();
-      expect(api.server.reviewLog, hasLength(1));
-      expect(api.undone, isEmpty);
-    });
+    test(
+      'failure before commit still expires Undo and preserves replay',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+          ..failApplyReview = true;
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
+        controller.flip();
+        await controller.rate(Rating.good);
+        await controller.syncPending();
+        await controller.undo();
+        expect(controller.state.index, 1);
+        expect(controller.canUndo, isFalse);
+        expect((await store.outbox()).single['delivery_attempted'], isTrue);
+        api.failApplyReview = false;
+        await controller.syncPending();
+        expect(api.server.reviewLog, hasLength(1));
+        expect(api.undone, isEmpty);
+      },
+    );
 
-    test('account switch never removes the prior owner attempted event', () async {
-      final store = LocalReviewStore();
-      await store.activateOwner('invented-owner-a');
-      final scope = store.activeOwnerScope;
-      await store.enqueueReview({'client_id': 'invented-a', 'card_id': 1});
-      await store.markReviewAttempted('invented-a', ownerScope: scope);
-      await store.activateOwner('invented-owner-b');
-      await store.enqueueReview({'client_id': 'invented-b', 'card_id': 2});
-      expect((await store.removeEntry('invented-a')).removed, isFalse);
-      expect((await store.outbox()).single['client_id'], 'invented-b');
-      expect((await store.outbox(ownerScope: scope)).single['delivery_attempted'], isTrue);
-      await store.activateOwner('invented-owner-a');
-      expect((await store.removeEntry('invented-a')).removed, isFalse);
-    });
+    test(
+      'account switch never removes the prior owner attempted event',
+      () async {
+        final store = LocalReviewStore();
+        await store.activateOwner('invented-owner-a');
+        final scope = store.activeOwnerScope;
+        await store.enqueueReview({'client_id': 'invented-a', 'card_id': 1});
+        await store.markReviewAttempted('invented-a', ownerScope: scope);
+        await store.activateOwner('invented-owner-b');
+        await store.enqueueReview({'client_id': 'invented-b', 'card_id': 2});
+        expect((await store.removeEntry('invented-a')).removed, isFalse);
+        expect((await store.outbox()).single['client_id'], 'invented-b');
+        expect(
+          (await store.outbox(ownerScope: scope)).single['delivery_attempted'],
+          isTrue,
+        );
+        await store.activateOwner('invented-owner-a');
+        expect((await store.removeEntry('invented-a')).removed, isFalse);
+      },
+    );
 
-    test('legacy persisted entries without an attempt marker cannot be removed', () async {
-      SharedPreferences.setMockInitialValues({'recall_outbox_v1':
-        jsonEncode([{'client_id': 'invented-legacy', 'card_id': 1}])});
-      final store = LocalReviewStore();
-      expect((await store.removeEntry('invented-legacy')).removed, isFalse);
-      expect(await store.markReviewAttempted('invented-legacy'), isTrue);
-      expect((await LocalReviewStore().outbox()).single['delivery_attempted'], isTrue);
-    });
+    test(
+      'legacy persisted entries without an attempt marker cannot be removed',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'recall_outbox_v1': jsonEncode([
+            {'client_id': 'invented-legacy', 'card_id': 1},
+          ]),
+        });
+        final store = LocalReviewStore();
+        expect((await store.removeEntry('invented-legacy')).removed, isFalse);
+        expect(await store.markReviewAttempted('invented-legacy'), isTrue);
+        expect(
+          (await LocalReviewStore().outbox()).single['delivery_attempted'],
+          isTrue,
+        );
+      },
+    );
 
-    test('attempt marker and removal serialize so a removed event is never sent', () async {
-      final store = LocalReviewStore();
-      await store.enqueueReview({'client_id': 'invented-1', 'card_id': 1});
-      expect((await store.removeEntry('invented-1')).removed, isTrue);
-      expect(await store.markReviewAttempted('invented-1'), isFalse);
-      await store.enqueueReview({'client_id': 'invented-2', 'card_id': 2});
-      expect(await store.markReviewAttempted('invented-2'), isTrue);
-      expect((await store.removeEntry('invented-2')).removed, isFalse);
-      expect((await LocalReviewStore().outbox()).single['client_id'], 'invented-2');
-    });
+    test(
+      'attempt marker and removal serialize so a removed event is never sent',
+      () async {
+        final store = LocalReviewStore();
+        await store.enqueueReview({'client_id': 'invented-1', 'card_id': 1});
+        expect((await store.removeEntry('invented-1')).removed, isTrue);
+        expect(await store.markReviewAttempted('invented-1'), isFalse);
+        await store.enqueueReview({'client_id': 'invented-2', 'card_id': 2});
+        expect(await store.markReviewAttempted('invented-2'), isTrue);
+        expect((await store.removeEntry('invented-2')).removed, isFalse);
+        expect(
+          (await LocalReviewStore().outbox()).single['client_id'],
+          'invented-2',
+        );
+      },
+    );
 
     test('Undo cannot remove a different session persisted event', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
@@ -4562,20 +4624,23 @@ void main() {
       expect(api.undone, isEmpty);
     });
 
-    test('queue reload drops unsent Undo while retaining the queued event', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await offline(api, controller);
-      controller.flip();
-      await controller.rate(Rating.good);
-      api.failApplyReview = true;
-      await controller.refresh();
-      expect(controller.canUndo, isFalse);
-      await controller.undo();
-      expect(await store.outbox(), hasLength(1));
-      expect(api.undone, isEmpty);
-    });
+    test(
+      'queue reload drops unsent Undo while retaining the queued event',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await offline(api, controller);
+        controller.flip();
+        await controller.rate(Rating.good);
+        api.failApplyReview = true;
+        await controller.refresh();
+        expect(controller.canUndo, isFalse);
+        await controller.undo();
+        expect(await store.outbox(), hasLength(1));
+        expect(api.undone, isEmpty);
+      },
+    );
 
     test('pure local Undo restarts elapsed clock', () async {
       var now = DateTime.utc(2026, 7, 10, 12);
@@ -4773,28 +4838,31 @@ void main() {
       expect(controller.state.queue.map((c) => c.id), [1, 2]);
     });
 
-    test('an offline undo of a synced hide queues a durable withdrawal', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
-      await controller.hideCurrent('dislike');
-      await controller.syncPending();
-      final clientId = api.flagged.single['client_id'] as String;
-      api.failDismissFlag = true;
+    test(
+      'an offline undo of a synced hide queues a durable withdrawal',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
+        await controller.hideCurrent('dislike');
+        await controller.syncPending();
+        final clientId = api.flagged.single['client_id'] as String;
+        api.failDismissFlag = true;
 
-      await controller.undo();
+        await controller.undo();
 
-      expect(controller.state.current?.id, 1);
-      expect(controller.canUndo, isFalse);
-      expect((await store.flagOutbox()).single['op'], 'dismiss');
-      // A reload while offline must not re-hide the withdrawn card.
-      api.failDismissFlag = false;
-      api.failFetchHidden = false;
-      await controller.refresh();
-      expect(api.dismissedFlags, [clientId]);
-      expect(controller.state.queue.map((c) => c.id), [1, 2]);
-    });
+        expect(controller.state.current?.id, 1);
+        expect(controller.canUndo, isFalse);
+        expect((await store.flagOutbox()).single['op'], 'dismiss');
+        // A reload while offline must not re-hide the withdrawn card.
+        api.failDismissFlag = false;
+        api.failFetchHidden = false;
+        await controller.refresh();
+        expect(api.dismissedFlags, [clientId]);
+        expect(controller.state.queue.map((c) => c.id), [1, 2]);
+      },
+    );
 
     test('undo withdraws a flag whose delivery reply was lost', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
@@ -4886,67 +4954,76 @@ void main() {
       expect(controller.state.queue.map((c) => c.id), [2]);
     });
 
-    test('a queued hide survives a lost cache write and an offline load', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
-        ..failApplyFlag = true
-        ..failFetchHidden = true;
-      final store = LocalReviewStore();
-      // The durable flag landed but the best-effort cache write did not.
-      await store.enqueueFlag({
-        'card_id': 1,
-        'guid': 'g1',
-        'reason': 'delete',
-        'client_id': 'queued-hide',
-      });
-      final controller = build(api, store: store);
+    test(
+      'a queued hide survives a lost cache write and an offline load',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)])
+          ..failApplyFlag = true
+          ..failFetchHidden = true;
+        final store = LocalReviewStore();
+        // The durable flag landed but the best-effort cache write did not.
+        await store.enqueueFlag({
+          'card_id': 1,
+          'guid': 'g1',
+          'reason': 'delete',
+          'client_id': 'queued-hide',
+        });
+        final controller = build(api, store: store);
 
-      await controller.load();
+        await controller.load();
 
-      expect(controller.state.queue.map((c) => c.id), [2]);
-    });
+        expect(controller.state.queue.map((c) => c.id), [2]);
+      },
+    );
 
-    test('an undo finishing after a reload leaves the new queue alone', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
-      await controller.hideCurrent('dislike');
-      await controller.syncPending();
-      final gate = Completer<void>();
-      api.beforeDismissFlag = () => gate.future;
+    test(
+      'an undo finishing after a reload leaves the new queue alone',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
+        await controller.hideCurrent('dislike');
+        await controller.syncPending();
+        final gate = Completer<void>();
+        api.beforeDismissFlag = () => gate.future;
 
-      final undo = controller.undo();
-      await Future<void>.delayed(Duration.zero);
-      api.beforeDismissFlag = null;
-      await controller.refresh(); // replaces the queue mid-withdrawal
-      gate.complete();
-      await undo;
+        final undo = controller.undo();
+        await Future<void>.delayed(Duration.zero);
+        api.beforeDismissFlag = null;
+        await controller.refresh(); // replaces the queue mid-withdrawal
+        gate.complete();
+        await undo;
 
-      // The reloaded queue keeps its own position instead of jumping to the
-      // old index; the withdrawn card returns on the next load.
-      expect(controller.state.index, 0);
-      expect(controller.state.isDone, isFalse);
-      expect(controller.canUndo, isFalse);
-      await controller.refresh();
-      expect(controller.state.queue.map((c) => c.id), [1, 2, 3]);
-    });
+        // The reloaded queue keeps its own position instead of jumping to the
+        // old index; the withdrawn card returns on the next load.
+        expect(controller.state.index, 0);
+        expect(controller.state.isDone, isFalse);
+        expect(controller.canUndo, isFalse);
+        await controller.refresh();
+        expect(controller.state.queue.map((c) => c.id), [1, 2, 3]);
+      },
+    );
 
-    test('hiding a due card lowers the global due count; undo restores it', () async {
-      SharedPreferences.setMockInitialValues({});
-      final now = DateTime.utc(2026, 7, 13, 12);
-      final api = _FakeRecallApi(
-        [_card(state: 2, due: now.subtract(const Duration(hours: 1)))],
-      )..deckCounts = const {1: (due: 3, neu: 0)};
-      final controller = build(api, clock: () => now);
-      await controller.load();
-      expect(controller.state.globalDueCount, 3);
+    test(
+      'hiding a due card lowers the global due count; undo restores it',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        final now = DateTime.utc(2026, 7, 13, 12);
+        final api = _FakeRecallApi([
+          _card(state: 2, due: now.subtract(const Duration(hours: 1))),
+        ])..deckCounts = const {1: (due: 3, neu: 0)};
+        final controller = build(api, clock: () => now);
+        await controller.load();
+        expect(controller.state.globalDueCount, 3);
 
-      await controller.hideCurrent('dislike');
-      expect(controller.state.globalDueCount, 2);
+        await controller.hideCurrent('dislike');
+        expect(controller.state.globalDueCount, 2);
 
-      await controller.undo();
-      expect(controller.state.globalDueCount, 3);
-    });
+        await controller.undo();
+        expect(controller.state.globalDueCount, 3);
+      },
+    );
 
     test('a refresh landing during a hide keeps the hidden card out', () async {
       final api = _FakeRecallApi([_card(id: 1), _card(id: 2), _card(id: 3)]);
@@ -4975,38 +5052,44 @@ void main() {
       expect(api.lastDueDateExcludedIds, {7});
     });
 
-    test('a rating after a hide makes the rating the undoable action', () async {
-      final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
-      api.beforeQueue = () async => throw StateError('offline');
-      await controller.refresh();
-      expect(controller.state.offline, isTrue);
-      await controller.hideCurrent('dislike');
-      controller.flip();
-      await controller.rate(Rating.good);
+    test(
+      'a rating after a hide makes the rating the undoable action',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
+        api.beforeQueue = () async => throw StateError('offline');
+        await controller.refresh();
+        expect(controller.state.offline, isTrue);
+        await controller.hideCurrent('dislike');
+        controller.flip();
+        await controller.rate(Rating.good);
 
-      await controller.undo();
+        await controller.undo();
 
-      // The rating is undone; the hidden card stays hidden.
-      expect(controller.state.current?.id, 2);
-      expect(controller.state.reviewedThisSession, 0);
-    });
+        // The rating is undone; the hidden card stays hidden.
+        expect(controller.state.current?.id, 2);
+        expect(controller.state.reviewedThisSession, 0);
+      },
+    );
 
-    test('sheet reasons do not hide and one-tap reasons need hideCurrent', () async {
-      final api = _FakeRecallApi([_card(id: 1)]);
-      api.failApplyFlag = true;
-      final store = LocalReviewStore();
-      final controller = build(api, store: store);
-      await controller.load();
+    test(
+      'sheet reasons do not hide and one-tap reasons need hideCurrent',
+      () async {
+        final api = _FakeRecallApi([_card(id: 1)]);
+        api.failApplyFlag = true;
+        final store = LocalReviewStore();
+        final controller = build(api, store: store);
+        await controller.load();
 
-      await controller.flag('dislike'); // ignored: hide reasons only hide
-      expect(await store.flagOutbox(), isEmpty);
-      await controller.flag('wrong');
-      expect(controller.state.current?.id, 1);
-      expect(controller.flagNotice, 'Flagged for the weekly review');
-    });
+        await controller.flag('dislike'); // ignored: hide reasons only hide
+        expect(await store.flagOutbox(), isEmpty);
+        await controller.flag('wrong');
+        expect(controller.state.current?.id, 1);
+        expect(controller.flagNotice, 'Flagged for the weekly review');
+      },
+    );
 
     test('a successful flag flush drains the flag outbox', () async {
       final api = _FakeRecallApi([_card(id: 1)]);
@@ -5098,12 +5181,23 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final api = _FakeRecallApi([_card(id: 1), _card(id: 2)]);
-    final controller = ReviewController(api: api, engine: FsrsEngine(), store: LocalReviewStore());
+    final controller = ReviewController(
+      api: api,
+      engine: FsrsEngine(),
+      store: LocalReviewStore(),
+    );
     addTearDown(controller.dispose);
     await controller.load();
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body:
-      MediaQuery(data: const MediaQueryData(textScaler: TextScaler.linear(1.2)),
-        child: StudyScreen(controller: controller)))));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(1.2)),
+            child: StudyScreen(controller: controller),
+          ),
+        ),
+      ),
+    );
     controller.flip();
     await controller.rate(Rating.good);
     await controller.syncPending();
@@ -5123,9 +5217,9 @@ void main() {
     ) async {
       SharedPreferences.setMockInitialValues({});
       final api = _FakeRecallApi([
-          _card(id: 601, front: 'first question', back: 'first answer'),
-          _card(id: 602, front: 'second question', back: 'second answer'),
-        ]);
+        _card(id: 601, front: 'first question', back: 'first answer'),
+        _card(id: 602, front: 'second question', back: 'second answer'),
+      ]);
       final controller = ReviewController(
         api: api,
         engine: FsrsEngine(),
@@ -5164,8 +5258,8 @@ void main() {
     testWidgets('the all-caught-up screen still offers undo', (tester) async {
       SharedPreferences.setMockInitialValues({});
       final api = _FakeRecallApi([
-          _card(id: 603, front: 'only question', back: 'only answer'),
-        ]);
+        _card(id: 603, front: 'only question', back: 'only answer'),
+      ]);
       final controller = ReviewController(
         api: api,
         engine: FsrsEngine(),
@@ -5230,7 +5324,7 @@ void main() {
       expect(find.byType(CupertinoActionSheet), findsOneWidget);
       expect(find.byType(BottomSheet), findsNothing);
       expect(find.text('Wrong'), findsOneWidget);
-    });
+    }, tags: const ['apple-mobile']);
 
     testWidgets('flagging a card from the sheet enqueues and confirms', (
       tester,
@@ -5598,15 +5692,15 @@ void main() {
           ),
         );
         final api = _FakeRecallApi([
-            _card(
-              id: 904,
-              state: 2,
-              stability: 5,
-              difficulty: 5,
-              due: now.subtract(const Duration(hours: 1)),
-              lastReview: now.subtract(const Duration(days: 1)),
-            ),
-          ]);
+          _card(
+            id: 904,
+            state: 2,
+            stability: 5,
+            difficulty: 5,
+            due: now.subtract(const Duration(hours: 1)),
+            lastReview: now.subtract(const Duration(days: 1)),
+          ),
+        ]);
         final controller = ReviewController(
           api: api,
           engine: FsrsEngine(),
@@ -5917,233 +6011,244 @@ void main() {
   });
 
   group('Visual benchmark surfaces', () {
-    testWidgets('core iOS and Android surfaces render without overflow', (
-      tester,
-    ) async {
-      await _loadVisualFonts();
-      SharedPreferences.setMockInitialValues({});
-      final now = DateTime.now();
-      final page = ConceptPage(
-        nodeId: 'm00-vector-geometry',
-        title: 'Vector geometry primer',
-        bodyHtml:
-            r'Projection measures one vector along another: \(p = \frac{x \cdot v}{v \cdot v}v\).',
-        updatedAt: now,
-      );
-      final api =
-          _FakeRecallApi(
-              [
-                _card(
-                  id: 7001,
-                  deckId: 1,
-                  state: 2,
-                  front: r'Why does attention divide by \(\sqrt{d_k}\)?',
-                  back:
-                      r'It keeps dot-product variance stable as the key dimension grows.<br><br>Formula: \(\operatorname{softmax}(QK^T / \sqrt{d_k})V\).',
-                  hasLatex: true,
-                ),
-              ],
-              decks: const [
-                DeckRow(deckId: 1, name: 'ML'),
-                DeckRow(deckId: 2, name: 'Math'),
-                DeckRow(deckId: 3, name: 'Portuguese'),
-              ],
-            )
-            ..deckCounts = const {
-              1: (due: 18, neu: 3),
-              2: (due: 11, neu: 2),
-              3: (due: 7, neu: 5),
-            }
-            ..reviewLog = [
-              for (var day = 0; day < 24; day++)
-                ReviewLogEntry(
-                  guid: 'g$day',
-                  at: now.subtract(Duration(days: day)),
-                  rating: day % 5 == 0 ? 1 : 3,
-                ),
-            ]
-            ..dueDates = [
-              for (var day = 0; day < 14; day++)
-                for (var card = 0; card < (day % 5) + 1; card++)
-                  now.add(Duration(days: day)),
-            ]
-            ..noteTags = const {'g0': 'node::m00-vector-geometry'}
-            ..conceptNodes = const [
-              ConceptNodeInfo(
-                nodeId: 'm00-vector-geometry',
-                title: 'Vector geometry',
-                module: 'M00',
-              ),
-            ]
-            ..conceptPages = [page];
-      final controller = ReviewController(
-        api: api,
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-      );
-      final prefs = RecallPrefsController(api: api);
-      addTearDown(controller.dispose);
-      addTearDown(prefs.dispose);
-      await controller.load();
-      await prefs.load();
-
-      Future<void> pumpShell({
-        required Size size,
-        required bool nativeIos,
-        required bool nativeAndroid,
-        required EdgeInsets padding,
-        TextScaler textScaler = TextScaler.noScaling,
-      }) async {
-        debugDefaultTargetPlatformOverride = nativeIos
-            ? TargetPlatform.iOS
-            : nativeAndroid
-            ? TargetPlatform.android
-            : null;
-        tester.view.physicalSize = size;
-        tester.view.devicePixelRatio = 1;
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: buildRecallTheme(),
-            home: RepaintBoundary(
-              key: const Key('visual_benchmark_boundary'),
-              child: MediaQuery(
-                data: MediaQueryData(
-                  size: size,
-                  padding: padding,
-                  textScaler: textScaler,
-                ),
-                child: AppShell(
-                  key: ValueKey(
-                    'visual-shell-$size-$nativeIos-$nativeAndroid-$textScaler',
+    for (final appleMobile in [false, true]) {
+      testWidgets(
+        'core ${appleMobile ? 'iOS' : 'Android'} surfaces render without overflow',
+        (tester) async {
+          await _loadVisualFonts();
+          SharedPreferences.setMockInitialValues({});
+          final now = DateTime.now();
+          final page = ConceptPage(
+            nodeId: 'm00-vector-geometry',
+            title: 'Vector geometry primer',
+            bodyHtml:
+                r'Projection measures one vector along another: \(p = \frac{x \cdot v}{v \cdot v}v\).',
+            updatedAt: now,
+          );
+          final api =
+              _FakeRecallApi(
+                  [
+                    _card(
+                      id: 7001,
+                      deckId: 1,
+                      state: 2,
+                      front: r'Why does attention divide by \(\sqrt{d_k}\)?',
+                      back:
+                          r'It keeps dot-product variance stable as the key dimension grows.<br><br>Formula: \(\operatorname{softmax}(QK^T / \sqrt{d_k})V\).',
+                      hasLatex: true,
+                    ),
+                  ],
+                  decks: const [
+                    DeckRow(deckId: 1, name: 'ML'),
+                    DeckRow(deckId: 2, name: 'Math'),
+                    DeckRow(deckId: 3, name: 'Portuguese'),
+                  ],
+                )
+                ..deckCounts = const {
+                  1: (due: 18, neu: 3),
+                  2: (due: 11, neu: 2),
+                  3: (due: 7, neu: 5),
+                }
+                ..reviewLog = [
+                  for (var day = 0; day < 24; day++)
+                    ReviewLogEntry(
+                      guid: 'g$day',
+                      at: now.subtract(Duration(days: day)),
+                      rating: day % 5 == 0 ? 1 : 3,
+                    ),
+                ]
+                ..dueDates = [
+                  for (var day = 0; day < 14; day++)
+                    for (var card = 0; card < (day % 5) + 1; card++)
+                      now.add(Duration(days: day)),
+                ]
+                ..noteTags = const {'g0': 'node::m00-vector-geometry'}
+                ..conceptNodes = const [
+                  ConceptNodeInfo(
+                    nodeId: 'm00-vector-geometry',
+                    title: 'Vector geometry',
+                    module: 'M00',
                   ),
-                  controller: controller,
-                  api: api,
-                  prefs: prefs,
-                  linkSource: _SilentLinkSource(),
-                  nativeIos: nativeIos,
-                  nativeAndroid: nativeAndroid,
+                ]
+                ..conceptPages = [page];
+          final controller = ReviewController(
+            api: api,
+            engine: FsrsEngine(),
+            store: LocalReviewStore(),
+          );
+          final prefs = RecallPrefsController(api: api);
+          addTearDown(controller.dispose);
+          addTearDown(prefs.dispose);
+          await controller.load();
+          await prefs.load();
+
+          Future<void> pumpShell({
+            required Size size,
+            required bool nativeIos,
+            required bool nativeAndroid,
+            required EdgeInsets padding,
+            TextScaler textScaler = TextScaler.noScaling,
+          }) async {
+            debugDefaultTargetPlatformOverride = nativeIos
+                ? TargetPlatform.iOS
+                : nativeAndroid
+                ? TargetPlatform.android
+                : null;
+            tester.view.physicalSize = size;
+            tester.view.devicePixelRatio = 1;
+            await tester.pumpWidget(
+              MaterialApp(
+                theme: buildRecallTheme(),
+                home: RepaintBoundary(
+                  key: const Key('visual_benchmark_boundary'),
+                  child: MediaQuery(
+                    data: MediaQueryData(
+                      size: size,
+                      padding: padding,
+                      textScaler: textScaler,
+                    ),
+                    child: AppShell(
+                      key: ValueKey(
+                        'visual-shell-$size-$nativeIos-$nativeAndroid-$textScaler',
+                      ),
+                      controller: controller,
+                      api: api,
+                      prefs: prefs,
+                      linkSource: _SilentLinkSource(),
+                      nativeIos: nativeIos,
+                      nativeAndroid: nativeAndroid,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(tester.takeException(), isNull);
-      }
+            );
+            await tester.pumpAndSettle();
+            expect(tester.takeException(), isNull);
+          }
 
-      Future<void> bringAppSwitcherIntoView() async {
-        final statsScrollable = find
-            .descendant(
-              of: find.byType(StatsScreen),
-              matching: find.byType(Scrollable),
-            )
-            .first;
-        await tester.dragUntilVisible(
-          find.byType(AppSwitcher),
-          statsScrollable,
-          const Offset(0, -300),
-        );
-        await tester.drag(statsScrollable, const Offset(0, -160));
-        await tester.pumpAndSettle();
-        expect(
-          find.byKey(const Key('app_switcher_recall')).hitTestable(),
-          findsOneWidget,
-        );
-      }
+          Future<void> bringAppSwitcherIntoView() async {
+            final statsScrollable = find
+                .descendant(
+                  of: find.byType(StatsScreen),
+                  matching: find.byType(Scrollable),
+                )
+                .first;
+            await tester.dragUntilVisible(
+              find.byType(AppSwitcher),
+              statsScrollable,
+              const Offset(0, -300),
+            );
+            await tester.drag(statsScrollable, const Offset(0, -160));
+            await tester.pumpAndSettle();
+            expect(
+              find.byKey(const Key('app_switcher_recall')).hitTestable(),
+              findsOneWidget,
+            );
+          }
 
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          addTearDown(() => debugDefaultTargetPlatformOverride = null);
 
-      await pumpShell(
-        size: const Size(411, 914),
-        nativeIos: false,
-        nativeAndroid: true,
-        padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
-      );
-      if (await _captureVisual(tester, 'android-study-question')) return;
-      await tester.tap(find.text('Show answer'));
-      await tester.pumpAndSettle();
-      if (await _captureVisual(tester, 'android-study-answer')) return;
+          if (!appleMobile) {
+            await pumpShell(
+              size: const Size(411, 914),
+              nativeIos: false,
+              nativeAndroid: true,
+              padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
+            );
+            if (await _captureVisual(tester, 'android-study-question')) return;
+            await tester.tap(find.text('Show answer'));
+            await tester.pumpAndSettle();
+            if (await _captureVisual(tester, 'android-study-answer')) return;
 
-      await tester.tap(find.text('Decks').last);
-      await tester.pumpAndSettle();
-      if (await _captureVisual(tester, 'android-decks')) return;
-      await tester.tap(find.text('Stats').last);
-      await tester.pumpAndSettle();
-      if (await _captureVisual(tester, 'android-stats')) return;
-      if (AppSwitcher.isSupported) {
-        await bringAppSwitcherIntoView();
-        if (await _captureVisual(tester, 'android-app-switcher')) return;
-      }
-      await tester.tap(find.text('Read').last);
-      await tester.pumpAndSettle();
-      if (await _captureVisual(tester, 'android-read')) return;
+            await tester.tap(find.text('Decks').last);
+            await tester.pumpAndSettle();
+            if (await _captureVisual(tester, 'android-decks')) return;
+            await tester.tap(find.text('Stats').last);
+            await tester.pumpAndSettle();
+            if (await _captureVisual(tester, 'android-stats')) return;
+            if (AppSwitcher.isSupported) {
+              await bringAppSwitcherIntoView();
+              if (await _captureVisual(tester, 'android-app-switcher')) return;
+            }
+            await tester.tap(find.text('Read').last);
+            await tester.pumpAndSettle();
+            if (await _captureVisual(tester, 'android-read')) return;
+          }
+          if (appleMobile) {
+            await pumpShell(
+              size: const Size(402, 874),
+              nativeIos: true,
+              nativeAndroid: false,
+              padding: const EdgeInsets.fromLTRB(0, 59, 0, 34),
+            );
+            if (await _captureVisual(tester, 'ios-study-answer')) return;
+            await tester.tap(find.text('Stats').last);
+            await tester.pumpAndSettle();
+            if (AppSwitcher.isSupported) {
+              await bringAppSwitcherIntoView();
+              if (await _captureVisual(tester, 'ios-app-switcher')) return;
+            }
+          }
+          if (!appleMobile) {
+            await pumpShell(
+              size: const Size(900, 600),
+              nativeIos: false,
+              nativeAndroid: true,
+              padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
+            );
+            expect(find.byType(NavigationRail), findsOneWidget);
+            if (await _captureVisual(tester, 'android-wide-rail')) return;
 
-      await pumpShell(
-        size: const Size(402, 874),
-        nativeIos: true,
-        nativeAndroid: false,
-        padding: const EdgeInsets.fromLTRB(0, 59, 0, 34),
-      );
-      if (await _captureVisual(tester, 'ios-study-answer')) return;
-      await tester.tap(find.text('Stats').last);
-      await tester.pumpAndSettle();
-      if (AppSwitcher.isSupported) {
-        await bringAppSwitcherIntoView();
-        if (await _captureVisual(tester, 'ios-app-switcher')) return;
-      }
+            await pumpShell(
+              size: const Size(320, 640),
+              nativeIos: false,
+              nativeAndroid: true,
+              padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
+              textScaler: const TextScaler.linear(2),
+            );
+            expect(tester.takeException(), isNull);
+            if (await _captureVisual(tester, 'android-large-text')) return;
+            await tester.ensureVisible(find.text('Good'));
+            await tester.pumpAndSettle();
+            expect(find.text('Good').hitTestable(), findsOneWidget);
+          }
+          if (appleMobile) {
+            tester.view.physicalSize = const Size(402, 874);
+            tester.view.devicePixelRatio = 1;
+            debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
 
-      await pumpShell(
-        size: const Size(900, 600),
-        nativeIos: false,
-        nativeAndroid: true,
-        padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
-      );
-      expect(find.byType(NavigationRail), findsOneWidget);
-      if (await _captureVisual(tester, 'android-wide-rail')) return;
-
-      await pumpShell(
-        size: const Size(320, 640),
-        nativeIos: false,
-        nativeAndroid: true,
-        padding: const EdgeInsets.fromLTRB(0, 24, 0, 24),
-        textScaler: const TextScaler.linear(2),
-      );
-      expect(tester.takeException(), isNull);
-      if (await _captureVisual(tester, 'android-large-text')) return;
-      await tester.ensureVisible(find.text('Good'));
-      await tester.pumpAndSettle();
-      expect(find.text('Good').hitTestable(), findsOneWidget);
-
-      tester.view.physicalSize = const Size(402, 874);
-      tester.view.devicePixelRatio = 1;
-      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildRecallTheme(),
-          home: RepaintBoundary(
-            key: const Key('visual_benchmark_boundary'),
-            child: MediaQuery(
-              data: const MediaQueryData(
-                size: Size(402, 874),
-                padding: EdgeInsets.fromLTRB(0, 59, 0, 34),
+            await tester.pumpWidget(
+              MaterialApp(
+                theme: buildRecallTheme(),
+                home: RepaintBoundary(
+                  key: const Key('visual_benchmark_boundary'),
+                  child: MediaQuery(
+                    data: const MediaQueryData(
+                      size: Size(402, 874),
+                      padding: EdgeInsets.fromLTRB(0, 59, 0, 34),
+                    ),
+                    child: SettingsScreen(
+                      prefs: prefs,
+                      controller: controller,
+                      nativeIos: true,
+                    ),
+                  ),
+                ),
               ),
-              child: SettingsScreen(
-                prefs: prefs,
-                controller: controller,
-                nativeIos: true,
-              ),
-            ),
-          ),
-        ),
+            );
+            await tester.pumpAndSettle();
+            expect(tester.takeException(), isNull);
+            await _captureVisual(tester, 'ios-settings');
+            debugDefaultTargetPlatformOverride = null;
+          }
+          // Flutter verifies debug overrides before addTearDown callbacks run.
+          debugDefaultTargetPlatformOverride = null;
+        },
+        tags: appleMobile ? const ['apple-mobile'] : const [],
       );
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-      await _captureVisual(tester, 'ios-settings');
-      debugDefaultTargetPlatformOverride = null;
-    });
+    }
   });
 }
 

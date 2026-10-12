@@ -371,4 +371,90 @@ void main() {
       expect(await store.hiddenCardIds(), {201});
     },
   );
+
+  test(
+    'late cached hidden read stays cancelled after sign-out and B sign-in',
+    () async {
+      final (:controller, :api, :store) = await _session();
+      final ownerA = api.currentUser!.id;
+      await store.replaceHiddenCards({201});
+      final gate = _Gate();
+      addTearDown(gate.open);
+      store.nextHiddenRead = gate;
+      final stale = controller.load();
+      await gate.entered.future;
+
+      await controller.signOut();
+      expect(api.currentUser, isNull);
+      await _switchOwner(controller, api, store);
+      gate.open();
+      await stale;
+
+      await controller.keepGoing();
+      expect(api.lastAheadExcludedIds, {202});
+      expect(await store.hiddenCardIds(), {202});
+      await store.activateOwner(ownerA);
+      expect(await store.hiddenCardIds(), isEmpty);
+    },
+  );
+
+  test(
+    'late server hidden read stays cancelled after sign-out and B sign-in',
+    () async {
+      final (:controller, :api, :store) = await _session();
+      final ownerA = api.currentUser!.id;
+      api.hidden.add(201);
+      final gate = _Gate();
+      addTearDown(gate.open);
+      api.nextHiddenRead = gate;
+      final stale = controller.refresh();
+      await gate.entered.future;
+
+      await controller.signOut();
+      expect(api.currentUser, isNull);
+      await _switchOwner(controller, api, store);
+      gate.open();
+      await stale;
+
+      await controller.keepGoing();
+      expect(api.lastAheadExcludedIds, {202});
+      expect(await store.hiddenCardIds(), {202});
+      await store.activateOwner(ownerA);
+      expect(await store.hiddenCardIds(), isEmpty);
+    },
+  );
+
+  test(
+    'refused sign-out preserves a delayed hidden read and pending hide',
+    () async {
+      final (:controller, :api, :store) = await _session();
+      final ownerA = api.currentUser!.id;
+      final scopeA = store.activeOwnerScope;
+      api.failFlagWrite = true;
+      await store.enqueueFlag({
+        'card_id': 201,
+        'reason': 'dislike',
+        'client_id': 'invented-hidden-signout-refusal',
+      });
+      final gate = _Gate();
+      addTearDown(gate.open);
+      api.nextHiddenRead = gate;
+      final stale = controller.refresh();
+      await gate.entered.future;
+
+      await expectLater(
+        controller.signOut(),
+        throwsA(isA<PendingSyncException>()),
+      );
+      expect(api.currentUser?.id, ownerA);
+      expect(store.activeOwnerScope, scopeA);
+      gate.open();
+      await stale;
+
+      expect(await store.hiddenCardIds(), {201});
+      expect((await store.flagOutbox()).single['card_id'], 201);
+      await controller.keepGoing();
+      expect(api.lastAheadExcludedIds, {201});
+    },
+  );
 }

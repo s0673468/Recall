@@ -53,7 +53,7 @@ void main() {
     );
     expect(pbxproj, contains('IPHONEOS_DEPLOYMENT_TARGET = 16.0;'));
     expect(icon.existsSync(), isTrue, reason: 'branded app icon is required');
-  });
+  }, tags: const ['apple-mobile']);
 
   test('iOS marketing icon is opaque and full resolution', () {
     final bytes = icon.readAsBytesSync();
@@ -63,7 +63,7 @@ void main() {
     expect(data.getUint32(20, Endian.big), 1024);
     expect(bytes[24], 8, reason: 'The source icon should use 8-bit channels.');
     expect(bytes[25], 2, reason: 'PNG color type 2 is opaque RGB.');
-  });
+  }, tags: const ['apple-mobile']);
 
   test('iOS launch and Flutter root share the graphite canvas', () {
     for (final storyboard in [launchStoryboard, mainStoryboard]) {
@@ -72,7 +72,7 @@ void main() {
       expect(xml, contains('green="0.10196078431"'));
       expect(xml, contains('blue="0.10980392157"'));
     }
-  });
+  }, tags: const ['apple-mobile']);
 
   test('Recall ships an aggregate-only WidgetKit due-count extension', () {
     expect(runnerEntitlements.existsSync(), isTrue);
@@ -112,7 +112,7 @@ void main() {
       expect(swift, isNot(contains(forbidden)));
       expect(plugin, isNot(contains(forbidden)));
     }
-  });
+  }, tags: const ['apple-mobile']);
 
   test('iOS release signing authorizes the private session Keychain', () {
     final entitlements = runnerEntitlements.readAsStringSync();
@@ -127,5 +127,5 @@ void main() {
       pbxproj,
       contains('CODE_SIGN_ENTITLEMENTS = Runner/Runner.entitlements;'),
     );
-  });
+  }, tags: const ['apple-mobile']);
 }

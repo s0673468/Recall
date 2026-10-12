@@ -572,15 +572,41 @@ class LocalReviewStore {
 
   /// Drop the cached snapshot + outboxes (called on sign-out so the next user
   /// on a shared browser can't see the previous user's cards/reviews/flags).
-  Future<void> clear() {
-    final snapshotKey = _snapshotStorageKey(null);
-    final outboxKey = _storageKey(_outboxKey);
-    final flagOutboxKey = _storageKey(_flagOutboxKey);
-    final catchUpStorageKey = _storageKey(catchUpKey);
-    final remediationStorageKey = _storageKey(remediationKey);
-    final hiddenStorageKey = _storageKey(_hiddenCardsKey);
+  /// Sign-out opts into [requireEmptyOutboxes]: inspect both outboxes and clear
+  /// in one lock acquisition, never using an earlier, possibly stale count.
+  /// [ownerScope] pins all removals to the account that began the operation.
+  Future<void> clear({
+    String? ownerScope,
+    bool requireEmptyOutboxes = false,
+    bool Function()? canClear,
+  }) {
+    final snapshotKey = _snapshotStorageKey(null, ownerScope: ownerScope);
+    final outboxKey = _storageKey(_outboxKey, ownerScope: ownerScope);
+    final flagOutboxKey = _storageKey(_flagOutboxKey, ownerScope: ownerScope);
+    final catchUpStorageKey = _storageKey(catchUpKey, ownerScope: ownerScope);
+    final remediationStorageKey = _storageKey(
+      remediationKey,
+      ownerScope: ownerScope,
+    );
+    final hiddenStorageKey = _storageKey(
+      _hiddenCardsKey,
+      ownerScope: ownerScope,
+    );
     return _withOutboxLock(() async {
       final prefs = await _prefs;
+      if (requireEmptyOutboxes) {
+        final pendingReviews = _readOutbox(prefs, outboxKey).length;
+        final pendingFlags = _readList(prefs, flagOutboxKey).length;
+        if (pendingReviews + pendingFlags > 0) {
+          throw LocalOutboxNotEmptyException(
+            pendingReviews: pendingReviews,
+            pendingFlags: pendingFlags,
+          );
+        }
+      }
+      if (canClear != null && !canClear()) {
+        throw StateError('Recall account changed while signing out.');
+      }
       for (final key in prefs.getKeys()) {
         if (key == snapshotKey || key.startsWith('$snapshotKey:deck:')) {
           await prefs.remove(key);
@@ -679,4 +705,14 @@ class LocalOutboxWriteException implements Exception {
 
   @override
   String toString() => 'Recall could not save the pending study action ($key).';
+}
+
+class LocalOutboxNotEmptyException implements Exception {
+  final int pendingReviews;
+  final int pendingFlags;
+
+  const LocalOutboxNotEmptyException({
+    required this.pendingReviews,
+    required this.pendingFlags,
+  });
 }

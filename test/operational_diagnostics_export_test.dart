@@ -49,6 +49,7 @@ void main() {
             }),
       ]);
     },
+    tags: const ['apple-mobile'],
   );
 
   test(
@@ -100,6 +101,7 @@ void main() {
 
       expect(calls, isEmpty);
     },
+    tags: const ['apple-mobile'],
   );
 }
 
