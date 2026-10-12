@@ -12,7 +12,7 @@ import sys
 import time
 
 PYTHON_SUITES = (
-    "tool/tests", "web/tool/tests", "scripts/tests",
+    "tool/tests",
     "tools/recall_sync/tests", "tools/anki_revision/tests",
     "tools/semantic_review/tests", "tools/flag_report/tests",
     "tools/fsrs_optimize/tests",
@@ -21,7 +21,6 @@ NOTICE = "Iteration checks only; not a merge gate. Run the complete required CI 
 PYTHON_WRAPPERS = {
     "tools/semantic_review/tests": "test/semantic_review_tool_test.dart",
     "tools/flag_report/tests": "test/flag_report_test.dart",
-    "scripts/tests": "test/testflight_build_script_test.dart",
 }
 
 
@@ -83,28 +82,30 @@ def dart_tests(root, changed):
 def plan(root, paths):
     paths = sorted(set(paths))
     result = {"notice": NOTICE, "paths": paths, "full": False,
+              # Keep the consumed plan schema; retired PWA builds stay disabled.
               "flutter_tests": [], "python_suites": [], "native_lanes": [], "web_build": False}
     dart = []
     python = set()
     native = set()
     broad_flutter = False
     for path in paths:
-        if path in ("README.md", "IOS_SETUP.md", "ANDROID_SETUP.md") or path.startswith("docs/") and path.endswith(".md"):
+        if path in ("README.md", "web/README.md", "IOS_SETUP.md", "ANDROID_SETUP.md") or path.startswith("docs/") and path.endswith(".md"):
             continue
         if path.startswith(("lib/", "test/")) and path.endswith(".dart"):
             dart.append(path)
         elif path.startswith("ios/"):
-            native.add("ios")
+            # Preserve Apple sources; their retired tests are tagged and skipped.
             broad_flutter = True
         elif path.startswith("android/"):
             native.add("android")
             broad_flutter = True
         elif path.startswith("web/"):
-            python.add("web/tool/tests")
+            # Legacy PWA source is preserved, but no longer built or published.
+            # Keep conservative shared Flutter contracts for edits to that source.
             broad_flutter = True
-            result["web_build"] = True
         elif path in ("tool/run_ios_tests.py", "tool/check_android_release_policy.py"):
-            native.add("ios" if "ios" in path else "android")
+            if "ios" not in path:
+                native.add("android")
             python.add("tool/tests")
             broad_flutter = True
         elif path.endswith(".py") and path != "tool/affected_tests.py":
@@ -115,7 +116,7 @@ def plan(root, paths):
         else:
             result["full"] = True
     if result["full"]:
-        result.update(flutter_tests=["test"], python_suites=list(PYTHON_SUITES), native_lanes=["android", "ios"], web_build=True)
+        result.update(flutter_tests=["test"], python_suites=list(PYTHON_SUITES), native_lanes=["android"], web_build=False)
     else:
         result["flutter_tests"] = ["test"] if broad_flutter else dart_tests(root, dart) if dart else []
         result["python_suites"] = sorted(python)
@@ -129,7 +130,7 @@ def commands(selection, lane, concurrency):
         if selection["flutter_tests"]:
             steps.extend([
                 ["./tool/flutterw", "analyze", "--no-pub"],
-                ["./tool/flutterw", "test", "--no-pub", "--reporter=failures-only", f"--concurrency={concurrency}", *selection["flutter_tests"]],
+                ["./tool/flutterw", "test", "--no-pub", "--reporter=failures-only", f"--concurrency={concurrency}", "--exclude-tags=apple-mobile", *selection["flutter_tests"]],
             ])
         # These Python suites are already run by their Dart wrapper in a broad
         # Flutter run. Keep standalone suites only when the wrapper is absent.
@@ -137,18 +138,11 @@ def commands(selection, lane, concurrency):
             if suite in PYTHON_WRAPPERS and (selection["flutter_tests"] == ["test"] or PYTHON_WRAPPERS[suite] in selection["flutter_tests"]):
                 continue
             steps.append([sys.executable, "-m", "unittest", "discover", "-s", suite, "-p", "test_*.py"])
-        if selection["web_build"]:
-            steps.append(["./tool/flutterw", "build", "web", "--release", "--no-pub", "--base-href", "/Recall/", "--no-web-resources-cdn"])
     if lane in ("android", "all") and "android" in selection["native_lanes"]:
         steps.extend([
             ["./tool/flutterw", "build", "apk", "--debug", "--no-pub"],
             [sys.executable, "tool/check_android_release_policy.py"],
             ["android/gradlew", "-p", "android", ":app:testDebugUnitTest", ":app:lintDebug", ":app:assembleDebugAndroidTest", "--no-daemon", "--max-workers=2"],
-        ])
-    if lane in ("ios", "all") and "ios" in selection["native_lanes"]:
-        steps.extend([
-            ["./tool/flutterw", "build", "ios", "--debug", "--simulator", "--config-only", "--no-codesign", "--no-pub"],
-            [sys.executable, "tool/run_ios_tests.py", "--", "-workspace", "ios/Runner.xcworkspace", "-scheme", "Runner", "-configuration", "Debug", "CODE_SIGNING_ALLOWED=NO"],
         ])
     return steps
 
@@ -158,7 +152,7 @@ def main(argv=None):
     parser.add_argument("--base", default="origin/main", help="branch-point reference; committed and dirty changes are combined")
     parser.add_argument("--path", action="append", default=[], help="additional path to include; never excludes detected changes")
     parser.add_argument("--all", action="store_true", help="select all suites, still an iteration plan")
-    parser.add_argument("--lane", choices=("portable", "android", "ios", "all"), default="portable")
+    parser.add_argument("--lane", choices=("portable", "android", "all"), default="portable")
     parser.add_argument("--concurrency", type=int, default=int(os.environ.get("FLEET_CI_CPU_BUDGET", "2")))
     parser.add_argument("--run", action="store_true", help="execute this lane, using already installed dependencies")
     args = parser.parse_args(argv)

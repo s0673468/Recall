@@ -22,7 +22,7 @@ void main() {
     );
     final haptics = ReviewHaptics.forPlatform(
       isWeb: true,
-      targetPlatform: TargetPlatform.iOS,
+      targetPlatform: TargetPlatform.android,
     );
 
     haptics
@@ -70,7 +70,7 @@ void main() {
       'HapticFeedbackType.mediumImpact',
       'HapticFeedbackType.heavyImpact',
     ]);
-  });
+  }, tags: const ['apple-mobile']);
 
   testWidgets('native Android uses the same restrained review feedback', (
     tester,

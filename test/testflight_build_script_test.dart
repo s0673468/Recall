@@ -22,5 +22,5 @@ void main() {
           'stdout:\n${result.stdout}\n'
           'stderr:\n${result.stderr}',
     );
-  });
+  }, tags: const ['apple-mobile']);
 }

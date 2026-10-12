@@ -56,14 +56,14 @@ class SelectionTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertTrue(selector.plan(self.root, [name])["full"])
 
-    def test_native_changes_include_flutter_contracts_and_native_lane(self):
+    def test_retired_apple_source_keeps_flutter_contracts_without_native_execution(self):
         result = selector.plan(self.root, ["ios/Runner/Bridge.swift"])
-        self.assertEqual(result["native_lanes"], ["ios"])
+        self.assertEqual(result["native_lanes"], [])
         self.assertEqual(result["flutter_tests"], ["test"])
 
-    def test_native_runner_change_requires_its_native_lane(self):
+    def test_retired_apple_runner_does_not_enable_a_native_lane(self):
         result = selector.plan(self.root, ["tool/run_ios_tests.py"])
-        self.assertIn("ios", result["native_lanes"])
+        self.assertEqual(result["native_lanes"], [])
         self.assertIn("tool/tests", result["python_suites"])
 
     def test_combined_plan_does_not_repeat_python_wrapper_suites(self):
@@ -72,6 +72,49 @@ class SelectionTests(unittest.TestCase):
         for suite in ("tools/semantic_review/tests", "tools/flag_report/tests", "scripts/tests"):
             self.assertFalse(any(suite in cmd for cmd in commands))
         self.assertTrue(any("tools/recall_sync/tests" in cmd for cmd in commands))
+
+    def test_full_plan_keeps_android_and_never_launches_retired_platforms(self):
+        result = selector.plan(self.root, ["pubspec.lock"])
+        self.assertEqual(result["native_lanes"], ["android"])
+        self.assertNotIn("scripts/tests", result["python_suites"])
+        self.assertNotIn("web/tool/tests", result["python_suites"])
+        self.assertFalse(result["web_build"])
+        commands = selector.commands(result, "all", 2)
+        self.assertIn(["./tool/flutterw", "build", "apk", "--debug", "--no-pub"], commands)
+        self.assertTrue(any("tool/check_android_release_policy.py" in cmd for cmd in commands))
+        self.assertTrue(any(":app:testDebugUnitTest" in cmd and ":app:lintDebug" in cmd and ":app:assembleDebugAndroidTest" in cmd for cmd in commands))
+        self.assertFalse(any("web" in cmd or "web/tool/tests" in cmd for cmd in commands))
+        self.assertTrue(any("--exclude-tags=apple-mobile" in cmd for cmd in commands))
+        self.assertFalse(any("ios" in cmd or "tool/run_ios_tests.py" in cmd for cmd in commands))
+
+    def test_legacy_web_changes_keep_flutter_contracts_without_pwa_tools(self):
+        for name in ("web/index.html", "web/sw.js", "web/tool/stamp_service_worker.py", "web/tool/tests/test_service_worker.py"):
+            with self.subTest(name=name):
+                result = selector.plan(self.root, [name])
+                self.assertEqual(result["flutter_tests"], ["test"])
+                self.assertEqual(result["python_suites"], [])
+                self.assertFalse(result["web_build"])
+                commands = selector.commands(result, "portable", 1)
+                self.assertIn(["./tool/flutterw", "analyze", "--no-pub"], commands)
+                self.assertTrue(any("--exclude-tags=apple-mobile" in cmd for cmd in commands))
+                self.assertFalse(any("web" in cmd or "web/tool/tests" in cmd for cmd in commands))
+
+    def test_retired_web_build_flag_cannot_reenable_pwa_commands(self):
+        result = selector.plan(self.root, ["pubspec.lock"])
+        result["web_build"] = True  # A caller may still hold the historical schema.
+        for lane in ("portable", "all"):
+            with self.subTest(lane=lane):
+                commands = selector.commands(result, lane, 1)
+                self.assertFalse(any("web" in cmd or "web/tool/tests" in cmd for cmd in commands))
+
+    def test_android_change_keeps_native_and_shared_checks(self):
+        result = selector.plan(self.root, ["android/app/src/main/Fixture.kt"])
+        self.assertEqual(result["native_lanes"], ["android"])
+        self.assertEqual(result["flutter_tests"], ["test"])
+        commands = selector.commands(result, "all", 1)
+        self.assertTrue(any("apk" in cmd for cmd in commands))
+        self.assertTrue(any(":app:assembleDebugAndroidTest" in cmd for cmd in commands))
+        self.assertFalse(result["web_build"])
 
     def test_conditional_import_selects_both_platform_consumers(self):
         self.write("lib/b.dart", "import 'c.dart' if (dart.library.io) 'a.dart';")
@@ -90,6 +133,9 @@ class SelectionTests(unittest.TestCase):
 
     def test_docs_are_narrow_but_unknown_markdown_is_not_ignored(self):
         self.assertEqual(selector.plan(self.root, ["docs/guide.md"])["flutter_tests"], [])
+        pointer = selector.plan(self.root, ["web/README.md"])
+        self.assertFalse(pointer["full"])
+        self.assertEqual(selector.commands(pointer, "all", 1), [])
         self.assertTrue(selector.plan(self.root, ["assets/runtime.md"])["full"])
 
 
