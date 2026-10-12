@@ -64,6 +64,25 @@ void main() {
     },
   );
 
+  test(
+    'prior history stops once every batch card has an earlier review',
+    () async {
+      final fixture = _HistoryFixture(
+        cap: 2,
+        today: [(2001, 41), (2002, 42)],
+        prior: [(1, 41), (2, 42), for (var id = 3; id <= 1000; id++) (id, 41)],
+      );
+      final client = fixture.client();
+      addTearDown(client.dispose);
+
+      await RecallApi(client).fetchQueue(newLimit: 20);
+
+      expect(fixture.newLimit, 20);
+      expect(fixture.priorRequests, hasLength(1));
+      expect(fixture.todayRequests, hasLength(2));
+    },
+  );
+
   test('an exhausted daily budget cannot admit another new card', () async {
     final fixture = _HistoryFixture(cap: 1, today: [(1, 41), (2, 42), (3, 43)]);
     final client = fixture.client();
@@ -200,7 +219,7 @@ void main() {
       () async {
         final fixture = _HistoryFixture(
           cap: 1,
-          today: [(10, 41)],
+          today: repeatPrior ? [(10, 41), (20, 42)] : [(10, 41)],
           prior: repeatPrior ? [(1, 41)] : [],
           repeatToday: !repeatPrior,
           repeatPrior: repeatPrior,

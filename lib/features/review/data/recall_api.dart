@@ -594,14 +594,17 @@ class RecallApi implements ReviewReplayGateway {
         final ids = included.toList()..sort();
         priorQ = priorQ.inFilter('cards.notes.deck_id', ids);
       }
-      seenBefore.addAll(await _fetchIntroductionCardIds(priorQ));
+      seenBefore.addAll(
+        await _fetchIntroductionCardIds(priorQ, expectedCardIds: batch.toSet()),
+      );
     }
     return todayCardIds.difference(seenBefore).length;
   }
 
   Future<Set<int>> _fetchIntroductionCardIds(
-    PostgrestFilterBuilder<List<Map<String, dynamic>>> query,
-  ) async {
+    PostgrestFilterBuilder<List<Map<String, dynamic>>> query, {
+    Set<int>? expectedCardIds,
+  }) async {
     final cardIds = <int>{};
     int? afterId;
     while (true) {
@@ -621,6 +624,11 @@ class RecallApi implements ReviewReplayGateway {
         if (row['card_id'] != null) {
           cardIds.add((row['card_id'] as num).toInt());
         }
+      }
+      // Prior history only needs existence for the known batch. Once every
+      // card is proven seen, further repeated reviews cannot change the count.
+      if (expectedCardIds != null && cardIds.containsAll(expectedCardIds)) {
+        return cardIds;
       }
       afterId = nextId;
     }
