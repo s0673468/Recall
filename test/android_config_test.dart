@@ -12,7 +12,6 @@ void main() {
     'android/gradle/wrapper/gradle-wrapper.properties',
   );
   final setupFlutter = File('.github/actions/setup-flutter/action.yml');
-  final xcodeCloudSetup = File('ios/ci_scripts/ci_post_clone.sh');
   final flutterVersion = File('.flutter-version');
   final flutterMetadata = File('.metadata');
   final pubspecLock = File('pubspec.lock');
@@ -71,6 +70,28 @@ void main() {
   final historicalSigningExample = File(
     'android/key.properties.historical.example',
   );
+
+  test('historical Xcode setup uses the pinned Flutter version', () {
+    final setup = File('ios/ci_scripts/ci_post_clone.sh').readAsStringSync();
+    expect(setup, contains('.flutter-version'));
+  }, tags: const ['apple-mobile']);
+
+  test('historical iOS exposes every maintained integration channel', () {
+    final sources = [
+      File('ios/Runner/RecallBackgroundSyncPlugin.swift'),
+      File('ios/Runner/RecallOperationalDiagnosticsPlugin.swift'),
+      File('ios/Runner/RecallStudyReminderPlugin.swift'),
+      File('ios/Runner/RecallWidgetPlugin.swift'),
+    ].map((file) => file.readAsStringSync()).join('\n');
+    for (final channel in [
+      'com.german.ankiReview/backgroundSync',
+      'com.german.ankiReview/operationalDiagnostics',
+      'com.german.ankiReview/studyReminder',
+      'com.german.ankiReview/widget',
+    ]) {
+      expect(sources, contains(channel), reason: 'iOS must expose $channel');
+    }
+  }, tags: const ['apple-mobile']);
 
   test('Android version advances the previously distributed build', () {
     final match = RegExp(
@@ -146,7 +167,6 @@ void main() {
       expect(flutterVersion.readAsStringSync().trim(), '3.47.1');
       expect(flutterSetup, contains('.flutter-version'));
       expect(flutterSetup, contains('./tool/flutterw --version'));
-      expect(xcodeCloudSetup.readAsStringSync(), contains('.flutter-version'));
       expect(
         flutterMetadata.readAsStringSync(),
         contains('6655482ec06e547f90abf8ae7590466f4415978d'),
@@ -275,27 +295,19 @@ void main() {
     expect(kotlin, contains('operational-event/v2'));
   });
 
-  test('Android mirrors every maintained native iOS integration channel', () {
+  test('Android preserves every maintained integration channel', () {
     final mainActivitySource = mainActivity.readAsStringSync();
     final contractsSource = contracts.readAsStringSync();
-    final iosSources = [
-      File('ios/Runner/RecallBackgroundSyncPlugin.swift'),
-      File('ios/Runner/RecallOperationalDiagnosticsPlugin.swift'),
-      File('ios/Runner/RecallStudyReminderPlugin.swift'),
-      File('ios/Runner/RecallWidgetPlugin.swift'),
-    ].map((file) => file.readAsStringSync()).join('\n');
-
     for (final channel in [
       'com.german.ankiReview/backgroundSync',
       'com.german.ankiReview/operationalDiagnostics',
       'com.german.ankiReview/studyReminder',
       'com.german.ankiReview/widget',
     ]) {
-      expect(iosSources, contains(channel), reason: 'iOS must expose $channel');
       expect(
         contractsSource,
         contains(channel),
-        reason: 'Android must declare the iOS integration $channel',
+        reason: 'Android must declare the maintained integration $channel',
       );
     }
 

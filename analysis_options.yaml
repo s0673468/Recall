@@ -16,6 +16,11 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Historical Apple-only tests are retained but outside Android/web validation.
+    - test/ios_config_test.dart
+    - test/xcode_cloud_scripts_test.dart
+    - test/testflight_build_script_test.dart
+    - test/operational_diagnostics_export_static_test.dart
 include: package:flutter_lints/flutter.yaml
 
 linter:

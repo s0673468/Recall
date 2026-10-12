@@ -224,7 +224,7 @@ void main() {
       'dueCount': 7,
       'updatedAtEpochMs': now.millisecondsSinceEpoch,
     });
-  });
+  }, tags: const ['apple-mobile']);
 
   test('Android channel receives the same aggregate-only snapshot', () async {
     final now = DateTime.utc(2026, 7, 13, 12, 30);

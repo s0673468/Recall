@@ -8,6 +8,9 @@ import subprocess
 import unittest
 from unittest.mock import Mock, patch
 
+# Skip discovery before importing the retired simulator/build runner.
+raise unittest.SkipTest("Apple mobile validation is retired; Recall supports Android and web.")
+
 SCRIPT = Path(__file__).resolve().parents[1] / "run_ios_tests.py"
 spec = importlib.util.spec_from_file_location("run_ios_tests", SCRIPT)
 runner = importlib.util.module_from_spec(spec)
