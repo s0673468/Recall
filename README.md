@@ -1,7 +1,10 @@
 # Recall
 
-Cross-platform Anki review app. Standalone spaced-repetition review product
-(own Supabase project, own FSRS engine) — no coupling to any Health data.
+Recall is an Android spaced-repetition review app with its own Supabase project
+and FSRS engine, independent of Health data. Use
+[Recall Hub](https://github.com/s0673468/recall-hub) for laptop and web review.
+See the [web client pointer](web/README.md) for the existing client bookmark and
+the legacy PWA retirement boundaries.
 
 ## Provenance
 
@@ -33,13 +36,13 @@ not removing that data source.
 - stores a local snapshot and durable review outbox so offline reviews are not
   lost
 - reuses the vendored Health design system + auth shell
-- runs as the Recall browser/PWA surface and as installable Android and iPhone
-  apps from the same tested Flutter codebase
+- runs as the installable Android review app
 
-Native iOS through internal TestFlight is the active personal release target.
-The PWA stays deployed as a fallback, and Android stays buildable for platform
-continuity, but neither receives routine signed-in or physical-device acceptance
-unless that target is explicitly brought back into use.
+The supported clients are the Android app in this repository and Recall Hub for
+laptop/web. The built-in Flutter PWA is retired from build and publication;
+existing browser storage and unsent reviews remain preserved. Existing iOS source
+and history are preserved, but iOS is not an active build, test or release target.
+Client support does not establish current device, signed-in or deployed acceptance.
 
 Recall is also the reference implementation for the shared app-family visual
 language. See [`docs/design-language.md`](docs/design-language.md) for the
@@ -72,7 +75,7 @@ buffer — never an authority.
   `client_event_id` so a retry can never double-apply or log twice. Preference
   writes are serialized per app process and latest-local-value wins until the
   pending record is accepted; subsequent cloud reads become authoritative.
-- **Desktop Anki authors content; Recall (web/app) owns scheduling.** The
+- **Desktop Anki authors content; Recall (Android/Hub) owns scheduling.** The
   desktop importer is the sole author of cards/notes and sets `suspended` /
   `deleted` one-way; Recall never creates or edits card content. Recall owns the
   *review/scheduling* half: it computes FSRS outcomes and writes the resulting
@@ -174,26 +177,14 @@ content, user or device identifiers, paths, endpoints, or credentials.
 Malformed or unavailable diagnostic storage is discarded without changing app
 behavior.
 
-On native iOS and Android, each successfully committed ring is also mirrored
-byte for byte inside the app's private, backup-excluded data container. On iOS
-the relative destination is:
-
-```text
-Library/Application Support/RecallDiagnostics/operational-events-v2.json
-```
-
-Each native bridge independently validates the same closed
-`operational-event/v2` JSON array, rejects payloads above 64 KiB, and atomically
-replaces an owner-only `0600` file in an owner-only `0700` directory. iOS
-applies `CompleteUntilFirstUserAuthentication`; Android writes under
-`noBackupFilesDir`. An invalid payload or failed write leaves the previous
-mirror in place. The bridge never reads preferences, cards, decks, snapshots,
-or review outboxes, and every bridge failure is diagnostics-only.
-
-A trusted host can copy this file from the app data container with
-`xcrun devicectl device copy from` using bundle identifier
-`com.german.ankiReview`. Android keeps its mirror inside the application
-sandbox; web builds perform no export. There is no network telemetry path.
+On Android, each successfully committed ring is also mirrored byte for byte
+inside the app's private, backup-excluded `noBackupFilesDir`. The native bridge
+validates the same closed `operational-event/v2` JSON array, rejects payloads
+above 64 KiB, and atomically replaces an owner-only `0600` file in an owner-only
+`0700` directory. An invalid payload or failed write leaves the previous mirror
+in place. The bridge never reads preferences, cards, decks, snapshots or review
+outboxes, and every bridge failure is diagnostics-only. The mirror stays inside
+the Android application sandbox. There is no network telemetry path.
 
 ## Local commands
 
@@ -205,11 +196,8 @@ origin/main` prints a plan without executing it; add `--run` for the portable la
 ./tool/bootstrap_flutter
 ./tool/flutterw pub get
 ./tool/flutterw analyze --no-pub
-./tool/flutterw test --no-pub --reporter=failures-only
-./tool/flutterw run -d chrome --dart-define-from-file=config/supabase.local.json
+./tool/flutterw test --no-pub --reporter=failures-only --exclude-tags apple-mobile
 ./tool/flutterw build apk --debug --no-pub \
-  --dart-define-from-file=config/supabase.local.json
-./tool/flutterw build ios --simulator --debug \
   --dart-define-from-file=config/supabase.local.json
 
 # Repeatable rich-card parser benchmark (20,000 warmed operations per case).
@@ -230,7 +218,7 @@ verification, production-approval, and rollback boundaries in
 never apply SQL to production automatically.
 
 See [ANDROID_SETUP.md](ANDROID_SETUP.md) for Android signing, safe device
-installation, platform behavior, and validation. See [IOS_SETUP.md](IOS_SETUP.md)
-for iOS signing, device installation, PWA cutover, and iPhone checks.
-See [WEB_SETUP.md](WEB_SETUP.md) for the synced website, browser layout,
-offline behavior, platform differences, and deployment.
+installation, platform behavior and validation. For laptop/web, use the
+[Recall Hub source and setup guide](https://github.com/s0673468/recall-hub) and
+the [web client pointer](web/README.md). The preserved legacy platform guides
+describe historical clients; they are not current build or delivery instructions.
