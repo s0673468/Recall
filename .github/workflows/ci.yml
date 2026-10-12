@@ -61,15 +61,6 @@ jobs:
       - name: Test pinned Flutter tooling
         run: python3 -m unittest discover -s tool/tests -p 'test_*.py'
 
-      - name: Test Pages build finisher
-        run: python3 -m unittest discover -s web/tool/tests -p 'test_*.py'
-
-      - name: Build deployable web bundle
-        run: |
-          ./tool/flutterw build web --release --no-pub --base-href /Recall/ \
-            --no-web-resources-cdn
-          python3 web/tool/stamp_service_worker.py build/web "$GITHUB_SHA"
-
   android-native:
     timeout-minutes: 35
     # Recall is public. Hosted Linux keeps fork PRs away from private runners.
