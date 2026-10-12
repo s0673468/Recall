@@ -12,7 +12,7 @@ import sys
 import time
 
 PYTHON_SUITES = (
-    "tool/tests", "web/tool/tests",
+    "tool/tests",
     "tools/recall_sync/tests", "tools/anki_revision/tests",
     "tools/semantic_review/tests", "tools/flag_report/tests",
     "tools/fsrs_optimize/tests",
@@ -82,13 +82,14 @@ def dart_tests(root, changed):
 def plan(root, paths):
     paths = sorted(set(paths))
     result = {"notice": NOTICE, "paths": paths, "full": False,
+              # Keep the consumed plan schema; retired PWA builds stay disabled.
               "flutter_tests": [], "python_suites": [], "native_lanes": [], "web_build": False}
     dart = []
     python = set()
     native = set()
     broad_flutter = False
     for path in paths:
-        if path in ("README.md", "IOS_SETUP.md", "ANDROID_SETUP.md") or path.startswith("docs/") and path.endswith(".md"):
+        if path in ("README.md", "web/README.md", "IOS_SETUP.md", "ANDROID_SETUP.md") or path.startswith("docs/") and path.endswith(".md"):
             continue
         if path.startswith(("lib/", "test/")) and path.endswith(".dart"):
             dart.append(path)
@@ -99,9 +100,9 @@ def plan(root, paths):
             native.add("android")
             broad_flutter = True
         elif path.startswith("web/"):
-            python.add("web/tool/tests")
+            # Legacy PWA source is preserved, but no longer built or published.
+            # Keep conservative shared Flutter contracts for edits to that source.
             broad_flutter = True
-            result["web_build"] = True
         elif path in ("tool/run_ios_tests.py", "tool/check_android_release_policy.py"):
             if "ios" not in path:
                 native.add("android")
@@ -115,7 +116,7 @@ def plan(root, paths):
         else:
             result["full"] = True
     if result["full"]:
-        result.update(flutter_tests=["test"], python_suites=list(PYTHON_SUITES), native_lanes=["android"], web_build=True)
+        result.update(flutter_tests=["test"], python_suites=list(PYTHON_SUITES), native_lanes=["android"], web_build=False)
     else:
         result["flutter_tests"] = ["test"] if broad_flutter else dart_tests(root, dart) if dart else []
         result["python_suites"] = sorted(python)
@@ -137,8 +138,6 @@ def commands(selection, lane, concurrency):
             if suite in PYTHON_WRAPPERS and (selection["flutter_tests"] == ["test"] or PYTHON_WRAPPERS[suite] in selection["flutter_tests"]):
                 continue
             steps.append([sys.executable, "-m", "unittest", "discover", "-s", suite, "-p", "test_*.py"])
-        if selection["web_build"]:
-            steps.append(["./tool/flutterw", "build", "web", "--release", "--no-pub", "--base-href", "/Recall/", "--no-web-resources-cdn"])
     if lane in ("android", "all") and "android" in selection["native_lanes"]:
         steps.extend([
             ["./tool/flutterw", "build", "apk", "--debug", "--no-pub"],

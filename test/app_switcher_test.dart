@@ -26,11 +26,10 @@ void main() {
     );
   });
 
-  test('Pages base path and installed-app identity stay standalone', () {
-    final workflow = File('.github/workflows/pages.yml').readAsStringSync();
+  test('legacy installed-app identity stays standalone', () {
+    // Retiring publication preserves the identity of existing installations.
     final manifest = File('web/manifest.json').readAsStringSync();
 
-    expect(workflow, contains('--base-href /Recall/'));
     expect(manifest, contains('"id": "/Recall/"'));
     expect(manifest, isNot(contains('/Health/recall/')));
   });
