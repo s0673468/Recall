@@ -37,6 +37,8 @@ dev_dependencies:
   # a fake REST transport so query-building tests can assert on the PostgREST
   # query string. Already resolved transitively via supabase_flutter.
   http: ^1.4.0
+  # Test-only in-memory native acknowledgements; package already resolved.
+  shared_preferences_platform_interface: ^2.4.2
 
 flutter:
   uses-material-design: true
