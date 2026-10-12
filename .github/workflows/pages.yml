@@ -1,12 +1,8 @@
 name: Deploy Recall to Pages
 
-# Recall is a public repo on the personal account
-# (s0673468/Recall), so Pages is available on the free plan and the site is live
-# at https://s0673468.github.io/Recall/. Health no longer serves the PWA.
-#
-# Protected main has already passed the required PR checks, so every merge
-# deploys the matching web build. workflow_dispatch remains available for a
-# safe rebuild of the current protected revision.
+# The built-in Flutter PWA is retired. Keep the historical workflow/check
+# context inert for both main pushes and manual dispatches.
+# This does not remove an existing hosted site or alter browser storage.
 on:
   push:
     branches: [main]
@@ -14,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -23,46 +17,9 @@ concurrency:
 
 jobs:
   deploy:
+    if: false
+    timeout-minutes: 1
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: ./.github/actions/setup-flutter
-
-      # config/supabase.local.json is git-ignored; CI materializes it from repo
-      # secrets. Publishable URL + anon key ONLY — RLS gates all data behind
-      # interactive auth, and the AUTO_LOGIN_* creds must never ship to web.
-      # Recall runs on its OWN Supabase project, so it reads ANKI_SUPABASE_*.
-      - name: Write Recall config
-        env:
-          ANKI_SUPABASE_URL: ${{ secrets.ANKI_SUPABASE_URL }}
-          ANKI_SUPABASE_ANON_KEY: ${{ secrets.ANKI_SUPABASE_ANON_KEY }}
-        run: |
-          mkdir -p config
-          printf '{"SUPABASE_URL":"%s","SUPABASE_ANON_KEY":"%s"}\n' \
-            "$ANKI_SUPABASE_URL" "$ANKI_SUPABASE_ANON_KEY" > config/supabase.local.json
-
-      - name: Build Recall web
-        run: |
-          ./tool/flutterw pub get
-          # Project Pages site serves at /<repo>/, so base-href is /Recall/.
-          # --no-web-resources-cdn pins local canvaskit; config is compiled in via
-          # --dart-define (String.fromEnvironment), never bundled as a secret asset.
-          ./tool/flutterw build web --release --base-href /Recall/ \
-            --no-web-resources-cdn \
-            --dart-define-from-file=config/supabase.local.json
-
-      - name: Version Recall's service worker
-        run: python3 web/tool/stamp_service_worker.py build/web "${{ github.sha }}"
-
-      - uses: actions/configure-pages@v6
-
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: build/web
-
-      - id: deployment
-        uses: actions/deploy-pages@v5
+      - name: Built-in Recall PWA retired
+        run: echo "Use the existing Recall Hub client bookmark; see web/README.md."

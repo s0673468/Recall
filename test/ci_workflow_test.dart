@@ -28,7 +28,7 @@ void main() {
     expect(setup, contains('tool/flutterw'));
   }, tags: const ['apple-mobile']);
 
-  test('Apple jobs stay disabled while Android and web keep their gate', () {
+  test('Apple jobs stay disabled while Android keeps its gate', () {
     final workflow = ci.readAsStringSync();
     for (final job in ['ios-native', 'testflight-helper']) {
       final block = workflow
@@ -42,7 +42,20 @@ void main() {
         reason: '$job must stay retired',
       );
     }
-    for (final job in ['flutter', 'android-native']) {
+    const maintainedCommands = {
+      'flutter': [
+        './tool/flutterw analyze',
+        './tool/flutterw test --reporter=failures-only --exclude-tags apple-mobile',
+        "python3 -m unittest discover -s tool/tests -p 'test_*.py'",
+      ],
+      'android-native': [
+        './tool/flutterw build apk --debug --no-pub',
+        'python3 tool/check_android_release_policy.py',
+        ':app:testDebugUnitTest :app:lintDebug',
+        ':app:assembleDebugAndroidTest --no-daemon --max-workers=2',
+      ],
+    };
+    for (final job in maintainedCommands.keys) {
       final block = workflow
           .split('\n  $job:\n')
           .last
@@ -51,6 +64,9 @@ void main() {
       expect(block, contains('runs-on: ubuntu-latest'));
       expect(block, isNot(contains('if: false')));
       expect(block, contains('contents: read'));
+      for (final command in maintainedCommands[job]!) {
+        expect(block, contains(command), reason: '$job must keep $command');
+      }
     }
     expect(workflow, contains('--exclude-tags apple-mobile'));
     final defaults = File('dart_test.yaml').readAsStringSync();
@@ -101,7 +117,6 @@ void main() {
       'python -m unittest discover -s scripts/tests',
       'python -m unittest discover -s tools/fsrs_optimize/tests',
       'python3 tool/run_ios_tests.py --',
-      './tool/flutterw build web --release',
     ]) {
       expect(workflow, contains(command));
     }
@@ -129,16 +144,37 @@ void main() {
     expect(workflows, contains('runs-on: macos-latest'));
   });
 
-  test('Pages deploys protected main without deprecated PWA flags', () {
+  test('Flutter CI does not build or stamp the retired PWA', () {
+    final workflow = ci.readAsStringSync();
+
+    expect(workflow, isNot(contains('build web')));
+    expect(workflow, isNot(contains('web/tool/tests')));
+    expect(workflow, isNot(contains('web/tool/stamp_service_worker.py')));
+    expect(workflow, isNot(contains('build/web')));
+  });
+
+  test('Pages publisher stays inert for main and manual triggers', () {
     final workflow = pages.readAsStringSync();
 
+    expect(workflow, contains('name: Deploy Recall to Pages'));
     expect(workflow, contains('push:\n    branches: [main]'));
     expect(workflow, contains('workflow_dispatch:'));
-    expect(workflow, isNot(contains('--pwa-strategy')));
-    expect(workflow, contains('web/tool/stamp_service_worker.py'));
-    expect(workflow, contains('github.sha'));
-    expect(workflow, contains('actions/configure-pages@v6'));
-    expect(workflow, contains('actions/upload-pages-artifact@v5'));
-    expect(workflow, contains('actions/deploy-pages@v5'));
+    final jobs = RegExp(
+      r'^  ([a-z0-9-]+):$',
+      multiLine: true,
+    ).allMatches(workflow.split('\njobs:\n').last);
+    expect(jobs.map((match) => match.group(1)), orderedEquals(['deploy']));
+    expect(workflow, contains('deploy:\n    if: false\n'));
+    expect(workflow, contains('contents: read'));
+    expect(workflow, isNot(contains('uses:')));
+    expect(workflow, isNot(contains('write')));
+    expect(workflow, isNot(contains('secrets.')));
+    expect(workflow, isNot(contains('github-pages')));
+    expect(workflow, isNot(contains('build web')));
+    expect(workflow, isNot(contains('build/web')));
+    expect(workflow, isNot(contains('stamp_service_worker')));
+    expect(workflow, isNot(contains('actions/configure-pages')));
+    expect(workflow, isNot(contains('actions/upload-pages-artifact')));
+    expect(workflow, isNot(contains('actions/deploy-pages')));
   });
 }
