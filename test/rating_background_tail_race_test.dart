@@ -109,7 +109,8 @@ class _Api extends SanitizedRecallApi {
     return [
       for (final card in dataset.cards)
         if (!excludeCardIds.contains(card.id) &&
-            (hideUpcoming || card.id != 183)) card,
+            (hideUpcoming || card.id != 183))
+          card,
     ];
   }
 
@@ -154,7 +155,10 @@ void main() {
           password: 'invented-password',
         );
         await store.activateOwner(api.currentUser!.id);
-        await store.saveSnapshot(decks: api.dataset.decks, queue: api.dataset.cards);
+        await store.saveSnapshot(
+          decks: api.dataset.decks,
+          queue: api.dataset.cards,
+        );
         await store.saveCatchUpState(
           const CatchUpLocalState(
             mode: CatchUpMode.active,
@@ -207,7 +211,10 @@ void main() {
         await controller.rate(Rating.again);
         expect((await store.outbox()).single['client_id'], clientId);
         await controller.showAll();
-        expect(controller.state.queue.map((card) => card.id), isNot(contains(101)));
+        expect(
+          controller.state.queue.map((card) => card.id),
+          isNot(contains(101)),
+        );
         expect(
           controller.state.queue.map((card) => card.id),
           isNot(contains(hideUpcoming ? 102 : 183)),

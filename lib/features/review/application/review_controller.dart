@@ -1537,7 +1537,9 @@ class ReviewController extends ChangeNotifier {
         clientId: clientId,
       );
       _showFlagNotice(
-        reason == 'delete' ? 'Marked for deletion' : 'Hidden until Sunday review',
+        reason == 'delete'
+            ? 'Marked for deletion'
+            : 'Hidden until Sunday review',
       );
       haptics.rating();
       final globalDueCount = _state.globalDueCount;
@@ -1545,7 +1547,8 @@ class ReviewController extends ChangeNotifier {
         _state.copyWith(
           index: _state.index + 1,
           showBack: false,
-          globalDueCount: !_countsTowardsGlobalDue(card) || globalDueCount == null
+          globalDueCount:
+              !_countsTowardsGlobalDue(card) || globalDueCount == null
               ? globalDueCount
               : (globalDueCount - 1).clamp(0, globalDueCount),
         ),
@@ -1607,7 +1610,8 @@ class ReviewController extends ChangeNotifier {
       _interactionGeneration++;
       final globalDueCount = _state.globalDueCount;
       final queue = _state.queue;
-      final at = record.index < queue.length &&
+      final at =
+          record.index < queue.length &&
               queue[record.index].id == record.card.id
           ? null
           : record.index.clamp(0, queue.length);
