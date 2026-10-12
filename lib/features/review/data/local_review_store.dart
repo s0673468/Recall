@@ -327,8 +327,11 @@ class LocalReviewStore {
   /// Remove only a positively never-attempted queued review. Legacy entries
   /// without this marker are uncertain and remain deliverable. Returns the
   /// removal result and pending count; never drops an ambiguous server commit.
-  Future<({bool removed, int remaining})> removeEntry(Object clientId) {
-    final key = _storageKey(_outboxKey);
+  Future<({bool removed, int remaining})> removeEntry(
+    Object clientId, {
+    String? ownerScope,
+  }) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       final list = _readOutbox(prefs, key);
@@ -346,8 +349,14 @@ class LocalReviewStore {
   /// Read the local-only catch-up choice and today's progress. Corrupt or old
   /// presentation state is disposable, so it falls back to opt-out rather
   /// than affecting the review outbox or queue load.
-  Future<CatchUpLocalState> loadCatchUpState() async {
-    final key = _storageKey(catchUpKey);
+  Future<CatchUpLocalState> loadCatchUpState() async =>
+      _readCatchUpState(_storageKey(catchUpKey));
+
+  /// Read the account captured by a delayed Undo, even after an owner change.
+  Future<CatchUpLocalState> loadCatchUpStateForOwner(String? ownerScope) async =>
+      _readCatchUpState(_storageKey(catchUpKey, ownerScope: ownerScope));
+
+  Future<CatchUpLocalState> _readCatchUpState(String key) async {
     final prefs = await _prefs;
     final raw = prefs.getString(key);
     if (raw == null) return CatchUpLocalState.none;

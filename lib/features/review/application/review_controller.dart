@@ -1444,13 +1444,23 @@ class ReviewController extends ChangeNotifier {
     );
   }
 
-  Future<void> _restoreCatchUpState(CatchUpView view) async {
+  Future<void> _restoreCatchUpState(
+    CatchUpView view, {
+    required String? ownerScope,
+    required bool Function() canWrite,
+  }) async {
+    if (!canWrite()) return;
     if (view.mode == CatchUpMode.none) {
-      await _saveCatchUpStateQuietly(CatchUpLocalState.none);
+      await _saveCatchUpStateQuietly(
+        CatchUpLocalState.none,
+        ownerScope: ownerScope,
+        canWrite: canWrite,
+      );
       return;
     }
     final now = clock();
-    final raw = await store.loadCatchUpState();
+    final raw = await store.loadCatchUpStateForOwner(ownerScope);
+    if (!canWrite()) return;
     final local = BacklogCatchUp.normalizeLocalState(raw, now);
     final completedToday =
         raw.mode == CatchUpMode.none || raw.dayKey == BacklogCatchUp.dayKey(now)
@@ -1462,6 +1472,8 @@ class ReviewController extends ChangeNotifier {
         dayKey: BacklogCatchUp.dayKey(now),
         completedToday: completedToday,
       ),
+      ownerScope: ownerScope,
+      canWrite: canWrite,
     );
   }
 
@@ -1864,6 +1876,20 @@ class ReviewController extends ChangeNotifier {
     if (hidden != null && !_undoInFlight) return _undoHide(hidden);
     final u = _undo;
     if (u == null || _undoInFlight) return;
+    final session = _state;
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final countsTowardsGlobalDue = _countsTowardsGlobalDue(u.card);
+    bool sessionOwned() =>
+        loadToken == _loadSequence &&
+        ownerScope == store.activeOwnerScope &&
+        ownerId == api.currentUser?.id &&
+        (!store.ownerAware ||
+            (ownerId != null && store.isActiveOwner(ownerId))) &&
+        identical(session.queue, _state.queue);
+    bool undoCurrent() => sessionOwned() && session.index == _state.index;
+
     _undoInFlight = true;
     notifyListeners(); // hide the undo affordance for the duration
     try {
@@ -1873,48 +1899,59 @@ class ReviewController extends ChangeNotifier {
         try {
           await _flushTask;
         } catch (_) {}
+        if (!undoCurrent()) return;
       }
-      if (!identical(_undo, u)) return;
+      if (!undoCurrent() || !identical(_undo, u)) return;
       _undo = null;
       _interactionGeneration++;
-      final result = await store.removeEntry(u.clientId);
+      // The user's local removal remains valid in its original namespace even
+      // if a load or account change supersedes its presentation while waiting.
+      final result = await store.removeEntry(
+        u.clientId,
+        ownerScope: ownerScope,
+      );
+      if (!undoCurrent()) return;
       if (!result.removed) {
         _showFlagNotice('Synced reviews cannot be undone');
         return;
       }
-      final pendingAfterRemove = result.remaining;
-      final reviewed = _state.reviewedThisSession;
-      final globalDueCount = _state.globalDueCount;
-      await _restoreCatchUpState(u.catchUp);
+      await _restoreCatchUpState(
+        u.catchUp,
+        ownerScope: ownerScope,
+        canWrite: undoCurrent,
+      );
+      if (!undoCurrent()) return;
+      final reviewed = session.reviewedThisSession;
+      final globalDueCount = session.globalDueCount;
       _catchUpSourceQueue = u.catchUpSourceQueue;
       _set(
         _state.copyWith(
           index: u.index,
           showBack: false,
           reviewedThisSession: reviewed > 0 ? reviewed - 1 : 0,
-          globalDueCount:
-              !_countsTowardsGlobalDue(u.card) || globalDueCount == null
+          globalDueCount: !countsTowardsGlobalDue || globalDueCount == null
               ? globalDueCount
               : globalDueCount + 1,
           lastReviewedAt: u.previousLastReviewedAt,
           reviewActivityKnown: u.previousReviewActivityKnown,
-          // Read after every await above, so the badge can't be restored to
-          // a count captured before a concurrent flush updated it.
-          pendingSync: pendingAfterRemove,
+          pendingSync: result.remaining,
           catchUp: u.catchUp,
         ),
       );
+      // Listeners can synchronously replace the session during notification.
+      if (!sessionOwned()) return;
       if (u.card.contentRevalidationPending) {
         unawaited(
           _saveSnapshotQuietly(
-            loadToken: _loadSequence,
+            loadToken: loadToken,
             decks: _state.decks,
-            queue: _catchUpSourceQueue,
+            queue: u.catchUpSourceQueue,
             globalDueCount: _state.globalDueCount,
             globalDueUpdatedAt: _state.globalDueUpdatedAt,
           ),
         );
       }
+      if (!sessionOwned()) return;
       haptics.undo();
     } finally {
       _undoInFlight = false;
