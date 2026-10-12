@@ -146,26 +146,30 @@ void main() {
     expect(rollback, contains('drop index if exists'));
   });
 
+  test('historical iOS setup points to the repository-owned schema guide', () {
+    final iosSetup = File('IOS_SETUP.md').readAsStringSync();
+    expect(iosSetup, contains('scripts/supabase/'));
+    expect(
+      iosSetup,
+      isNot(contains('scripts/supabase_migrate_recall_idempotency.sql')),
+    );
+  }, tags: const ['apple-mobile']);
+
   test('setup docs point to the repository-owned schema guide', () {
     final schemaGuide = File('scripts/supabase/README.md').readAsStringSync();
     final readme = File('README.md').readAsStringSync();
-    final iosSetup = File('IOS_SETUP.md').readAsStringSync();
     final flagDocs = File('tools/flag_report/README.md').readAsStringSync();
 
     for (final path in migrationPaths) {
       final relative = path.replaceFirst('scripts/supabase/', '');
       expect(schemaGuide, contains(relative));
     }
-    for (final docs in [readme, iosSetup, flagDocs]) {
+    for (final docs in [readme, flagDocs]) {
       expect(docs, contains('scripts/supabase/'));
     }
     expect(
       readme,
       isNot(contains('scripts/supabase_migrate_recall_review_rpc.sql')),
-    );
-    expect(
-      iosSetup,
-      isNot(contains('scripts/supabase_migrate_recall_idempotency.sql')),
     );
     expect(flagDocs, isNot(contains('has no versioned Supabase DDL')));
   });

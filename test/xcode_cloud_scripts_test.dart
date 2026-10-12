@@ -101,7 +101,7 @@ printf '%s\\n' "\$*" >> "\$RECALL_CI_CALL_LOG"
         ),
       ),
     );
-  });
+  }, tags: const ['apple-mobile']);
 
   test(
     'post-clone fails closed without the protected runtime config',
@@ -128,6 +128,7 @@ printf '%s\\n' "\$*" >> "\$RECALL_CI_CALL_LOG"
         contains('RECALL_SUPABASE_CONFIG_B64 is required'),
       );
     },
+    tags: const ['apple-mobile'],
   );
 
   test('post-clone removes the runtime config after a later failure', () async {
@@ -176,7 +177,7 @@ exit 23
 
     expect(result.exitCode, 23);
     expect(File(configPath).existsSync(), isFalse);
-  });
+  }, tags: const ['apple-mobile']);
 
   test('post-clone rejects a non-numeric cloud build number', () async {
     final sandbox = await Directory.systemTemp.createTemp(
@@ -208,7 +209,7 @@ exit 23
       '${result.stdout}${result.stderr}',
       contains('CI_BUILD_NUMBER must be a positive integer'),
     );
-  });
+  }, tags: const ['apple-mobile']);
 
   test('post-build removes the reconstructed runtime config', () async {
     final sandbox = await Directory.systemTemp.createTemp(
@@ -232,7 +233,7 @@ exit 23
 
     expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
     expect(config.existsSync(), isFalse);
-  });
+  }, tags: const ['apple-mobile']);
 
   test('widget version follows the containing Flutter app version', () {
     final project = File(
@@ -254,5 +255,5 @@ exit 23
       widgetConfigurations.map((match) => match.group(2)),
       everyElement(r'"$(FLUTTER_BUILD_NAME)"'),
     );
-  });
+  }, tags: const ['apple-mobile']);
 }
