@@ -30,37 +30,43 @@ class _NativeAcknowledgement extends InMemorySharedPreferencesStore {
 }
 
 void main() {
-  test('catch-up read waits for the production store native acknowledgement', () async {
-    // Only an invented in-memory platform double. The production store and
-    // SharedPreferences memory-cache/native-ack ordering are exercised intact.
-    final previousPlatform = SharedPreferencesStorePlatform.instance;
-    SharedPreferences.resetStatic();
-    final native = _NativeAcknowledgement();
-    SharedPreferencesStorePlatform.instance = native;
-    addTearDown(() {
-      native.open();
-      SharedPreferencesStorePlatform.instance = previousPlatform;
+  test(
+    'catch-up read waits for the production store native acknowledgement',
+    () async {
+      // Only an invented in-memory platform double. The production store and
+      // SharedPreferences memory-cache/native-ack ordering are exercised intact.
+      final previousPlatform = SharedPreferencesStorePlatform.instance;
       SharedPreferences.resetStatic();
-    });
-    final store = LocalReviewStore();
-    final write = store.saveCatchUpState(
-      const CatchUpLocalState(
-        mode: CatchUpMode.active,
-        dayKey: '2026-10-12',
-        completedToday: 7,
-      ),
-    );
-    await native.entered.future;
-    var readCompleted = false;
-    final read = store.loadCatchUpState().then((value) {
-      readCompleted = true;
-      return value;
-    });
-    await Future<void>.delayed(Duration.zero);
-    expect(readCompleted, isFalse,
-        reason: 'The memory cache must not bypass the pending native writer');
-    native.open();
-    await write;
-    expect((await read).completedToday, 7);
-  });
+      final native = _NativeAcknowledgement();
+      SharedPreferencesStorePlatform.instance = native;
+      addTearDown(() {
+        native.open();
+        SharedPreferencesStorePlatform.instance = previousPlatform;
+        SharedPreferences.resetStatic();
+      });
+      final store = LocalReviewStore();
+      final write = store.saveCatchUpState(
+        const CatchUpLocalState(
+          mode: CatchUpMode.active,
+          dayKey: '2026-10-12',
+          completedToday: 7,
+        ),
+      );
+      await native.entered.future;
+      var readCompleted = false;
+      final read = store.loadCatchUpState().then((value) {
+        readCompleted = true;
+        return value;
+      });
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        readCompleted,
+        isFalse,
+        reason: 'The memory cache must not bypass the pending native writer',
+      );
+      native.open();
+      await write;
+      expect((await read).completedToday, 7);
+    },
+  );
 }
