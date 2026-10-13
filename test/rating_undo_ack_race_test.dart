@@ -147,10 +147,7 @@ Future<void> _race(_CommitStage stage) async {
   );
   await _bounded(
     store.saveCatchUpState(
-      const CatchUpLocalState(
-        mode: CatchUpMode.active,
-        dayKey: '2026-10-13',
-      ),
+      const CatchUpLocalState(mode: CatchUpMode.active, dayKey: '2026-10-13'),
     ),
   );
   final controller = ReviewController(
@@ -192,8 +189,9 @@ Future<void> _race(_CommitStage stage) async {
     for (final entry in jsonDecode(prefs.getString(outboxKey)!) as List)
       Map<String, dynamic>.from(entry as Map),
   ];
-  final clientB = cached.singleWhere((entry) => entry['card_id'] == cardB)[
-      'client_id'];
+  final clientB = cached.singleWhere(
+    (entry) => entry['card_id'] == cardB,
+  )['client_id'];
   expect(clientB, isNot(clientA));
   expect(controller.rateInFlight, isTrue);
   expect(pendingPresentation.current?.id, cardB);
@@ -215,24 +213,25 @@ Future<void> _race(_CommitStage stage) async {
   expect(committed, hasLength(2));
   expect(committed.map((entry) => entry['card_id']), [cardA, cardB]);
   expect(committed.map((entry) => entry['client_id']), [clientA, clientB]);
-  expect(committed.every((entry) => entry['delivery_attempted'] == false), isTrue);
+  expect(
+    committed.every((entry) => entry['delivery_attempted'] == false),
+    isTrue,
+  );
   expect(controller.state.current!.id, isNot(anyOf(cardA, cardB)));
   expect(controller.state.showBack, isFalse);
   expect(controller.state.reviewedThisSession, 2);
   expect(controller.state.catchUp.completedToday, 2);
   expect(controller.state.catchUp.dueCount, api.dataset.cards.length - 2);
   expect(
-    controller.state.queue
-        .skip(controller.state.index)
-        .map((card) => card.id),
+    controller.state.queue.skip(controller.state.index).map((card) => card.id),
     isNot(anyElement(anyOf(cardA, cardB))),
   );
   // A second rating press cannot commit either consumed card again.
   await _bounded(controller.rate(Rating.good));
-  expect(
-    (await _bounded(store.outbox())).map((entry) => entry['client_id']),
-    [clientA, clientB],
-  );
+  expect((await _bounded(store.outbox())).map((entry) => entry['client_id']), [
+    clientA,
+    clientB,
+  ]);
   expect(api.attempts, isEmpty);
   expect(controller.canUndo, isTrue);
 
