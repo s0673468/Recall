@@ -1683,7 +1683,7 @@ class ReviewController extends ChangeNotifier {
   bool _undoInFlight = false;
 
   /// Whether the most recent rating can still be reverted.
-  bool get canUndo => _undo != null || _hideUndo != null;
+  bool get canUndo => !_rateInFlight && (_undo != null || _hideUndo != null);
 
   /// True while [undo] is completing. [rate] is blocked for the duration and
   /// the UI hides the undo affordance, so nothing can interleave with the
@@ -1697,6 +1697,7 @@ class ReviewController extends ChangeNotifier {
   /// Exclusive: while it runs, [rate] no-ops — otherwise a rating landing
   /// during the awaits below would be rewound over by the queue restore.
   Future<void> undo() async {
+    if (_rateInFlight) return;
     final hidden = _hideUndo;
     if (hidden != null && !_undoInFlight) return _undoHide(hidden);
     final u = _undo;
