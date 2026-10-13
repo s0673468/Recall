@@ -346,16 +346,20 @@ class LocalReviewStore {
   /// Read the local-only catch-up choice and today's progress. Corrupt or old
   /// presentation state is disposable, so it falls back to opt-out rather
   /// than affecting the review outbox or queue load.
-  Future<CatchUpLocalState> loadCatchUpState() async {
+  Future<CatchUpLocalState> loadCatchUpState() {
     final key = _storageKey(catchUpKey);
-    final prefs = await _prefs;
-    final raw = prefs.getString(key);
-    if (raw == null) return CatchUpLocalState.none;
-    try {
-      return CatchUpLocalState.fromJson(jsonDecode(raw));
-    } catch (_) {
-      return CatchUpLocalState.none;
-    }
+    return _withOutboxLock(() async {
+      // SharedPreferences updates its memory cache before native persistence
+      // acknowledges the write. Read only after the shared writer has settled.
+      final prefs = await _prefs;
+      final raw = prefs.getString(key);
+      if (raw == null) return CatchUpLocalState.none;
+      try {
+        return CatchUpLocalState.fromJson(jsonDecode(raw));
+      } catch (_) {
+        return CatchUpLocalState.none;
+      }
+    });
   }
 
   Future<void> saveCatchUpState(

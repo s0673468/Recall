@@ -199,6 +199,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ((RecallPrefs.maxRetention - RecallPrefs.minRetention) / 0.01)
                     .round(),
             label: '${(retention * 100).round()}%',
+            semanticFormatterCallback: (value) => '${(value * 100).round()}%',
             activeColor: UiColors.primary,
             onChanged: (v) => setState(() => _dragRetention = v),
             onChangeEnd: (v) {
