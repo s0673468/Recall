@@ -299,10 +299,7 @@ void main() {
       // Exercise a real active-plan progress write, rather than depending on
       // a redundant save of an already empty disposable catch-up state.
       await store.saveCatchUpState(
-        const CatchUpLocalState(
-          mode: CatchUpMode.active,
-          dayKey: '2026-10-11',
-        ),
+        const CatchUpLocalState(mode: CatchUpMode.active, dayKey: '2026-10-11'),
       );
       await controller.load(deckId: 1);
       expect(controller.state.catchUp.isActive, isTrue);

@@ -179,8 +179,7 @@ Future<_Session> _session() async {
     }
     try {
       await Future.wait([
-        for (final future in session.work)
-          future.catchError((Object _) {}),
+        for (final future in session.work) future.catchError((Object _) {}),
       ]).timeout(_waitLimit);
       // Drain detached snapshot/flush work before replacing the global store.
       await store.outbox().timeout(_waitLimit);

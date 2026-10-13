@@ -788,8 +788,7 @@ class ReviewController extends ChangeNotifier {
         queue,
         recentReviews,
         clearWhenEmpty: clearWhenEmpty,
-        canWrite: () =>
-            canWrite() && revision == _catchUpProgressRevision,
+        canWrite: () => canWrite() && revision == _catchUpProgressRevision,
       );
       if (!canWrite() || revision == _catchUpProgressRevision) return view;
     }
@@ -1461,10 +1460,7 @@ class ReviewController extends ChangeNotifier {
           .length;
       var mode = current.isNone ? initial.mode : current.mode;
       if (active && mode == CatchUpMode.none) mode = CatchUpMode.active;
-      final activeCompleted = math.max(
-        completedToday,
-        current.completedToday,
-      );
+      final activeCompleted = math.max(completedToday, current.completedToday);
       final before = current.copyWith(
         mode: mode,
         dueCount: dueCount + 1,

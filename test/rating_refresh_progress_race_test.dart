@@ -304,9 +304,7 @@ void main() {
           controller.state.queue
               .where(
                 (card) =>
-                    !card.isNew &&
-                    card.due != null &&
-                    !card.due!.isAfter(_now),
+                    !card.isNew && card.due != null && !card.due!.isAfter(_now),
               )
               .length,
         );
