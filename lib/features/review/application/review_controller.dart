@@ -1438,13 +1438,11 @@ class ReviewController extends ChangeNotifier {
     // Fix the increment once. A refresh can read our saved progress while a
     // retry waits on native persistence; it must not count this rating again.
     final active = initial.isActive || _state.catchUp.isActive;
-    var completedToday = math.max(
-      initial.completedToday,
-      _state.catchUp.completedToday,
-    );
-    if (local?.mode == CatchUpMode.active) {
-      completedToday = math.max(completedToday, local!.completedToday);
-    }
+    // Local active progress carries its day; the unreloaded view may still
+    // contain yesterday's count after normalization reset today's progress.
+    var completedToday = local?.mode == CatchUpMode.active
+        ? local!.completedToday
+        : math.max(initial.completedToday, _state.catchUp.completedToday);
     if (active) completedToday++;
 
     while (canWrite()) {
@@ -1460,7 +1458,7 @@ class ReviewController extends ChangeNotifier {
           .length;
       var mode = current.isNone ? initial.mode : current.mode;
       if (active && mode == CatchUpMode.none) mode = CatchUpMode.active;
-      final activeCompleted = math.max(completedToday, current.completedToday);
+      final activeCompleted = completedToday;
       final before = current.copyWith(
         mode: mode,
         dueCount: dueCount + 1,
