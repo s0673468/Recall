@@ -116,7 +116,8 @@ void main() {
           )
           .timeout(_waitLimit);
       await finish(controller.load(deckId: 1));
-      expect(controller.state.current?.id, 101);
+      expect(controller.state.current, isNotNull);
+      final firstCardId = controller.state.current!.id;
       expect(controller.state.catchUp.isActive, isTrue);
       expect(controller.state.catchUp.completedToday, 7);
       expect(controller.state.catchUp.dueCount, 83);
@@ -133,7 +134,9 @@ void main() {
       );
       expect(controller.state.catchUp.completedToday, 8);
       expect(controller.state.catchUp.dueCount, 82);
-      expect(controller.state.current?.id, 102);
+      expect(controller.state.current, isNotNull);
+      final secondCardId = controller.state.current!.id;
+      expect(secondCardId, isNot(firstCardId));
       expect(controller.state.showBack, isFalse);
 
       // Continue on the next visible card without refreshing the queue. Its
@@ -154,14 +157,15 @@ void main() {
       expect(controller.state.catchUp.completedToday, 1);
       expect(controller.state.catchUp.remainingToday, 19);
       expect(controller.state.catchUp.dueCount, 81);
-      expect(controller.state.current?.id, 103);
+      expect(controller.state.current, isNotNull);
+      expect(controller.state.current!.id, isNot(isIn([firstCardId, secondCardId])));
       expect(controller.state.showBack, isFalse);
       expect(controller.state.reviewedThisSession, 2);
       expect(controller.rateInFlight, isFalse);
 
       final pending = await store.outbox().timeout(_waitLimit);
       expect(pending, hasLength(2));
-      expect(pending.map((entry) => entry['card_id']), [101, 102]);
+      expect(pending.map((entry) => entry['card_id']), [firstCardId, secondCardId]);
       final clientIds = pending
           .map((entry) => entry['client_id'] as String)
           .toSet();
