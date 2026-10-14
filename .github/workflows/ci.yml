@@ -61,7 +61,7 @@ jobs:
       - name: Test pinned Flutter tooling
         run: python3 -m unittest discover -s tool/tests -p 'test_*.py'
 
-  android-native:
+  android-build:
     timeout-minutes: 35
     # Recall is public. Hosted Linux keeps fork PRs away from private runners.
     runs-on: ubuntu-latest
@@ -94,8 +94,43 @@ jobs:
       - name: Compile Android debug host
         run: ./tool/flutterw build apk --debug --no-pub
 
+      # The hosted VM is discarded after the job, so the four policy probes may
+      # reuse the Gradle daemon that the debug build just warmed. Local and
+      # compute-host runs keep --no-daemon and leave no background JVM behind.
       - name: Check signed-release refusal and unsigned staging policy
+        env:
+          RECALL_GRADLE_DAEMON: "1"
         run: python3 tool/check_android_release_policy.py
+
+  android-gradle-checks:
+    timeout-minutes: 35
+    # Unit tests and lint run beside the debug build instead of after it, so the
+    # Android lane is no longer the sum of both. Hosted Linux, as above.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          # Same key as android-build, so both jobs share one Gradle cache entry.
+          cache: gradle
+
+      - uses: ./.github/actions/setup-flutter
+
+      - name: Install Android SDK 37
+        run: >-
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          "platforms;android-37.0"
+
+      - name: flutter pub get
+        run: ./tool/flutterw pub get
 
       - name: Android unit, lint and instrumentation build checks
         working-directory: android
@@ -111,6 +146,25 @@ jobs:
           if [[ -f "$report" ]]; then
             cat "$report"
           fi
+
+  android-native:
+    # Keeps the required check context. The Android work runs in the two parallel
+    # jobs above; this passes only when both of them succeeded. A plain `needs`
+    # would be skipped on failure, and a skipped required check counts as passed.
+    if: always()
+    needs: [android-build, android-gradle-checks]
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require both Android lanes
+        env:
+          BUILD_RESULT: ${{ needs.android-build.result }}
+          CHECKS_RESULT: ${{ needs.android-gradle-checks.result }}
+        run: |
+          echo "android-build: $BUILD_RESULT, android-gradle-checks: $CHECKS_RESULT"
+          [[ "$BUILD_RESULT" == success && "$CHECKS_RESULT" == success ]]
 
   flag-report:
     timeout-minutes: 10
