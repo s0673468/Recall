@@ -66,4 +66,5 @@ A run is converged when:
 5. no queue-discovery request writes a card, note, or review-log row.
 
 The focused regression suite is `test/content_revalidation_test.dart`, with
-offline/outbox integration coverage in `test/recall_test.dart`.
+offline/outbox integration coverage in
+`test/recall_review_controller_test.dart`.
