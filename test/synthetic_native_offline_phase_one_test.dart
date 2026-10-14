@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/application/review_haptics.dart';
+
 import '../tool/fixtures/synthetic_native_offline_restart_main.dart';
 import '../tool/fixtures/synthetic_recall_flow.dart';
 
@@ -52,19 +53,16 @@ Future<void> withGeneratedFlow(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
-  test(
-    'actual default controller load includes generated ML deck without explicit selection',
-    () async {
-      await withGeneratedFlow((transport, controller, store) async {
-        await controller.load();
-        expect(controller.state.error, isNull);
-        expect(controller.state.offline, isFalse);
-        expect(controller.state.queue.length, 20);
-        expect(controller.state.current?.id, 1);
-        expect(await store.outbox(), isEmpty);
-      });
-    },
-  );
+  test('actual default controller load includes generated ML deck without explicit selection', () async {
+    await withGeneratedFlow((transport, controller, store) async {
+      await controller.load();
+      expect(controller.state.error, isNull);
+      expect(controller.state.offline, isFalse);
+      expect(controller.state.queue.length, 20);
+      expect(controller.state.current?.id, 1);
+      expect(await store.outbox(), isEmpty);
+    });
+  });
   test(
     'original phase1 actions keep one acknowledged event and advance once',
     () async {
@@ -101,28 +99,67 @@ void main() {
       expect(controller.state.reviewedThisSession, 1);
     });
   });
-  test(
-    'actual generated helper refuses unsupported HEAD rather than yielding empty JSON',
-    () async {
-      final transport = SyntheticNativeOfflineHttp(
-        List.generate(20, (i) => syntheticCard(i + 1)),
-        'invented-owner-hash',
-      );
-      final uri = Uri.https('recall-bench.invalid', '/rest/v1/cards', {
-        'select': '*',
-        'state': 'neq.0',
-        'deleted': 'eq.false',
-        'suspended': 'eq.false',
-        'order': 'due.asc.nullslast,id.asc.nullslast',
-        'notes.deck_id': 'in.(1)',
-      });
+  test('real RecallApi parses filtered due rows and generated deck count responses', () async {
+    await withGeneratedFlow((transport, controller, store) async {
+      final queue = await controller.api.fetchQueue(includedDeckIds: {1});
+      expect(queue.length, 20);
+      expect(queue.first.id, 1);
+      expect(queue.last.id, 20);
+      final counts = await controller.api.fetchDeckCounts();
+      expect(counts[1]?.due, 20);
+      expect(counts[1]?.neu, 0);
+      expect(transport.counts['cards_due'], greaterThanOrEqualTo(2));
+    });
+  });
+  test('real RecallApi sees structured offline and lost ACK errors then parses idempotent success', () async {
+    await withGeneratedFlow((transport, controller, store) async {
+      final event = <String, dynamic>{
+        ...syntheticPendingReview(0),
+        'card_id': 1,
+        'guid': 'synthetic-card-1',
+        'client_id': 'invented-request-metadata-event',
+      };
       await expectLater(
-        transport.respond(http.Request('HEAD', uri)),
-        throwsStateError,
+        controller.api.applyReview(event),
+        throwsA(isA<PostgrestException>()),
       );
-      final response = await transport.respond(http.Request('GET', uri));
-      expect(response.statusCode, 200);
-      expect(transport.counts['cards_due'], 1);
-    },
-  );
+      expect(transport.offlineAttempts, 1);
+      expect(transport.accepted, isEmpty);
+      transport.onlineWrites = true;
+      transport.loseNextAck = true;
+      await expectLater(
+        controller.api.applyReview(event),
+        throwsA(isA<PostgrestException>()),
+      );
+      expect(transport.accepted.length, 1);
+      expect(await controller.api.applyReview(event), 9001);
+      expect(transport.onlineAttempts, 2);
+      expect(transport.accepted.length, 1);
+      expect(transport.receivedHashes, [
+        transport.eventHash('invented-request-metadata-event'),
+        transport.eventHash('invented-request-metadata-event'),
+      ]);
+    });
+  });
+  test('actual generated helper refuses unsupported HEAD rather than yielding empty JSON', () async {
+    final transport = SyntheticNativeOfflineHttp(
+      List.generate(20, (i) => syntheticCard(i + 1)),
+      'invented-owner-hash',
+    );
+    final uri = Uri.https('recall-bench.invalid', '/rest/v1/cards', {
+      'select': '*',
+      'state': 'neq.0',
+      'deleted': 'eq.false',
+      'suspended': 'eq.false',
+      'order': 'due.asc.nullslast,id.asc.nullslast',
+      'notes.deck_id': 'in.(1)',
+    });
+    await expectLater(
+      transport.respond(http.Request('HEAD', uri)),
+      throwsStateError,
+    );
+    final response = await transport.respond(http.Request('GET', uri));
+    expect(response.statusCode, 200);
+    expect(transport.counts['cards_due'], 1);
+  });
 }

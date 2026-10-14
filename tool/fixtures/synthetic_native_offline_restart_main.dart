@@ -101,6 +101,7 @@ class SyntheticNativeOfflineHttp extends SyntheticRecallHttp {
         return http.Response(
           '{"message":"synthetic offline"}',
           503,
+          request: request,
           headers: {'content-type': 'application/json'},
         );
       }
@@ -118,12 +119,14 @@ class SyntheticNativeOfflineHttp extends SyntheticRecallHttp {
         return http.Response(
           '{"message":"synthetic lost acknowledgement"}',
           503,
+          request: request,
           headers: {'content-type': 'application/json'},
         );
       }
       return http.Response(
         '$result',
         200,
+        request: request,
         headers: {'content-type': 'application/json'},
       );
     }
@@ -139,6 +142,7 @@ class SyntheticNativeOfflineHttp extends SyntheticRecallHttp {
               .toList(),
         ),
         response.statusCode,
+        request: request,
         headers: response.headers,
       );
     }
@@ -148,6 +152,7 @@ class SyntheticNativeOfflineHttp extends SyntheticRecallHttp {
           {'deck_id': 1, 'due': cards.length - acceptedCards.length, 'new': 0},
         ]),
         response.statusCode,
+        request: request,
         headers: response.headers,
       );
     }
