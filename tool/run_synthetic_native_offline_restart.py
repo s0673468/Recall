@@ -18,6 +18,9 @@ PACKAGE = contract.PACKAGE
 SENTINEL = 'RECALL_NATIVE_OFFLINE_JSON '
 FAILURES = {'fixture_build_required', 'synthetic_phase_failed'}
 PHASES = {'fixture_guard', 'offline_recording', 'native_restore', 'fake_sync'}
+ASSERTION_STAGES = {'empty_native_input','initial_load','online_ready','offline_refresh',
+                    'offline_ready','rating','offline_sync','durable_one_rating',
+                    'snapshot_readback','marker_write','cleanup'}
 
 
 def require(ok, code):
@@ -35,12 +38,19 @@ def closed_event(raw, expected_phase, pid, commit):
         require(type(value.get('pid')) is int and value['pid'] == pid and
                 value.get('source_commit') == commit, 'fixture_process_identity_invalid')
         if value.get('phase') == 'failed':
-            require(set(value) == {'schema','phase','source_commit','pid','failure_code','failed_phase'} and
+            base = {'schema','phase','source_commit','pid','failure_code','failed_phase'}
+            stage = value.get('failed_assertion_stage')
+            require(set(value) in (base,base|{'failed_assertion_stage'}) and
+                    ('failed_assertion_stage' not in value or
+                     (value.get('failure_code') == 'synthetic_phase_failed' and
+                      value.get('failed_phase') == 'offline_recording' and
+                      type(stage) is str and stage in ASSERTION_STAGES)) and
                     value.get('failure_code') in FAILURES and value.get('failed_phase') in PHASES,
                     'fixture_failure_schema_invalid')
             # Fixed labels only. Never forward an exception/string from Android.
             error = contract.Refused('fixture_reported_failure')
             error.failure_code = value['failure_code']; error.failed_phase = value['failed_phase']
+            error.failed_assertion_stage = stage
             raise error
         require(value.get('phase') == expected_phase, 'fixture_phase_invalid')
         events.append(value)
@@ -170,6 +180,9 @@ def main():
                 'raw_logs_printed':False}
         if getattr(error,'failure_code',None) in FAILURES and getattr(error,'failed_phase',None) in PHASES:
             result.update(failure_code=error.failure_code,failed_phase=error.failed_phase)
+            if (error.failed_phase == 'offline_recording' and
+                    getattr(error,'failed_assertion_stage',None) in ASSERTION_STAGES):
+                result['failed_assertion_stage'] = error.failed_assertion_stage
         print(json.dumps(result,sort_keys=True));return 1
 
 if __name__ == '__main__':sys.exit(main())

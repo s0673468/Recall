@@ -23,13 +23,17 @@ const _schema = 'recall-native-offline-restart/v2';
 const _package = 'com.german.recall.syntheticbenchmark';
 const _marker = 'recall.synthetic.native_offline.phase.v1';
 String _phase = 'fixture_guard';
+String? _assertionStage;
 String _hash(String value) => sha256.convert(utf8.encode(value)).toString();
 void _require(bool ok) {
   if (!ok) throw StateError('synthetic_contract_refused');
 }
 
-void _emit(Map<String, dynamic> value) =>
-    print('RECALL_NATIVE_OFFLINE_JSON ${jsonEncode(value)}');
+void _emit(Map<String, dynamic> value) {
+  // Keep fixture telemetry as one unwrapped Android log line.
+  // ignore: avoid_print
+  print('RECALL_NATIVE_OFFLINE_JSON ${jsonEncode(value)}');
+}
 
 // This guard runs before SharedPreferences.getInstance. Driver APK inspection
 // also checks the application ID; the entry itself refuses the normal Recall
@@ -240,35 +244,50 @@ class _NativeFlow {
   };
 }
 
+// Preserve the original one reveal followed by two sequential calls. The
+// current production guard makes the second, unrevealed call a no-op.
+Future<void> syntheticNativePhaseOneRatingActions(
+  ReviewController controller,
+) async {
+  controller.flip();
+  await controller.rate(Rating.good);
+  await controller.rate(Rating.good);
+}
+
 Future<Map<String, dynamic>> _run(SharedPreferences prefs) async {
   final rawMarker = prefs.getString(_marker);
   final flow = await _NativeFlow.create();
+  var phaseOneCompleted = false;
   try {
     if (rawMarker == null) {
       _phase = 'offline_recording';
+      _assertionStage = 'empty_native_input';
       _require(
         (await flow.store.outbox()).isEmpty &&
             await flow.store.loadSnapshot() == null,
       );
+      _assertionStage = 'initial_load';
       await flow.controller.load();
+      _assertionStage = 'online_ready';
       _require(
         flow.controller.state.error == null &&
             !flow.controller.state.offline &&
             flow.controller.state.current?.id == 1,
       );
       flow.transport.offlineReads = true;
+      _assertionStage = 'offline_refresh';
       await flow.controller.refresh();
+      _assertionStage = 'offline_ready';
       _require(
         flow.controller.state.offline && flow.controller.state.current?.id == 1,
       );
-      flow.controller.flip();
-      await flow.controller.rate(Rating.good);
-      await flow.controller.rate(
-        Rating.good,
-      ); // Unrevealed next card must not duplicate.
+      _assertionStage = 'rating';
+      await syntheticNativePhaseOneRatingActions(flow.controller);
+      _assertionStage = 'offline_sync';
       await flow.controller.syncPending();
       await flow.settle();
       final pending = await flow.store.outbox();
+      _assertionStage = 'durable_one_rating';
       _require(
         pending.length == 1 &&
             pending.single['card_id'] == 1 &&
@@ -279,6 +298,7 @@ Future<Map<String, dynamic>> _run(SharedPreferences prefs) async {
       );
       final event = flow.eventHash(pending.single);
       // Snapshot write joins the controller's queued store operations.
+      _assertionStage = 'snapshot_readback';
       final snapshot = await flow.snapshotHash();
       final receipt = {
         ...flow.common('offline_recorded', event, snapshot),
@@ -292,6 +312,7 @@ Future<Map<String, dynamic>> _run(SharedPreferences prefs) async {
         'phase_marker_native_ack_observed': true,
         'power_loss_durability_tested': false,
       };
+      _assertionStage = 'marker_write';
       _require(
         await prefs.setString(
           _marker,
@@ -304,9 +325,11 @@ Future<Map<String, dynamic>> _run(SharedPreferences prefs) async {
           }),
         ),
       );
+      phaseOneCompleted = true;
       return receipt;
     }
     _phase = 'native_restore';
+    _assertionStage = null;
     final marker = jsonDecode(rawMarker) as Map<String, dynamic>;
     _require(
       marker['phase'] == 'awaiting_restart' &&
@@ -398,6 +421,9 @@ Future<Map<String, dynamic>> _run(SharedPreferences prefs) async {
     );
     return receipt;
   } finally {
+    if (_phase == 'offline_recording' && phaseOneCompleted) {
+      _assertionStage = 'cleanup';
+    }
     await flow.close();
   }
 }
@@ -438,6 +464,8 @@ Future<void> main() async {
       'pid': pid,
       'failure_code': 'synthetic_phase_failed',
       'failed_phase': _phase,
+      if (_phase == 'offline_recording' && _assertionStage != null)
+        'failed_assertion_stage': _assertionStage,
     });
   }
 }

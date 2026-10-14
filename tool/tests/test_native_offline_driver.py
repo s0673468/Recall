@@ -1,6 +1,8 @@
 """Invented ADB/JSON fixtures: never invokes subprocess, SDK or an emulator."""
 import importlib.util
 import json
+import io
+import contextlib
 from pathlib import Path
 import sys
 import tempfile
@@ -14,7 +16,6 @@ cold.Refused=type('Refused',(Exception,),{})
 cold.adb=lambda *a,**kw: (_ for _ in ()).throw(AssertionError('unmocked ADB'))
 cold.launch_metrics=lambda text: {'TotalTime':1,'WaitTime':1}
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-# Keep the fake import confined to this driver, preserving other test modules.
 with patch.dict(sys.modules, {'measure_android_cold_start': cold}):
     import run_synthetic_native_offline_restart as driver
 
@@ -114,6 +115,27 @@ class DriverTests(unittest.TestCase):
         with self.assertRaises(driver.contract.Refused) as caught:self.exercise(failure=failure)
         self.assertEqual(caught.exception.failure_code,'synthetic_phase_failed')
         self.assertEqual(caught.exception.failed_phase,'native_restore')
+    def test_fixed_phase_one_assertion_stage_is_projected(self):
+        _,one,_=fabricated_receipts()
+        failure={'schema':driver.contract.SCHEMA,'phase':'failed','source_commit':COMMIT,'pid':one['pid'],'failure_code':'synthetic_phase_failed','failed_phase':'offline_recording','failed_assertion_stage':'online_ready'}
+        with self.assertRaises(driver.contract.Refused) as caught:self.exercise(failure=failure)
+        self.assertEqual(caught.exception.failed_assertion_stage,'online_ready')
+    def test_unknown_or_wrong_phase_assertion_stage_is_refused(self):
+        _,one,_=fabricated_receipts()
+        for stage,phase in [('private payload','offline_recording'),('online_ready','native_restore')]:
+            failure={'schema':driver.contract.SCHEMA,'phase':'failed','source_commit':COMMIT,'pid':one['pid'],'failure_code':'synthetic_phase_failed','failed_phase':phase,'failed_assertion_stage':stage}
+            with self.assertRaises(driver.contract.Refused) as caught:self.exercise(failure=failure)
+            self.assertEqual(caught.exception.code,'fixture_failure_schema_invalid')
+    def test_main_outputs_only_fixed_stage_projection(self):
+        error=driver.contract.Refused('fixture_reported_failure')
+        error.failure_code='synthetic_phase_failed';error.failed_phase='offline_recording';error.failed_assertion_stage='online_ready'
+        with tempfile.TemporaryDirectory() as tmp:
+            argv=['driver','--apk',str(Path(tmp)/'invented.apk'),'--source-commit',COMMIT,'--output',str(Path(tmp)/'new-result')]
+            out=io.StringIO()
+            with patch.object(sys,'argv',argv),patch.object(driver,'run',side_effect=error),contextlib.redirect_stdout(out):code=driver.main()
+            self.assertEqual(code,1)
+            self.assertEqual(json.loads(out.getvalue()),{'schema':'recall-native-offline-qualification/v2','qualification_passed':False,'closed_failure_code':'fixture_reported_failure','raw_logs_printed':False,'failure_code':'synthetic_phase_failed','failed_phase':'offline_recording','failed_assertion_stage':'online_ready'})
+            self.assertFalse((Path(tmp)/'new-result').exists())
     def test_raw_error_field_refused(self):
         _,one,_=fabricated_receipts()
         failure={'schema':driver.contract.SCHEMA,'phase':'failed','source_commit':COMMIT,'pid':one['pid'],'failure_code':'synthetic_phase_failed','failed_phase':'native_restore','exception':'private'}
