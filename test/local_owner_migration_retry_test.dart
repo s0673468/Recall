@@ -12,7 +12,7 @@ import 'package:health_anki_flutter/features/review/data/local_review_store.dart
 enum _Failure { refused, thrown }
 
 class _DurableNative extends InMemorySharedPreferencesStore {
-  _DurableNative(Map<String, Object> values) : super.withData(values);
+  _DurableNative(super.values) : super.withData();
 
   String? failKeyPart;
   _Failure failure = _Failure.refused;
