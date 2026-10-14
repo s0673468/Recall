@@ -727,6 +727,13 @@ class RecallApi implements ReviewReplayGateway {
     return _applyReviewClientSide(e);
   }
 
+  int _requireReviewLogId(Object? value) {
+    if (value is int) return value;
+    // A successful transport response is not an acknowledgement unless it
+    // identifies the durable log row. Keep the outbox queued for a safe retry.
+    throw const FormatException('invalid_review_log_id_ack');
+  }
+
   /// One round trip, one transaction. The server anchors idempotency on the
   /// `(card_id, client_event_id)` unique index, so a replay cannot re-count a
   /// review no matter where a previous attempt died — the gap the client-side
@@ -753,7 +760,7 @@ class RecallApi implements ReviewReplayGateway {
         'p_client_event_id': eventId,
       },
     );
-    return (id as num?)?.toInt();
+    return _requireReviewLogId(id);
   }
 
   /// PostgREST reports an undeployed function as 404/PGRST202. Anything else is
@@ -805,7 +812,7 @@ class RecallApi implements ReviewReplayGateway {
         .eq('card_id', cardId)
         .eq('client_event_id', eventId)
         .limit(1);
-    return existing.isEmpty ? null : (existing.first['id'] as num?)?.toInt();
+    return existing.isEmpty ? null : _requireReviewLogId(existing.first['id']);
   }
 
   /// The local outbox is at-least-once: a network response or the on-device
@@ -822,7 +829,7 @@ class RecallApi implements ReviewReplayGateway {
         .eq('device', e['device'])
         .order('id', ascending: false)
         .limit(1);
-    return existing.isEmpty ? null : (existing.first['id'] as num?)?.toInt();
+    return existing.isEmpty ? null : _requireReviewLogId(existing.first['id']);
   }
 
   /// Append the log row for an already-merged review. If the ledger column
@@ -842,7 +849,7 @@ class RecallApi implements ReviewReplayGateway {
             )
             .select('id')
             .single();
-        return (inserted['id'] as num?)?.toInt();
+        return _requireReviewLogId(inserted['id']);
       } on PostgrestException catch (error) {
         if (!_idempotencySchemaUnavailable(error)) rethrow;
         debugPrint('Recall: review logged without its durable event id');
@@ -853,7 +860,7 @@ class RecallApi implements ReviewReplayGateway {
         .insert(_reviewLogPayload(e))
         .select('id')
         .single();
-    return (inserted['id'] as num?)?.toInt();
+    return _requireReviewLogId(inserted['id']);
   }
 
   @override
