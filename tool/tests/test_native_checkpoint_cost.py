@@ -1,5 +1,6 @@
 """Invented receipts, private temp technical copies and mocked ADB; no SDK."""
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -16,7 +17,19 @@ sys.path.insert(0,str(TOOL))
 # reads of current production controller/Store/pubspec are test prerequisites.
 import native_checkpoint_contract as contract
 import prepare_native_checkpoint_cost as prepare
-import run_native_checkpoint_cost as driver
+
+def _private_module(name, filename):
+    spec=importlib.util.spec_from_file_location(name,TOOL/filename)
+    module=importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+# The existing offline driver tests import their shared driver with a private
+# fake cold module. Do not eagerly cache that shared driver with real helpers
+# during discovery here, or their scoped import mocks cannot bind to it.
+_private_framing=_private_module('_checkpoint_test_framing','run_synthetic_native_offline_restart.py')
+with patch.dict(sys.modules, {'run_synthetic_native_offline_restart':_private_framing}):
+    driver=_private_module('_checkpoint_test_driver','run_native_checkpoint_cost.py')
 cold=driver.cold
 H=lambda x:hashlib.sha256(x).hexdigest()
 FIXTURE=contract.FIXTURE_SHA
@@ -254,6 +267,12 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(caught.exception.code,'pid_not_fresh');self.assertIsNone(self.active)
 
 class GuardTests(unittest.TestCase):
+    def test_checkpoint_driver_owns_its_framing_import_without_shared_cache_alias(self):
+        self.assertIs(driver.framing,_private_framing)
+        self.assertIs(driver.framing.cold,cold)
+        self.assertIsNot(driver.framing,sys.modules.get('run_synthetic_native_offline_restart'))
+        self.assertNotEqual(driver.__name__,'run_native_checkpoint_cost')
+
     def test_actual_harness_head_is_distinct_from_pinned_baseline(self):
         actual='a'*40;value=receipt();value['source_commit']=actual
         self.assertEqual(contract.validate(value,variant='baseline',count=128,pid=101,fixture_sha=FIXTURE,source_commit=actual)['baseline_source_commit'],contract.SOURCE)
