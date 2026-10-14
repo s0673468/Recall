@@ -27,12 +27,28 @@ def require(ok, code):
     if not ok: raise contract.Refused(code)
 
 
+def closed_frame_diagnostics(body, offset_chars):
+    # Count private input in memory, then retain only bounded framing facts.
+    size = len(body.encode('utf-8',errors='replace'))
+    offset = len(body[:offset_chars].encode('utf-8',errors='replace'))
+    limit = contract.FRAME_DIAGNOSTIC_LIMIT
+    return contract.validate_frame_diagnostics({
+        'byte_count':min(size,limit),'byte_count_capped':size>limit,
+        'parse_offset':min(offset,limit),'parse_offset_capped':offset>limit,
+        'object_prefix':body.lstrip().startswith('{'),
+        'object_suffix':body.rstrip().endswith('}')})
+
+
 def closed_event(raw, expected_phase, pid, commit):
     events = []
     for line in raw.splitlines():
         if SENTINEL not in line: continue
-        try: value = json.loads(line.split(SENTINEL, 1)[1])
-        except ValueError: raise contract.Refused('fixture_json_invalid') from None
+        body = line.split(SENTINEL, 1)[1]
+        try: value = json.loads(body)
+        except json.JSONDecodeError as error:
+            refused = contract.Refused('fixture_json_invalid')
+            refused.frame_diagnostics = closed_frame_diagnostics(body,error.pos)
+            raise refused from None
         require(isinstance(value, dict) and value.get('schema') == contract.SCHEMA,
                 'fixture_schema_invalid')
         require(type(value.get('pid')) is int and value['pid'] == pid and
@@ -141,6 +157,61 @@ def run_owned(args, serial, activity):
     return {'launch':launch,'phase-one':one,'phase-two':two,'qualification':result}
 
 
+def qualify_failure_output(args):
+    # Called only after host, one owned emulator, source pin and APK-ID guards.
+    temporary = Path(os.environ.get('RUNNER_TEMP','/missing')).resolve(strict=True)
+    output = args.output.resolve(strict=False)
+    require(temporary in output.parents, 'action_owned_output_required')
+    require(not output.exists() and not output.is_symlink(), 'new_output_required')
+    args.output = output
+    args._qualified_failure_output = output
+
+
+def retain_closed_failure(args, value):
+    output = getattr(args,'_qualified_failure_output',None)
+    if not isinstance(output,Path): return value
+    allowed = {'schema','qualification_passed','closed_failure_code','raw_logs_printed',
+               'failure_code','failed_phase','failed_assertion_stage','frame_diagnostics'}
+    valid = (isinstance(value,dict) and set(value)<=allowed and
+             value.get('schema')=='recall-native-offline-qualification/v2' and
+             value.get('qualification_passed') is False and value.get('raw_logs_printed') is False and
+             type(value.get('closed_failure_code')) is str and
+             re.fullmatch(r'[a-z_]{1,80}',value['closed_failure_code']) is not None)
+    if valid and ('failure_code' in value or 'failed_phase' in value):
+        valid = (type(value.get('failure_code')) is str and value['failure_code'] in FAILURES and
+                 type(value.get('failed_phase')) is str and value['failed_phase'] in PHASES)
+    if valid and 'failed_assertion_stage' in value:
+        valid = (value.get('failure_code')=='synthetic_phase_failed' and
+                 value.get('failed_phase')=='offline_recording' and
+                 type(value['failed_assertion_stage']) is str and
+                 value['failed_assertion_stage'] in ASSERTION_STAGES)
+    if valid and 'frame_diagnostics' in value:
+        valid = value['closed_failure_code']=='fixture_json_invalid'
+        try:contract.validate_frame_diagnostics(value['frame_diagnostics'])
+        except contract.Refused:valid = False
+    if not valid:
+        return {'schema':'recall-native-offline-qualification/v2','qualification_passed':False,
+                'closed_failure_code':'failure_artifact_payload_refused','raw_logs_printed':False,
+                'failure_artifact_saved':False}
+    result = dict(value);result['failure_artifact_saved'] = False
+    created_file = None
+    try:
+        output.mkdir(mode=0o700,parents=True,exist_ok=False)
+        target = output/'qualification.json'
+        # Exclusive creation: never rewrite a prior original receipt.
+        with target.open('x') as stream:
+            created_file = target
+            result['failure_artifact_saved'] = True
+            json.dump(result,stream,sort_keys=True,indent=2);stream.write('\n')
+        return result
+    except OSError:
+        result['failure_artifact_saved'] = False
+        if created_file is not None:
+            try:created_file.unlink()
+            except OSError:pass
+        return result
+
+
 def run(args):
     cold.require_ci()
     require(15 <= args.phase_timeout <= 90 and re.fullmatch(r'[0-9a-f]{40}',args.source_commit),
@@ -160,6 +231,7 @@ def run(args):
     package, activity = cold.apk_identity(apk)
     require(package == PACKAGE, 'isolated_apk_identity_required')
     args.apk = apk
+    qualify_failure_output(args)
     return run_owned(args,serial,activity)
 
 
@@ -183,6 +255,13 @@ def main():
             if (error.failed_phase == 'offline_recording' and
                     getattr(error,'failed_assertion_stage',None) in ASSERTION_STAGES):
                 result['failed_assertion_stage'] = error.failed_assertion_stage
+        if isinstance(error,(contract.Refused,cold.Refused)) and error.code == 'fixture_json_invalid':
+            facts = getattr(error,'frame_diagnostics',None)
+            if facts is not None:
+                try:result['frame_diagnostics'] = contract.validate_frame_diagnostics(facts)
+                except contract.Refused:
+                    result['closed_failure_code'] = 'fixture_frame_diagnostics_invalid'
+        result = retain_closed_failure(args,result)
         print(json.dumps(result,sort_keys=True));return 1
 
 if __name__ == '__main__':sys.exit(main())

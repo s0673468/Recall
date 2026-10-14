@@ -45,6 +45,26 @@ def digest(value):
     return isinstance(value,str) and re.fullmatch(r'[0-9a-f]{64}',value) is not None
 
 
+FRAME_DIAGNOSTIC_LIMIT = 4096
+FRAME_DIAGNOSTIC_KEYS = {'byte_count','byte_count_capped','parse_offset',
+                         'parse_offset_capped','object_prefix','object_suffix'}
+
+
+def validate_frame_diagnostics(value):
+    """Closed framing facts only; never a source string or decoder message."""
+    require(isinstance(value,dict) and set(value)==FRAME_DIAGNOSTIC_KEYS,
+            'fixture_frame_diagnostics_invalid')
+    require(all(type(value[k]) is int and 0 <= value[k] <= FRAME_DIAGNOSTIC_LIMIT
+                for k in ('byte_count','parse_offset')) and
+            all(type(value[k]) is bool for k in
+                ('byte_count_capped','parse_offset_capped','object_prefix','object_suffix')) and
+            value['parse_offset'] <= value['byte_count'] and
+            (not value['byte_count_capped'] or value['byte_count']==FRAME_DIAGNOSTIC_LIMIT) and
+            (not value['parse_offset_capped'] or value['parse_offset']==FRAME_DIAGNOSTIC_LIMIT),
+            'fixture_frame_diagnostics_invalid')
+    return dict(value)
+
+
 def identity(value, phase, commit):
     require(value['schema']==SCHEMA and value['phase']==phase and value['source_commit']==commit and
             value['package']==PACKAGE and integer(value['pid'],1) and value['build_mode']=='debug' and
