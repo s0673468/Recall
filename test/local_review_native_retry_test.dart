@@ -16,7 +16,7 @@ enum _Outcome {
 }
 
 class _Native extends InMemorySharedPreferencesStore {
-  _Native() : super.withData();
+  _Native() : super.withData(const <String, Object>{});
 
   _Outcome outcome = _Outcome.succeed;
   String? affectedKey;
