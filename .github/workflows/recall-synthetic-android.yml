@@ -1,0 +1,99 @@
+name: Synthetic Android debug performance
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - tool/fixtures/synthetic_android_main.dart
+      - tool/fixtures/synthetic_recall_flow.dart
+      - tool/measure_android_cold_start.py
+      - .github/workflows/recall-synthetic-android.yml
+      - lib/features/review/application/review_controller.dart
+      - lib/features/review/application/fsrs_engine.dart
+      - lib/features/review/data/local_review_store.dart
+      - lib/features/review/data/recall_api.dart
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-android-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-android-debug:
+    # Public free standard hosted Linux only. Never a private/M1 runner or AVD.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BENCH_SOURCE: ${{ runner.temp }}/recall-synthetic-android/source
+      BENCH_RESULTS: ${{ runner.temp }}/recall-synthetic-android/results
+      GRADLE_OPTS: -Dorg.gradle.workers.max=2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Require disposable hosted Linux
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(uname -s)" = Linux
+      - name: Validate normal Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/setup-flutter
+      - name: Install compile SDK matching normal Android source
+        run: >-
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          "platforms;android-37.0"
+      - name: Check numeric consumer and create isolated technical build source
+        run: |
+          python3 tool/measure_android_cold_start.py self-test
+          python3 tool/measure_android_cold_start.py prepare \
+            --source "$GITHUB_WORKSPACE" --destination "$BENCH_SOURCE" \
+            --source-commit "$GITHUB_SHA" --output "$BENCH_RESULTS/provenance.json"
+      - name: Build ONLY synthetic Android debug entrypoint
+        working-directory: ${{ env.BENCH_SOURCE }}
+        run: |
+          flutter pub get
+          flutter build apk --debug --no-pub \
+            --target tool/fixtures/synthetic_android_main.dart \
+            --dart-define=RECALL_SYNTHETIC_BENCHMARK=true \
+            --dart-define=RECALL_BENCH_SOURCE_COMMIT="$GITHUB_SHA"
+      - name: Stop only this disposable build's Gradle daemon before emulator
+        working-directory: ${{ env.BENCH_SOURCE }}/android
+        run: ./gradlew --stop
+      - name: Require hosted KVM
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+      - name: Three fresh-process samples on ONE action-owned disposable AVD
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          avd-name: recall-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-boot-timeout: 180
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel on -camera-back none -camera-front none
+          disable-animations: true
+          # This action owns emulator startup and cleanup, including failed runs.
+          script: >-
+            python3 tool/measure_android_cold_start.py run
+            --apk "$BENCH_SOURCE/build/app/outputs/flutter-apk/app-debug.apk"
+            --source-commit "$GITHUB_SHA" --samples 3 --sample-timeout 60
+            --output "$BENCH_RESULTS/measurements.json"
+      - name: Retain ONLY closed JSON measurements/provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-android-debug-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.BENCH_RESULTS }}/*.json
+          retention-days: 2
+          if-no-files-found: error
+          compression-level: 9
