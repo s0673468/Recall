@@ -137,6 +137,10 @@ class LocalReviewStore {
     final scope = _scopeForOwner(ownerId);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
+      // Failed native writes still update SharedPreferences' in-memory cache.
+      // Recheck the durable claim, migration flag, and scoped destinations
+      // before a retry can mark a partially copied owner as migrated.
+      await prefs.reload();
       final claimed = prefs.getString(_legacyOwnerClaimKey);
       if (claimed == null) {
         if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
