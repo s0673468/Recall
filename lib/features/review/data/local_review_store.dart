@@ -39,7 +39,7 @@ class LocalReviewStore {
   static const maxDailyRemediations = 3;
 
   Future<void> _outboxTail = Future.value();
-  static Future<void> _ownerMigrationTail = Future.value();
+  static Future<void>? _ownerMigrationTail;
   Future<SharedPreferences>? _prefsFuture;
   String? _installId;
   int _eventSequence = 0;
@@ -128,10 +128,27 @@ class LocalReviewStore {
   }
 
   static Future<T> _withOwnerMigrationLock<T>(Future<T> Function() action) {
-    final run = _ownerMigrationTail.then((_) => action());
-    // A failed activation must not block another instance's later claim.
-    _ownerMigrationTail = run.then((_) {}, onError: (_) {});
-    return run;
+    // Create the idle starting point in this caller's Zone. A completed static
+    // Future can otherwise retain a drained Zone between Flutter tests.
+    final predecessor = _ownerMigrationTail ?? Future<void>.value();
+    final run = predecessor.then((_) => action());
+    late final Future<void> tail;
+    // Settle the caller's Future only after releasing the idle static tail.
+    // A queued successor replaces it, so this run cannot clear that successor.
+    final completed = run.then<T>(
+      (value) {
+        if (identical(_ownerMigrationTail, tail)) _ownerMigrationTail = null;
+        return value;
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_ownerMigrationTail, tail)) _ownerMigrationTail = null;
+        Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
+    // Keep the queue live past failures without retaining its settled Future.
+    tail = completed.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _ownerMigrationTail = tail;
+    return completed;
   }
 
   /// Select the account namespace used by every cache and durable outbox.
