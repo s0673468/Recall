@@ -1,0 +1,161 @@
+name: Synthetic native outbox checkpoint cost
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/recall-synthetic-native-cost.yml
+      - tool/fixtures/synthetic_native_outbox_cost_main.dart
+      - test/synthetic_native_outbox_cost_test.dart
+      - tool/fixtures/checkpoint-drain-only.patch
+      - tool/prepare_native_checkpoint_cost.py
+      - tool/run_native_checkpoint_cost.py
+      - tool/native_checkpoint_contract.py
+      - tool/tests/test_native_checkpoint_cost.py
+      - tool/tests/test_native_cost_workflow.py
+      - tool/fixtures/README-native-checkpoint-cost.md
+      - tool/measure_android_cold_start.py
+      - tool/run_synthetic_native_offline_restart.py
+      - tool/native_offline_receipt_contract.py
+      - tool/fixtures/synthetic_recall_flow.dart
+      - test/test_synthetic_native_prepare.py
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/recall-synthetic-native-cost.yml
+      - tool/fixtures/synthetic_native_outbox_cost_main.dart
+      - test/synthetic_native_outbox_cost_test.dart
+      - tool/fixtures/checkpoint-drain-only.patch
+      - tool/prepare_native_checkpoint_cost.py
+      - tool/run_native_checkpoint_cost.py
+      - tool/native_checkpoint_contract.py
+      - tool/tests/test_native_checkpoint_cost.py
+      - tool/tests/test_native_cost_workflow.py
+      - tool/fixtures/README-native-checkpoint-cost.md
+      - tool/measure_android_cold_start.py
+      - tool/run_synthetic_native_offline_restart.py
+      - tool/native_offline_receipt_contract.py
+      - tool/fixtures/synthetic_recall_flow.dart
+      - test/test_synthetic_native_prepare.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-native-cost-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  synthetic-native-cost:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GRADLE_OPTS: -Dorg.gradle.workers.max=2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Require disposable hosted Linux and own output paths
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(uname -s)" = Linux
+          echo "COST_SOURCE=$RUNNER_TEMP/recall-native-cost-${{ github.run_id }}-${{ github.run_attempt }}/source" >> "$GITHUB_ENV"
+          echo "COST_RESULTS=$RUNNER_TEMP/recall-native-cost-${{ github.run_id }}-${{ github.run_attempt }}/results" >> "$GITHUB_ENV"
+      - name: Validate normal Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/setup-flutter
+      - name: Install compile SDK matching normal Android source
+        run: >-
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          "platforms;android-37.0"
+      - name: Qualify mocked contracts before compilation
+        run: |
+          PYTHONPATH=. python3 -B test/test_synthetic_native_prepare.py
+          PYTHONPATH=tool python3 -B -m unittest discover -s tool/tests -p 'test_native_checkpoint_cost.py'
+          python3 tool/measure_android_cold_start.py self-test
+      - name: Prepare two fresh pinned technical copies
+        run: |
+          mkdir -m 700 -p "$COST_RESULTS"
+          python3 tool/prepare_native_checkpoint_cost.py \
+            --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/baseline" \
+            --source-commit "$GITHUB_SHA" --variant baseline \
+            --patch tool/fixtures/checkpoint-drain-only.patch \
+            --fixture-sha 01de611cc163b3677cd63700a46a49d34f53d23cb56060129de040ba5c558ff3 \
+            > "$COST_RESULTS/base-provenance.json"
+          python3 tool/prepare_native_checkpoint_cost.py \
+            --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/checkpoint" \
+            --source-commit "$GITHUB_SHA" --variant checkpoint \
+            --patch tool/fixtures/checkpoint-drain-only.patch \
+            --fixture-sha 01de611cc163b3677cd63700a46a49d34f53d23cb56060129de040ba5c558ff3 \
+            > "$COST_RESULTS/checkpoint-provenance.json"
+      - name: Build isolated baseline debug APK
+        working-directory: ${{ env.COST_SOURCE }}/baseline
+        run: |
+          flutter pub get
+          flutter build apk --debug --no-pub \
+            --target tool/fixtures/synthetic_native_outbox_cost_main.dart \
+            --dart-define=RECALL_SYNTHETIC_NATIVE_OUTBOX_COST=true \
+            --dart-define=RECALL_SOURCE_COMMIT="$GITHUB_SHA" \
+            --dart-define=RECALL_BASE_COMMIT=9b463d424aa7da6d7c391b05ae2834ee2348b5b8 \
+            --dart-define=RECALL_VARIANT=baseline \
+            --dart-define=RECALL_CONTROLLER_SHA256=b7dd000dbf64598addbb880b0eb49f9866b65003f8fffb6ea766fc32cd474d88 \
+            --dart-define=RECALL_PATCH_SHA256=none \
+            --dart-define=RECALL_FIXTURE_SHA256=01de611cc163b3677cd63700a46a49d34f53d23cb56060129de040ba5c558ff3
+      - name: Build isolated checkpoint debug APK
+        working-directory: ${{ env.COST_SOURCE }}/checkpoint
+        run: |
+          flutter pub get
+          flutter build apk --debug --no-pub \
+            --target tool/fixtures/synthetic_native_outbox_cost_main.dart \
+            --dart-define=RECALL_SYNTHETIC_NATIVE_OUTBOX_COST=true \
+            --dart-define=RECALL_SOURCE_COMMIT="$GITHUB_SHA" \
+            --dart-define=RECALL_BASE_COMMIT=9b463d424aa7da6d7c391b05ae2834ee2348b5b8 \
+            --dart-define=RECALL_VARIANT=checkpoint \
+            --dart-define=RECALL_CONTROLLER_SHA256=5df361de71751f2733d2d75ecad863dcfac1cbe979a571a0e27a28ddf4cd51db \
+            --dart-define=RECALL_PATCH_SHA256=e052e44873fabad289a80c6185dcaf4b46afe491f8529ca172b5b5b589a91578 \
+            --dart-define=RECALL_FIXTURE_SHA256=01de611cc163b3677cd63700a46a49d34f53d23cb56060129de040ba5c558ff3
+      - name: Stop only these two disposable Gradle daemons before emulator
+        run: |
+          (cd "$COST_SOURCE/baseline/android" && ./gradlew --stop)
+          (cd "$COST_SOURCE/checkpoint/android" && ./gradlew --stop)
+      - name: Require hosted KVM
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+      - name: Four guarded process launches on one disposable AVD
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          avd-name: recall-native-cost-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-boot-timeout: 180
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel on -camera-back none -camera-front none
+          disable-animations: true
+          script: >-
+            python3 "$GITHUB_WORKSPACE/tool/run_native_checkpoint_cost.py"
+            --source-commit "$GITHUB_SHA"
+            --baseline-apk "$COST_SOURCE/baseline/build/app/outputs/flutter-apk/app-debug.apk"
+            --checkpoint-apk "$COST_SOURCE/checkpoint/build/app/outputs/flutter-apk/app-debug.apk"
+            --baseline-provenance "$COST_RESULTS/base-provenance.json"
+            --checkpoint-provenance "$COST_RESULTS/checkpoint-provenance.json"
+            --output "$COST_RESULTS/native" --phase-timeout 90
+      - name: Retain only closed source and comparison receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-native-cost-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.COST_RESULTS }}/base-provenance.json
+            ${{ env.COST_RESULTS }}/checkpoint-provenance.json
+            ${{ env.COST_RESULTS }}/native/comparison.json
+          retention-days: 2
+          if-no-files-found: error
+          compression-level: 9
