@@ -1,0 +1,138 @@
+name: Synthetic native offline restart
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/recall-synthetic-native-offline.yml
+      - test/test_synthetic_native_prepare.py
+      - tool/fixtures/synthetic_native_offline_restart_main.dart
+      - tool/run_synthetic_native_offline_restart.py
+      - tool/native_offline_receipt_contract.py
+      - tool/measure_android_cold_start.py
+      - tool/fixtures/synthetic_recall_flow.dart
+      - tool/tests/test_native_offline_contract.py
+      - tool/tests/test_native_offline_driver.py
+      - lib/features/review/data/recall_api.dart
+      - lib/features/review/data/models.dart
+      - lib/features/review/application/fsrs_engine.dart
+      - lib/features/review/application/review_haptics.dart
+      - pubspec.yaml
+      - pubspec.lock
+      - android/**
+      - lib/features/review/data/local_review_store.dart
+      - lib/features/review/application/review_controller.dart
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-native-offline-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-native-offline:
+    # Public repository: disposable free hosted Linux only.
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GRADLE_OPTS: -Dorg.gradle.workers.max=2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Require disposable hosted Linux
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$(uname -s)" = Linux
+          echo "BENCH_SOURCE=$RUNNER_TEMP/recall-synthetic-native/source" >> "$GITHUB_ENV"
+          echo "BENCH_RESULTS=$RUNNER_TEMP/recall-synthetic-native/results" >> "$GITHUB_ENV"
+      - name: Validate normal Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/setup-flutter
+      - name: Install compile SDK matching normal Android source
+        run: >-
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          "platforms;android-37.0"
+      - name: Verify preparer contract and isolate technical source
+        run: |
+          PYTHONPATH=. python3 -B test/test_synthetic_native_prepare.py
+          PYTHONPATH=tool python3 -B -m unittest discover -s tool/tests -p 'test_native_offline_*.py'
+          python3 tool/measure_android_cold_start.py self-test
+          python3 tool/measure_android_cold_start.py prepare \
+            --source "$GITHUB_WORKSPACE" --destination "$BENCH_SOURCE" \
+            --source-commit "$GITHUB_SHA" --output "$BENCH_RESULTS/provenance.json"
+          test -f "$BENCH_SOURCE/tool/fixtures/synthetic_native_offline_restart_main.dart"
+          python3 - <<'PYPROOF'
+          import hashlib, json, os, re
+          from pathlib import Path
+          source = os.environ['GITHUB_SHA']
+          assert re.fullmatch(r'[0-9a-f]{40}', source)
+          entry = Path(os.environ['BENCH_SOURCE']) / 'tool/fixtures/synthetic_native_offline_restart_main.dart'
+          assert entry.is_file() and not entry.is_symlink()
+          result = Path(os.environ['BENCH_RESULTS'])
+          value = {
+              'schema': 'recall-synthetic-native-offline-provenance/v1',
+              'source_commit': source,
+              'package': 'com.german.recall.syntheticbenchmark',
+              'native_entrypoint': 'tool/fixtures/synthetic_native_offline_restart_main.dart',
+              'native_entrypoint_sha256': hashlib.sha256(entry.read_bytes()).hexdigest(),
+              'technical_source_provenance_sha256': hashlib.sha256((result / 'provenance.json').read_bytes()).hexdigest(),
+              'normal_namespace_and_signing_unchanged': True,
+              'real_cards_articles_or_credentials_copied': False,
+          }
+          with (result / 'native-provenance.json').open('x') as stream:
+              json.dump(value, stream, sort_keys=True, indent=2)
+          PYPROOF
+      - name: Build ONLY isolated native-offline debug entrypoint
+        working-directory: ${{ env.BENCH_SOURCE }}
+        run: |
+          flutter pub get
+          flutter build apk --debug --no-pub \
+            --target tool/fixtures/synthetic_native_offline_restart_main.dart \
+            --dart-define=RECALL_SYNTHETIC_NATIVE_OFFLINE=true \
+            --dart-define=RECALL_BENCH_SOURCE_COMMIT="$GITHUB_SHA"
+      - name: Stop only this disposable build's Gradle daemon before emulator
+        working-directory: ${{ env.BENCH_SOURCE }}/android
+        run: ./gradlew --stop
+      - name: Require hosted KVM
+        run: |
+          test -c /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+      - name: Two process launches on ONE action-owned disposable AVD
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          avd-name: recall-native-offline-${{ github.run_id }}-${{ github.run_attempt }}
+          force-avd-creation: true
+          emulator-boot-timeout: 180
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel on -camera-back none -camera-front none
+          disable-animations: true
+          # The action owns emulator startup and cleanup, including failed runs.
+          script: >-
+            python3 "$GITHUB_WORKSPACE/tool/run_synthetic_native_offline_restart.py"
+            --apk "$BENCH_SOURCE/build/app/outputs/flutter-apk/app-debug.apk"
+            --source-commit "$GITHUB_SHA" --phase-timeout 60
+            --output "$BENCH_RESULTS/native"
+      - name: Retain ONLY closed JSON provenance and phase receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-native-offline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BENCH_RESULTS }}/provenance.json
+            ${{ env.BENCH_RESULTS }}/native-provenance.json
+            ${{ env.BENCH_RESULTS }}/native/launch.json
+            ${{ env.BENCH_RESULTS }}/native/phase-one.json
+            ${{ env.BENCH_RESULTS }}/native/phase-two.json
+            ${{ env.BENCH_RESULTS }}/native/qualification.json
+          retention-days: 2
+          if-no-files-found: error
+          compression-level: 9

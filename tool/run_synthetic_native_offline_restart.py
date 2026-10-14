@@ -1,0 +1,175 @@
+"""Two fresh Android processes; one initial reset of the unique synthetic APK.
+Raw logcat stays in memory. This driver never stops an AVD or production Recall.
+"""
+from __future__ import annotations
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+import measure_android_cold_start as cold
+import native_offline_receipt_contract as contract
+
+PACKAGE = contract.PACKAGE
+SENTINEL = 'RECALL_NATIVE_OFFLINE_JSON '
+FAILURES = {'fixture_build_required', 'synthetic_phase_failed'}
+PHASES = {'fixture_guard', 'offline_recording', 'native_restore', 'fake_sync'}
+
+
+def require(ok, code):
+    if not ok: raise contract.Refused(code)
+
+
+def closed_event(raw, expected_phase, pid, commit):
+    events = []
+    for line in raw.splitlines():
+        if SENTINEL not in line: continue
+        try: value = json.loads(line.split(SENTINEL, 1)[1])
+        except ValueError: raise contract.Refused('fixture_json_invalid') from None
+        require(isinstance(value, dict) and value.get('schema') == contract.SCHEMA,
+                'fixture_schema_invalid')
+        require(type(value.get('pid')) is int and value['pid'] == pid and
+                value.get('source_commit') == commit, 'fixture_process_identity_invalid')
+        if value.get('phase') == 'failed':
+            require(set(value) == {'schema','phase','source_commit','pid','failure_code','failed_phase'} and
+                    value.get('failure_code') in FAILURES and value.get('failed_phase') in PHASES,
+                    'fixture_failure_schema_invalid')
+            # Fixed labels only. Never forward an exception/string from Android.
+            error = contract.Refused('fixture_reported_failure')
+            error.failure_code = value['failure_code']; error.failed_phase = value['failed_phase']
+            raise error
+        require(value.get('phase') == expected_phase, 'fixture_phase_invalid')
+        events.append(value)
+    require(len(events) <= 1, 'duplicate_fixture_receipt')
+    return events[0] if events else None
+
+
+def stop(serial):
+    cold.adb(serial, 'shell','am','force-stop',PACKAGE)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if not cold.adb(serial,'shell','pidof',PACKAGE).strip(): return
+        time.sleep(.1)
+    raise contract.Refused('previous_process_not_gone')
+
+
+def phase(serial, activity, name, commit, timeout):
+    launch = cold.adb(serial,'shell','am','start','-W','-n',PACKAGE+'/'+activity,timeout=35)
+    cold.launch_metrics(launch)
+    text = cold.adb(serial,'shell','pidof',PACKAGE).strip()
+    require(re.fullmatch(r'[1-9][0-9]*',text) is not None, 'fresh_pid_missing')
+    pid = int(text); deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        raw = cold.adb(serial,'logcat','-d','-v','epoch','--pid='+str(pid),'-s','flutter:I','*:S',
+                       timeout=min(12,max(.1,deadline-time.monotonic())))
+        value = closed_event(raw,name,pid,commit)
+        if value is not None: return value
+        time.sleep(min(.25,max(0,deadline-time.monotonic())))
+    raise contract.Refused('fixture_phase_timeout')
+
+
+def airplane_state(serial):
+    text = cold.adb(serial,'shell','settings','get','global','airplane_mode_on').strip()
+    require(text in {'0','1'}, 'airplane_state_invalid_or_unsupported')
+    return int(text)
+
+
+def set_airplane(serial, state):
+    require(type(state) is int and state in (0,1), 'airplane_target_invalid')
+    cold.adb(serial,'shell','cmd','connectivity','airplane-mode','enable' if state else 'disable')
+    actual = airplane_state(serial)
+    require(actual == state, 'airplane_state_change_not_observed')
+    return actual
+
+
+def run_owned(args, serial, activity):
+    """The only mutation seam; regression tests inject a fully fake ADB."""
+    installed = resets = 0
+    original_state = None
+    # Bind the receipt to the APK bytes present before installation.
+    require(args.apk.is_file() and not args.apk.is_symlink(), 'regular_apk_required')
+    apk_sha = hashlib.sha256(args.apk.read_bytes()).hexdigest()
+    try:
+        original_state = airplane_state(serial)
+        cold.adb(serial,'install','--no-streaming',str(args.apk),timeout=45); installed += 1
+        stop(serial)
+        require(cold.adb(serial,'shell','pm','clear',PACKAGE).strip() == 'Success',
+                'initial_fixture_reset_failed'); resets += 1
+        before_one = set_airplane(serial,1)
+        one = phase(serial,activity,'offline_recorded',args.source_commit,args.phase_timeout)
+        after_one = airplane_state(serial)
+        require(after_one == 1, 'airplane_phase_one_state_changed')
+        stop(serial)
+        before_two = set_airplane(serial,0)
+        two = phase(serial,activity,'restart_synced',args.source_commit,args.phase_timeout)
+        after_two = airplane_state(serial)
+        require(after_two == 0, 'airplane_phase_two_state_changed')
+        require(hashlib.sha256(args.apk.read_bytes()).hexdigest() == apk_sha, 'apk_input_changed')
+    finally:
+        # CI action owns its ephemeral AVD cleanup, not this process. Restore
+        # only the exact guarded AVD state, with no broadcasts/settings hacks.
+        try:
+            if original_state is not None:
+                try: restored = set_airplane(serial,original_state)
+                except Exception: raise contract.Refused('airplane_restore_failed') from None
+        finally:
+            cold.adb(serial,'shell','am','force-stop',PACKAGE)
+    launch = {'schema':'recall-native-offline-launch/v2','source_commit':args.source_commit,
+        'package':PACKAGE,'apk_sha256':apk_sha,
+        'apk_install_count':installed,'initial_reset_count':resets,'restart_reset_count':0,
+        'phase_one_pid':one['pid'],'phase_two_pid':two['pid'],'force_stop_before_restart':True,
+        'phase_one_process_gone':True,'same_owned_avd':True,'raw_logs_saved':False,
+        'os_airplane_original_state':original_state,'os_airplane_phase_one_before':before_one,
+        'os_airplane_phase_one_after':after_one,'os_airplane_phase_two_before':before_two,
+        'os_airplane_phase_two_after':after_two,'os_airplane_restored_state':restored,
+        'os_airplane_phase_one_command_count':1,'os_airplane_phase_two_command_count':1,'os_airplane_restore_command_count':1}
+    result = contract.validate(launch,one,two,args.source_commit)
+    return {'launch':launch,'phase-one':one,'phase-two':two,'qualification':result}
+
+
+def run(args):
+    cold.require_ci()
+    require(15 <= args.phase_timeout <= 90 and re.fullmatch(r'[0-9a-f]{40}',args.source_commit),
+            'bounded_source_pinned_run_required')
+    require(Path('/dev/kvm').exists() and os.access('/dev/kvm',os.R_OK|os.W_OK), 'kvm_required')
+    devices = subprocess.run(['adb','devices'],capture_output=True,text=True,timeout=12)
+    require(devices.returncode == 0, 'adb_inventory_failed')
+    connected = [line.split()[0] for line in devices.stdout.splitlines()[1:] if line.strip()]
+    require(len(connected) == 1 and re.fullmatch(r'emulator-[0-9]+',connected[0]),
+            'single_owned_emulator_required')
+    serial = connected[0]
+    require(cold.adb(serial,'shell','getprop','ro.kernel.qemu').strip() == '1' and
+            cold.adb(serial,'shell','getprop','ro.product.cpu.abi').strip() == 'x86_64',
+            'isolated_x64_avd_required')
+    apk = args.apk.resolve(strict=True)
+    require(apk.is_file() and not args.apk.is_symlink(), 'regular_apk_required')
+    package, activity = cold.apk_identity(apk)
+    require(package == PACKAGE, 'isolated_apk_identity_required')
+    args.apk = apk
+    return run_owned(args,serial,activity)
+
+
+def main():
+    parser=argparse.ArgumentParser(); parser.add_argument('--apk',type=Path,required=True)
+    parser.add_argument('--source-commit',required=True);parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--phase-timeout',type=int,default=60);args=parser.parse_args()
+    try:
+        require(not args.output.exists() and not args.output.is_symlink(), 'new_output_required')
+        results=run(args)
+        args.output.mkdir(mode=0o700,parents=True,exist_ok=False)
+        for name,value in results.items():
+            with (args.output/(name+'.json')).open('x') as stream:json.dump(value,stream,sort_keys=True,indent=2)
+        print(json.dumps(results['qualification'],sort_keys=True));return 0
+    except (contract.Refused,cold.Refused,OSError,ValueError,KeyError,TypeError,subprocess.TimeoutExpired) as error:
+        result={'schema':'recall-native-offline-qualification/v2','qualification_passed':False,
+                'closed_failure_code':error.code if isinstance(error,(contract.Refused,cold.Refused)) else 'input_or_tool_unavailable',
+                'raw_logs_printed':False}
+        if getattr(error,'failure_code',None) in FAILURES and getattr(error,'failed_phase',None) in PHASES:
+            result.update(failure_code=error.failure_code,failed_phase=error.failed_phase)
+        print(json.dumps(result,sort_keys=True));return 1
+
+if __name__ == '__main__':sys.exit(main())
