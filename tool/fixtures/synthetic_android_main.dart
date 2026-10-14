@@ -56,6 +56,8 @@ Future<void> main() async {
     await flow.selectDeck(1).timeout(_limit);
     load.stop();
     if (flow.controller.state.loading ||
+        flow.controller.state.offline ||
+        flow.controller.state.error != null ||
         flow.controller.state.queue.length != 20 ||
         flow.controller.state.current?.id != 1) {
       throw StateError('Synthetic readiness contract');

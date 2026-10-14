@@ -25,13 +25,19 @@ BASE_GRADLE_SHA = '729f278b435614cb6c6060000a3cec7ab9ca1de31d42098a5b693921951be
 BASE_PUBSPEC_SHA = 'fe6f627dbf49d196a03c8e28373c5fc5da5753afaf43b73baad2e29bf849333f'
 SENTINEL = 'RECALL_ANDROID_BENCH_JSON '
 SCHEMA = 'recall-synthetic-android/v1'
+FIXTURE_FAILURE_CODES = {'fixture_build_required', 'synthetic_phase_failed'}
+FIXTURE_FAILED_PHASES = {'first_frame', 'fixture_setup', 'deck_load', 'rating', 'dispose'}
 TIMINGS = {'dart_main_first_frame', 'dart_main_root_ready', 'fixture_setup',
            'deck_load', 'rating_to_next', 'native_enqueue_ack'}
 
 
 class Refused(Exception):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, failure_code: str | None = None,
+                 failed_phase: str | None = None):
         self.code = code
+        self.failure_code = failure_code if failure_code in FIXTURE_FAILURE_CODES else None
+        self.failed_phase = (failed_phase if self.failure_code == 'synthetic_phase_failed' and
+                             failed_phase in FIXTURE_FAILED_PHASES else None)
 
 
 def require(condition: bool, code: str) -> None:
@@ -204,6 +210,29 @@ def log_event(line: str) -> tuple[int, dict] | None:
     return epoch_us(match[1]), value
 
 
+def closed_fixture_failure(value: dict, pid: int, commit: str) -> Refused:
+    """Project only the fixture's fixed failure labels, never its raw event."""
+    base = {'schema','phase','source_commit','build_mode','environment','pid','failure_code'}
+    require(isinstance(value, dict) and set(value) in (base, base | {'failed_phase'}),
+            'fixture_failure_schema_invalid')
+    code = value.get('failure_code')
+    phase = value.get('failed_phase')
+    require(type(code) is str and code in FIXTURE_FAILURE_CODES and
+            ((code == 'synthetic_phase_failed' and type(phase) is str and phase in FIXTURE_FAILED_PHASES) or
+             (code == 'fixture_build_required' and 'failed_phase' not in value)),
+            'fixture_failure_schema_invalid')
+    source = value.get('source_commit')
+    # Missing build defines deliberately emit the build guard before startup.
+    # Such a failure may have an empty source pin; it never qualifies a sample.
+    source_matches = source == commit or (code == 'fixture_build_required' and source == '')
+    require(value.get('schema') == SCHEMA and value.get('phase') == 'failed' and
+            type(value.get('pid')) is int and value['pid'] == pid and source_matches and
+            value.get('build_mode') == 'debug' and
+            value.get('environment') == 'isolated-android-emulator',
+            'fixture_failure_identity_invalid')
+    return Refused('fixture_reported_failure', failure_code=code, failed_phase=phase)
+
+
 def process_start_us(text: str, pid: int) -> int:
     matching = []
     pattern = re.compile(r'\[\s*\d+,\s*' + str(pid) + r',\s*\d+,\s*' + re.escape(PACKAGE) + r'(?:,|\])')
@@ -303,7 +332,8 @@ def run(args: argparse.Namespace) -> dict:
                     parsed = log_event(line)
                     if parsed is None:continue
                     stamp,value = parsed;phase=value.get('phase')
-                    require(phase != 'failed', 'fixture_reported_failure')
+                    if phase == 'failed':
+                        raise closed_fixture_failure(value, pid, args.source_commit)
                     require(phase in {'first_frame','root_ready','done'}, 'fixture_phase_invalid')
                     if phase in events:require(events[phase] == parsed,'duplicate_fixture_phase')
                     events[phase] = parsed
@@ -387,6 +417,10 @@ def main() -> int:
         error=sys.exc_info()[1]
         result={'schema':'recall-synthetic-android-failure/v1','closed_failure_code':error.code if isinstance(error,Refused) else 'technical_prerequisite_failed',
                 'raw_logs_printed':False,'normal_app_or_personal_data_changed':False}
+        if isinstance(error, Refused) and error.failure_code is not None:
+            result['failure_code'] = error.failure_code
+            if error.failed_phase is not None:
+                result['failed_phase'] = error.failed_phase
         if args.command != 'self-test' and not args.output.exists():
             args.output.parent.mkdir(parents=True,exist_ok=True)
             with args.output.open('x') as stream:json.dump(result,stream,sort_keys=True);stream.write('\n')

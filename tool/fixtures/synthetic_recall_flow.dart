@@ -287,7 +287,10 @@ class SyntheticRecallHttp {
       _require(query['suspended'] == 'eq.false');
       if (query['state'] == 'neq.0') {
         _require(query['order'] == 'due.asc.nullslast,id.asc.nullslast');
-        _require(query['notes.deck_id'] == 'in.(1)');
+        _require(
+          query['notes.deck_id'] == 'in.(1)' ||
+              query['notes.deck_id'] == 'eq.1',
+        );
         kind = 'cards_due';
         final cursor = RegExp(r'id\.gt\.(\d+)').firstMatch(query['or'] ?? '');
         final afterId = cursor == null ? 0 : int.parse(cursor.group(1)!);
@@ -296,7 +299,10 @@ class SyntheticRecallHttp {
           for (final card in cards.skip(afterId).take(pageSize)) _cardRow(card),
         ]);
       } else if (query['state'] == 'eq.0') {
-        _require(query['notes.deck_id'] == 'in.(1)');
+        _require(
+          query['notes.deck_id'] == 'in.(1)' ||
+              query['notes.deck_id'] == 'eq.1',
+        );
         kind = 'cards_new';
         body = '[]';
       } else {
