@@ -41,6 +41,10 @@ class LocalReviewStore {
   Future<void> _outboxTail = Future.value();
   static Future<void>? _ownerMigrationTail;
   Future<SharedPreferences>? _prefsFuture;
+  // A false native result is a definite refusal; a thrown call has unknown
+  // commit status. Keep both only in this Store and under the exact scoped key.
+  final Map<String, List<Map<String, dynamic>>> _retryableAppends = {};
+  final Map<String, List<Map<String, dynamic>>> _uncertainAppends = {};
   String? _installId;
   int _eventSequence = 0;
   String? _activeOwnerScope;
@@ -300,12 +304,10 @@ class LocalReviewStore {
       // A producer may lose its session while waiting for another local write.
       // Cancel only before append; an already durable event is never removed.
       if (canWrite != null && !canWrite()) return list.length;
-      list.add({
+      return _appendProducer(prefs, key, list, {
         ...entry,
         'delivery_attempted': entry['delivery_attempted'] ?? false,
       });
-      await _writeList(prefs, key, list);
-      return list.length;
     });
   }
 
@@ -331,6 +333,7 @@ class LocalReviewStore {
       if (index < 0) return false;
       list[index]['delivery_attempted'] = true;
       await _writeList(prefs, key, list);
+      _dropPendingId(key, clientId);
       return true;
     });
   }
@@ -353,6 +356,7 @@ class LocalReviewStore {
           ? <Map<String, dynamic>>[]
           : list.sublist(count);
       await _writeList(prefs, key, remaining);
+      _dropDrainedIds(key, list.take(count));
       return remaining.length;
     });
   }
@@ -366,13 +370,26 @@ class LocalReviewStore {
       final prefs = await _prefs;
       final list = _readOutbox(prefs, key);
       final before = list.length;
+      final attemptedDurable = list.any(
+        (e) => e['client_id'] == clientId && e['delivery_attempted'] != false,
+      );
       list.removeWhere(
         (e) => e['client_id'] == clientId && e['delivery_attempted'] == false,
       );
       if (list.length != before) {
         await _writeList(prefs, key, list);
+        _dropPendingId(key, clientId);
       }
-      return (removed: list.length != before, remaining: list.length);
+      var removedRetryable = false;
+      if (!attemptedDurable &&
+          list.length == before &&
+          !_hasPendingId(_uncertainAppends, key, clientId)) {
+        removedRetryable = _removePendingId(_retryableAppends, key, clientId);
+      }
+      return (
+        removed: list.length != before || removedRetryable,
+        remaining: list.length,
+      );
     });
   }
 
@@ -419,9 +436,7 @@ class LocalReviewStore {
     final key = _storageKey(_flagOutboxKey);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
-      final list = _readList(prefs, key)..add(entry);
-      await _writeList(prefs, key, list);
-      return list.length;
+      return _appendProducer(prefs, key, _readList(prefs, key), entry);
     });
   }
 
@@ -443,9 +458,13 @@ class LocalReviewStore {
       final list = _readList(prefs, key);
       final before = list.length;
       list.removeWhere((e) => e['client_id'] == clientId);
-      if (list.length == before) return false;
-      await _writeList(prefs, key, list);
-      return true;
+      if (list.length != before) {
+        await _writeList(prefs, key, list);
+        _dropPendingId(key, clientId);
+        return true;
+      }
+      if (_hasPendingId(_uncertainAppends, key, clientId)) return false;
+      return _removePendingId(_retryableAppends, key, clientId);
     });
   }
 
@@ -467,6 +486,7 @@ class LocalReviewStore {
           ? <Map<String, dynamic>>[]
           : list.sublist(count);
       await _writeList(prefs, key, remaining);
+      _dropDrainedIds(key, list.take(count));
       return remaining.length;
     });
   }
@@ -618,8 +638,14 @@ class LocalReviewStore {
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       if (requireEmptyOutboxes) {
-        final pendingReviews = _readOutbox(prefs, outboxKey).length;
-        final pendingFlags = _readList(prefs, flagOutboxKey).length;
+        final pendingReviews = _pendingCount(
+          outboxKey,
+          _readOutbox(prefs, outboxKey),
+        );
+        final pendingFlags = _pendingCount(
+          flagOutboxKey,
+          _readList(prefs, flagOutboxKey),
+        );
         if (pendingReviews + pendingFlags > 0) {
           throw LocalOutboxNotEmptyException(
             pendingReviews: pendingReviews,
@@ -635,12 +661,151 @@ class LocalReviewStore {
           await prefs.remove(key);
         }
       }
-      await prefs.remove(outboxKey);
-      await prefs.remove(flagOutboxKey);
+      await _removeOutboxForClear(prefs, outboxKey);
+      await _removeOutboxForClear(prefs, flagOutboxKey);
       await prefs.remove(catchUpStorageKey);
       await prefs.remove(remediationStorageKey);
       await prefs.remove(hiddenStorageKey);
     });
+  }
+
+  Future<void> _removeOutboxForClear(
+    LocalReviewPreferences prefs,
+    String key,
+  ) async {
+    bool removed;
+    try {
+      removed = await prefs.remove(key);
+    } catch (error, stackTrace) {
+      // An unacknowledged clear cannot license a later producer to replay
+      // definite failed appends into a namespace that may have been cleared.
+      final retryable = _retryableAppends.remove(key);
+      if (retryable != null) {
+        _uncertainAppends.putIfAbsent(key, () => []).addAll(retryable);
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+    if (!removed) throw LocalOutboxWriteException(key);
+    _retryableAppends.remove(key);
+    _uncertainAppends.remove(key);
+  }
+
+  Future<int> _appendProducer(
+    LocalReviewPreferences prefs,
+    String key,
+    List<Map<String, dynamic>> durable,
+    Map<String, dynamic> entry,
+  ) async {
+    _settleVisiblePending(key, durable);
+    if (_uncertainAppends[key]?.isNotEmpty ?? false) {
+      // An absent action from a thrown native call might already have been
+      // delivered and drained elsewhere. Retrying it would double-apply it.
+      throw LocalOutboxWriteException(key);
+    }
+
+    final ids = <Object?>{
+      for (final item in durable)
+        if (item['client_id'] != null) item['client_id'],
+    };
+    for (final item
+        in _retryableAppends[key] ?? const <Map<String, dynamic>>[]) {
+      final id = item['client_id'];
+      if (id == null || ids.add(id)) durable.add(item);
+    }
+    final incomingId = entry['client_id'];
+    final appendNew = incomingId == null || !ids.contains(incomingId);
+    if (!appendNew && (_retryableAppends[key]?.isEmpty ?? true)) {
+      // A caller retrying a previously committed action must not duplicate it
+      // or replace a durable delivery_attempted marker.
+      return durable.length;
+    }
+    final appended = appendNew ? Map<String, dynamic>.from(entry) : null;
+    if (appended != null) durable.add(appended);
+    final encoded = jsonEncode(durable);
+    bool written;
+    try {
+      written = await prefs.setString(key, encoded);
+    } catch (error, stackTrace) {
+      // Every retryable item included in this unknown write becomes unknown
+      // too, even if its earlier attempt was a definite refusal.
+      final uncertain = _uncertainAppends.putIfAbsent(key, () => []);
+      uncertain.addAll(_retryableAppends.remove(key) ?? []);
+      if (appended != null) uncertain.add(appended);
+      try {
+        _settleVisiblePending(key, _readList(await _prefs, key));
+      } catch (_) {
+        // A failed reconciliation read cannot grant retry authority.
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+    if (!written) {
+      if (appended != null) {
+        _retryableAppends.putIfAbsent(key, () => []).add(appended);
+      }
+      throw LocalOutboxWriteException(key);
+    }
+    _retryableAppends.remove(key);
+    return durable.length;
+  }
+
+  void _settleVisiblePending(String key, List<Map<String, dynamic>> durable) {
+    final ids = {
+      for (final item in durable)
+        if (item['client_id'] != null) item['client_id'],
+    };
+    for (final pending in [_retryableAppends, _uncertainAppends]) {
+      final entries = pending[key];
+      entries?.removeWhere(
+        (e) => e['client_id'] != null && ids.contains(e['client_id']),
+      );
+      if (entries?.isEmpty ?? false) pending.remove(key);
+    }
+  }
+
+  int _pendingCount(String key, List<Map<String, dynamic>> durable) {
+    final ids = <Object?>{
+      for (final item in durable)
+        if (item['client_id'] != null) item['client_id'],
+    };
+    var count = durable.length;
+    for (final pending in [_retryableAppends, _uncertainAppends]) {
+      for (final item in pending[key] ?? const <Map<String, dynamic>>[]) {
+        final id = item['client_id'];
+        if (id == null || ids.add(id)) count++;
+      }
+    }
+    return count;
+  }
+
+  bool _hasPendingId(
+    Map<String, List<Map<String, dynamic>>> pending,
+    String key,
+    Object id,
+  ) => pending[key]?.any((e) => e['client_id'] == id) ?? false;
+
+  bool _removePendingId(
+    Map<String, List<Map<String, dynamic>>> pending,
+    String key,
+    Object id,
+  ) {
+    final entries = pending[key];
+    if (entries == null) return false;
+    final before = entries.length;
+    entries.removeWhere((e) => e['client_id'] == id);
+    if (entries.isEmpty) pending.remove(key);
+    return entries.length != before;
+  }
+
+  void _dropPendingId(String key, Object id) {
+    _removePendingId(_retryableAppends, key, id);
+    _removePendingId(_uncertainAppends, key, id);
+  }
+
+  void _dropDrainedIds(String key, Iterable<Map<String, dynamic>> drained) {
+    for (final item in drained) {
+      final id = item['client_id'];
+      if (id != null) _dropPendingId(key, id);
+    }
   }
 
   List<Map<String, dynamic>> _readOutbox(
