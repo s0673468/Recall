@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'catch_up_state.dart';
 import 'models.dart';
@@ -38,6 +39,7 @@ class LocalReviewStore {
   static const maxDailyRemediations = 3;
 
   Future<void> _outboxTail = Future.value();
+  static Future<void> _ownerMigrationTail = Future.value();
   Future<SharedPreferences>? _prefsFuture;
   String? _installId;
   int _eventSequence = 0;
@@ -125,6 +127,13 @@ class LocalReviewStore {
     return run;
   }
 
+  static Future<T> _withOwnerMigrationLock<T>(Future<T> Function() action) {
+    final run = _ownerMigrationTail.then((_) => action());
+    // A failed activation must not block another instance's later claim.
+    _ownerMigrationTail = run.then((_) {}, onError: (_) {});
+    return run;
+  }
+
   /// Select the account namespace used by every cache and durable outbox.
   ///
   /// The first upgraded account claims the legacy unscoped values. They are
@@ -135,43 +144,49 @@ class LocalReviewStore {
       return Future.error(ArgumentError.value(ownerId, 'ownerId'));
     }
     final scope = _scopeForOwner(ownerId);
-    return _withOutboxLock(() async {
-      final prefs = await _prefs;
-      // Failed native writes still update SharedPreferences' in-memory cache.
-      // Recheck the durable claim, migration flag, and scoped destinations
-      // before a retry can mark a partially copied owner as migrated.
-      await prefs.reload();
-      final claimed = prefs.getString(_legacyOwnerClaimKey);
-      if (claimed == null) {
-        if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
-          throw LocalOutboxWriteException(_legacyOwnerClaimKey);
-        }
-      }
-      final ownerClaim = claimed ?? scope;
-      final migrationKey = '$_ownerMigrationKey:$scope';
-      if (ownerClaim == scope && prefs.getBool(migrationKey) != true) {
-        for (final base in [
-          _snapshotKey,
-          _outboxKey,
-          _flagOutboxKey,
-          catchUpKey,
-          remediationKey,
-        ]) {
-          final legacy = prefs.getString(base);
-          final scoped = _scopedKey(base, scope);
-          if (legacy != null && prefs.getString(scoped) == null) {
-            if (!await prefs.setString(scoped, legacy)) {
-              throw LocalOutboxWriteException(scoped);
-            }
+    return _withOutboxLock(
+      () => _withOwnerMigrationLock(() async {
+        final prefs = await _prefs;
+        // Failed native writes still update SharedPreferences' in-memory cache.
+        // Read only the durable migration state on retries. Reloading the shared
+        // singleton would also replace unrelated pending settings writes.
+        // The legacy API uses the default 'flutter.' prefix; getAll returns the
+        // native keys with that prefix still attached.
+        final durable = await SharedPreferencesStorePlatform.instance.getAll();
+        String? durableString(String key) => durable['flutter.$key'] as String?;
+        final claimed = durableString(_legacyOwnerClaimKey);
+        if (claimed == null) {
+          if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
+            throw LocalOutboxWriteException(_legacyOwnerClaimKey);
           }
         }
-        if (!await prefs.setBool(migrationKey, true)) {
-          throw LocalOutboxWriteException(migrationKey);
+        final ownerClaim = claimed ?? scope;
+        final migrationKey = '$_ownerMigrationKey:$scope';
+        if (ownerClaim == scope &&
+            (durable['flutter.$migrationKey'] as bool?) != true) {
+          for (final base in [
+            _snapshotKey,
+            _outboxKey,
+            _flagOutboxKey,
+            catchUpKey,
+            remediationKey,
+          ]) {
+            final legacy = durableString(base);
+            final scoped = _scopedKey(base, scope);
+            if (legacy != null && durableString(scoped) == null) {
+              if (!await prefs.setString(scoped, legacy)) {
+                throw LocalOutboxWriteException(scoped);
+              }
+            }
+          }
+          if (!await prefs.setBool(migrationKey, true)) {
+            throw LocalOutboxWriteException(migrationKey);
+          }
         }
-      }
-      _ownerAware = true;
-      _activeOwnerScope = scope;
-    });
+        _ownerAware = true;
+        _activeOwnerScope = scope;
+      }),
+    );
   }
 
   Future<void> releaseOwner() => _withOutboxLock(() async {
