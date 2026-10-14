@@ -200,8 +200,8 @@ class ReviewController extends ChangeNotifier {
       // A provider can switch accounts without emitting an intermediate local
       // sign-out. Do not let the old queue, due count, or review activity drive
       // the new owner's reminder while that owner's data is loading.
-      final newSession = change.event == AuthChangeEvent.signedIn &&
-          _activeUserId == user.id;
+      final newSession =
+          change.event == AuthChangeEvent.signedIn && _activeUserId == user.id;
       if (_activeUserId != user.id || newSession) {
         // Shared Stats/Read aggregates belong to the previous owner.
         RecallReadCache.of(api).clear();
@@ -354,10 +354,8 @@ class ReviewController extends ChangeNotifier {
       if (identical(_signOutAttempt, attempt)) _signOutAttempt = null;
     });
     _signOutAttempt = attempt;
-    _runSignOut(attempt).then(
-      completion.complete,
-      onError: completion.completeError,
-    );
+    _runSignOut(attempt)
+        .then(completion.complete, onError: completion.completeError);
     return attempt.task;
   }
 
