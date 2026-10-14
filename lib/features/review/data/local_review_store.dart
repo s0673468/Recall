@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catch_up_state.dart';
+import 'local_review_preferences.dart';
 import 'models.dart';
 
 /// On-device persistence so Recall opens instantly and works offline:
@@ -38,6 +39,7 @@ class LocalReviewStore {
   static const maxDailyRemediations = 3;
 
   Future<void> _outboxTail = Future.value();
+  static Future<void>? _ownerMigrationTail;
   Future<SharedPreferences>? _prefsFuture;
   String? _installId;
   int _eventSequence = 0;
@@ -56,8 +58,11 @@ class LocalReviewStore {
   bool isActiveOwner(String ownerId) =>
       _activeOwnerScope == _scopeForOwner(ownerId);
 
-  Future<SharedPreferences> get _prefs =>
-      _prefsFuture ??= SharedPreferences.getInstance();
+  // Keep the legacy writer, but read persisted state into a fresh local view.
+  Future<LocalReviewPreferences> get _prefs async {
+    final writer = await (_prefsFuture ??= SharedPreferences.getInstance());
+    return LocalReviewPreferences.readSnapshot(writer);
+  }
 
   /// Random source for durable ids. `Random.secure()` can be unavailable on
   /// some embedders; uniqueness (not unpredictability) is what matters here,
@@ -125,6 +130,30 @@ class LocalReviewStore {
     return run;
   }
 
+  static Future<T> _withOwnerMigrationLock<T>(Future<T> Function() action) {
+    // Create the idle starting point in this caller's Zone. A completed static
+    // Future can otherwise retain a drained Zone between Flutter tests.
+    final predecessor = _ownerMigrationTail ?? Future<void>.value();
+    final run = predecessor.then((_) => action());
+    late final Future<void> tail;
+    // Settle the caller's Future only after releasing the idle static tail.
+    // A queued successor replaces it, so this run cannot clear that successor.
+    final completed = run.then<T>(
+      (value) {
+        if (identical(_ownerMigrationTail, tail)) _ownerMigrationTail = null;
+        return value;
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_ownerMigrationTail, tail)) _ownerMigrationTail = null;
+        Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
+    // Keep the queue live past failures without retaining its settled Future.
+    tail = completed.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _ownerMigrationTail = tail;
+    return completed;
+  }
+
   /// Select the account namespace used by every cache and durable outbox.
   ///
   /// The first upgraded account claims the legacy unscoped values. They are
@@ -135,39 +164,43 @@ class LocalReviewStore {
       return Future.error(ArgumentError.value(ownerId, 'ownerId'));
     }
     final scope = _scopeForOwner(ownerId);
-    return _withOutboxLock(() async {
-      final prefs = await _prefs;
-      final claimed = prefs.getString(_legacyOwnerClaimKey);
-      if (claimed == null) {
-        if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
-          throw LocalOutboxWriteException(_legacyOwnerClaimKey);
-        }
-      }
-      final ownerClaim = claimed ?? scope;
-      final migrationKey = '$_ownerMigrationKey:$scope';
-      if (ownerClaim == scope && prefs.getBool(migrationKey) != true) {
-        for (final base in [
-          _snapshotKey,
-          _outboxKey,
-          _flagOutboxKey,
-          catchUpKey,
-          remediationKey,
-        ]) {
-          final legacy = prefs.getString(base);
-          final scoped = _scopedKey(base, scope);
-          if (legacy != null && prefs.getString(scoped) == null) {
-            if (!await prefs.setString(scoped, legacy)) {
-              throw LocalOutboxWriteException(scoped);
-            }
+    return _withOutboxLock(
+      () => _withOwnerMigrationLock(() async {
+        final prefs = await _prefs;
+        // The isolated view reads persisted values without reloading the
+        // shared settings cache. It includes only acknowledged writes here.
+        final claimed = prefs.getString(_legacyOwnerClaimKey);
+        if (claimed == null) {
+          if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
+            throw LocalOutboxWriteException(_legacyOwnerClaimKey);
           }
         }
-        if (!await prefs.setBool(migrationKey, true)) {
-          throw LocalOutboxWriteException(migrationKey);
+        final ownerClaim = claimed ?? scope;
+        final migrationKey = '$_ownerMigrationKey:$scope';
+        if (ownerClaim == scope && prefs.getBool(migrationKey) != true) {
+          for (final base in [
+            _snapshotKey,
+            _outboxKey,
+            _flagOutboxKey,
+            catchUpKey,
+            remediationKey,
+          ]) {
+            final legacy = prefs.getString(base);
+            final scoped = _scopedKey(base, scope);
+            if (legacy != null && prefs.getString(scoped) == null) {
+              if (!await prefs.setString(scoped, legacy)) {
+                throw LocalOutboxWriteException(scoped);
+              }
+            }
+          }
+          if (!await prefs.setBool(migrationKey, true)) {
+            throw LocalOutboxWriteException(migrationKey);
+          }
         }
-      }
-      _ownerAware = true;
-      _activeOwnerScope = scope;
-    });
+        _ownerAware = true;
+        _activeOwnerScope = scope;
+      }),
+    );
   }
 
   Future<void> releaseOwner() => _withOutboxLock(() async {
@@ -349,8 +382,7 @@ class LocalReviewStore {
   Future<CatchUpLocalState> loadCatchUpState() {
     final key = _storageKey(catchUpKey);
     return _withOutboxLock(() async {
-      // SharedPreferences updates its memory cache before native persistence
-      // acknowledges the write. Read only after the shared writer has settled.
+      // Earlier writes on this store settle before this fresh native read.
       final prefs = await _prefs;
       final raw = prefs.getString(key);
       if (raw == null) return CatchUpLocalState.none;
@@ -474,7 +506,7 @@ class LocalReviewStore {
     });
   }
 
-  Set<int> _readHidden(SharedPreferences prefs, String key) {
+  Set<int> _readHidden(LocalReviewPreferences prefs, String key) {
     final raw = prefs.getString(key);
     if (raw == null) return <int>{};
     try {
@@ -611,10 +643,15 @@ class LocalReviewStore {
     });
   }
 
-  List<Map<String, dynamic>> _readOutbox(SharedPreferences prefs, String key) =>
-      _readList(prefs, key);
+  List<Map<String, dynamic>> _readOutbox(
+    LocalReviewPreferences prefs,
+    String key,
+  ) => _readList(prefs, key);
 
-  List<Map<String, dynamic>> _readList(SharedPreferences prefs, String key) {
+  List<Map<String, dynamic>> _readList(
+    LocalReviewPreferences prefs,
+    String key,
+  ) {
     final raw = prefs.getString(key);
     if (raw == null) return [];
     try {
@@ -631,7 +668,7 @@ class LocalReviewStore {
   }
 
   List<LocalRemediationItem> _readRemediations(
-    SharedPreferences prefs,
+    LocalReviewPreferences prefs,
     String key,
   ) => [
     for (final entry in _readList(prefs, key))
@@ -640,7 +677,7 @@ class LocalReviewStore {
   ];
 
   Future<void> _writeList(
-    SharedPreferences prefs,
+    LocalReviewPreferences prefs,
     String key,
     List<Map<String, dynamic>> list,
   ) async {
