@@ -146,7 +146,7 @@ class LocalReviewStore {
       },
     );
     // Keep the queue live past failures without retaining its settled Future.
-    tail = completed.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    tail = completed.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     _ownerMigrationTail = tail;
     return completed;
   }
