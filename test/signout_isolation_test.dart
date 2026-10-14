@@ -51,7 +51,10 @@ class _Api extends SanitizedRecallApi {
   int signOutCalls = 0;
   bool failWrites = true;
   bool failSignOut = false;
+  bool failAfterLocalSignOut = false;
   bool failDismiss = true;
+  _Gate? beforeLocalSignOut;
+  _Gate? afterLocalSignOut;
   final reviewAttempts = <String>[];
   final flagAttempts = <String>[];
 
@@ -96,7 +99,16 @@ class _Api extends SanitizedRecallApi {
   Future<void> signOut() async {
     signOutCalls++;
     if (failSignOut) throw StateError('invented auth sign-out failure');
+    final beforeLocal = beforeLocalSignOut;
+    beforeLocalSignOut = null;
+    if (beforeLocal != null) await beforeLocal.hold();
     await super.signOut();
+    final afterLocal = afterLocalSignOut;
+    afterLocalSignOut = null;
+    if (afterLocal != null) await afterLocal.hold();
+    if (failAfterLocalSignOut) {
+      throw StateError('invented remote auth sign-out failure');
+    }
   }
 }
 
@@ -154,8 +166,9 @@ Future<void> _until(bool Function() ready) async {
   fail('Invented session did not settle');
 }
 
-Future<({ReviewController controller, _Api api, _Store store})>
-_session() async {
+Future<({ReviewController controller, _Api api, _Store store})> _session({
+  Future<void> Function()? afterSignOut,
+}) async {
   final api = _Api();
   final store = _Store();
   final controller = ReviewController(
@@ -165,6 +178,7 @@ _session() async {
     haptics: const ReviewHaptics(),
     clock: () => _now,
     beforeSessionLoad: () => store.activateOwner(api.currentUser!.id),
+    afterSignOut: afterSignOut,
   );
   addTearDown(() {
     controller.dispose();
@@ -179,6 +193,21 @@ _session() async {
   );
   expect(controller.state.current?.id, 101);
   return (controller: controller, api: api, store: store);
+}
+
+Future<void> _signInLoaded(
+  ReviewController controller,
+  _Api api,
+  _Store store,
+  String email,
+) async {
+  await api.signIn(email: email, password: 'invented-password');
+  await _until(
+    () =>
+        store.isActiveOwner(api.currentUser!.id) &&
+        !controller.state.loading &&
+        controller.state.current?.id == 101,
+  );
 }
 
 Future<Object?> _outcome(Future<void> action) async {
@@ -463,6 +492,293 @@ void main() {
       await controller.syncPending();
     },
   );
+
+  for (final action in ['rating', 'flag', 'hide', 'Undo']) {
+    test('new account $action works while prior remote sign-out is held', () async {
+      final (:controller, :api, :store) = await _session();
+      final oldRemote = _Gate();
+      addTearDown(oldRemote.open);
+      api.afterLocalSignOut = oldRemote;
+      final oldSignOut = _outcome(controller.signOut());
+      await oldRemote.entered.future;
+      await _until(
+        () => controller.currentUser == null && controller.state.current == null,
+      );
+      await _signInLoaded(
+        controller,
+        api,
+        store,
+        'synthetic-signout-b@example.invalid',
+      );
+      final ownerB = store.activeOwnerScope!;
+
+      switch (action) {
+        case 'rating':
+          controller.flip();
+          await controller.rate(Rating.good);
+          expect(controller.state.current?.id, 102);
+          expect((await store.outbox(ownerScope: ownerB)).single['card_id'], 101);
+          break;
+        case 'flag':
+          await controller.flag('wrong');
+          expect(controller.state.current?.id, 101);
+          expect(
+            (await store.flagOutbox(ownerScope: ownerB)).single['reason'],
+            'wrong',
+          );
+          break;
+        case 'hide':
+          await controller.hideCurrent('dislike');
+          expect(controller.state.current?.id, 102);
+          expect(
+            (await store.flagOutbox(ownerScope: ownerB)).single['reason'],
+            'dislike',
+          );
+          break;
+        case 'Undo':
+          await controller.hideCurrent('dislike');
+          expect(controller.state.current?.id, 102);
+          await controller.undo();
+          expect(controller.state.current?.id, 101);
+          expect(
+            (await store.flagOutbox(ownerScope: ownerB)).single['op'],
+            ReviewController.dismissOp,
+          );
+          break;
+      }
+      oldRemote.open();
+      expect(await oldSignOut, isNull);
+      expect(api.currentUser, isNotNull);
+      expect(store.activeOwnerScope, ownerB);
+    });
+  }
+
+  test('same UID relogin opens a fresh study action session', () async {
+    var releases = 0;
+    final (:controller, :api, :store) = await _session(
+      afterSignOut: () async {
+        releases++;
+      },
+    );
+    final oldRemote = _Gate();
+    addTearDown(oldRemote.open);
+    api.afterLocalSignOut = oldRemote;
+    final oldSignOut = _outcome(controller.signOut());
+    await oldRemote.entered.future;
+    // Queue the relogin before the previous signedOut event is observed.
+    await api.signIn(
+      email: 'synthetic-signout-a@example.invalid',
+      password: 'invented-password',
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(releases, 1);
+    await _until(
+      () =>
+          store.isActiveOwner(api.currentUser!.id) &&
+          !controller.state.loading &&
+          controller.state.current?.id == 101,
+    );
+    controller.flip();
+    await controller.rate(Rating.good);
+    expect(controller.state.current?.id, 102);
+    expect((await store.outbox()).single['card_id'], 101);
+    oldRemote.open();
+    expect(await oldSignOut, isNull);
+  });
+
+  for (final oldRemoteOutcome in ['completion', 'failure']) {
+    test('new sign-out owns its barrier after old remote $oldRemoteOutcome', () async {
+      var releases = 0;
+      String? resourceOwner = 'A';
+      final (:controller, :api, :store) = await _session(
+        afterSignOut: () async {
+          releases++;
+          resourceOwner = null;
+        },
+      );
+      final oldRemote = _Gate();
+      final newBeforeLocal = _Gate();
+      final producer = _Gate();
+      addTearDown(oldRemote.open);
+      addTearDown(newBeforeLocal.open);
+      addTearDown(producer.open);
+      api.afterLocalSignOut = oldRemote;
+      api.failAfterLocalSignOut = oldRemoteOutcome == 'failure';
+      final oldSignOut = _outcome(controller.signOut());
+      await oldRemote.entered.future;
+      await _until(() => releases == 1);
+      await _signInLoaded(
+        controller,
+        api,
+        store,
+        'synthetic-signout-b@example.invalid',
+      );
+      resourceOwner = 'B';
+      api.failWrites = false;
+      store.nextId = producer;
+      controller.flip();
+      final rating = _outcome(controller.rate(Rating.good));
+      await producer.entered.future;
+      api.beforeLocalSignOut = newBeforeLocal;
+      final newSignOutTask = controller.signOut();
+      final newSignOut = _outcome(newSignOutTask);
+      oldRemote.open();
+      expect(
+        await oldSignOut,
+        oldRemoteOutcome == 'failure' ? isA<StateError>() : isNull,
+      );
+      expect(releases, 1);
+      expect(resourceOwner, 'B');
+      expect(api.signOutCalls, 1); // B must still be draining its producer.
+      await controller.flag('wrong');
+      expect(api.flagAttempts, isEmpty); // B's own barrier still closes ingress.
+      expect(await store.flagOutbox(), isEmpty);
+      producer.open();
+      expect(await rating, isNull);
+      await _until(() => api.signOutCalls == 2);
+      expect(newBeforeLocal.entered.isCompleted, isTrue);
+      expect(api.reviewAttempts, [store.lastMintedId]);
+      expect(await store.outbox(), isEmpty);
+      expect(identical(controller.signOut(), newSignOutTask), isTrue);
+      api.failAfterLocalSignOut = false;
+      newBeforeLocal.open();
+      expect(await newSignOut, isNull);
+      expect(releases, 2);
+      expect(resourceOwner, isNull);
+      expect(api.currentUser, isNull);
+    });
+  }
+
+  test('old remote failure cannot release or block the new account', () async {
+    var releases = 0;
+    String? resourceOwner = 'A';
+    final (:controller, :api, :store) = await _session(
+      afterSignOut: () async {
+        releases++;
+        resourceOwner = null;
+      },
+    );
+    final oldRemote = _Gate();
+    addTearDown(oldRemote.open);
+    api.afterLocalSignOut = oldRemote;
+    api.failAfterLocalSignOut = true;
+    final oldSignOut = _outcome(controller.signOut());
+    await oldRemote.entered.future;
+    await _until(() => releases == 1);
+    await _signInLoaded(
+      controller,
+      api,
+      store,
+      'synthetic-signout-b@example.invalid',
+    );
+    resourceOwner = 'B';
+    controller.flip();
+    await controller.rate(Rating.good);
+    expect(controller.state.current?.id, 102);
+    expect((await store.outbox()).single['card_id'], 101);
+    oldRemote.open();
+    expect(await oldSignOut, isA<StateError>());
+    expect(releases, 1);
+    expect(resourceOwner, 'B');
+    await controller.flag('wrong');
+    expect((await store.flagOutbox()).single['reason'], 'wrong');
+  });
+
+  test('same UID replacement during old clear cannot sign out new session', () async {
+    final (:controller, :api, :store) = await _session();
+    final clearGate = _Gate();
+    addTearDown(clearGate.open);
+    store.beforeClear = clearGate;
+    final oldSignOut = _outcome(controller.signOut());
+    await clearGate.entered.future;
+    await api.signIn(
+      email: 'synthetic-signout-a@example.invalid',
+      password: 'invented-password',
+    );
+    await Future<void>.delayed(Duration.zero);
+    clearGate.open();
+    expect(await oldSignOut, isA<StateError>());
+    expect(api.signOutCalls, 0);
+    await _until(
+      () => !controller.state.loading && controller.state.current?.id == 101,
+    );
+    controller.flip();
+    await controller.rate(Rating.good);
+    expect((await store.outbox()).single['card_id'], 101);
+  });
+
+  test('same UID replacement during old producer drain cannot sign out new session', () async {
+    final (:controller, :api, :store) = await _session();
+    api.failWrites = false;
+    final producer = _Gate();
+    addTearDown(producer.open);
+    store.nextId = producer;
+    controller.flip();
+    final oldRating = _outcome(controller.rate(Rating.good));
+    await producer.entered.future;
+    final oldSignOut = _outcome(controller.signOut());
+    await api.signIn(
+      email: 'synthetic-signout-a@example.invalid',
+      password: 'invented-password',
+    );
+    await Future<void>.delayed(Duration.zero);
+    producer.open();
+    expect(await oldRating, isNull);
+    expect(await oldSignOut, isA<StateError>());
+    expect(api.signOutCalls, 0);
+    expect(api.currentUser, isNotNull);
+    await _until(
+      () => !controller.state.loading && controller.state.current?.id == 101,
+    );
+    expect(await store.outbox(), isEmpty);
+  });
+
+  test('replacement account sign-out drains its own flag while old rating ID is held', () async {
+    final (:controller, :api, :store) = await _session();
+    final oldProducer = _Gate();
+    final newProducer = _Gate();
+    addTearDown(oldProducer.open);
+    addTearDown(newProducer.open);
+    store.nextId = oldProducer;
+    controller.flip();
+    final oldRating = _outcome(controller.rate(Rating.good));
+    await oldProducer.entered.future;
+    final oldSignOut = _outcome(controller.signOut());
+    await _signInLoaded(
+      controller,
+      api,
+      store,
+      'synthetic-signout-b@example.invalid',
+    );
+    final ownerB = store.activeOwnerScope!;
+    api.failWrites = false;
+    store.nextId = newProducer;
+    final newFlag = _outcome(controller.flag('wrong'));
+    await newProducer.entered.future;
+    final newSignOut = _outcome(controller.signOut());
+    try {
+      newProducer.open();
+      expect(await newFlag, isNull);
+      // A's ID gate remains closed. A's producer must not join B's drain.
+      for (var i = 0; i < 200; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(oldProducer.release.isCompleted, isFalse);
+      expect(api.signOutCalls, 1);
+      expect(api.flagAttempts, [store.lastMintedId]);
+      expect(await store.flagOutbox(ownerScope: ownerB), isEmpty);
+      expect(await newSignOut, isNull);
+      expect(api.currentUser, isNull);
+    } finally {
+      oldProducer.open();
+      newProducer.open();
+      await oldRating;
+      await oldSignOut;
+      await newFlag;
+      await newSignOut;
+    }
+    expect(api.signOutCalls, 1);
+  });
 
   test('malformed outbox prevents guarded cache removal', () async {
     SharedPreferences.setMockInitialValues({

@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:supabase_flutter/supabase_flutter.dart'
-    show AuthException, AuthState, User;
+    show AuthChangeEvent, AuthException, AuthState, User;
 
 import '../../../core/background/background_sync_coordinator.dart';
 import '../../../core/diagnostics/operational_diagnostics.dart';
@@ -27,6 +27,14 @@ typedef _RecentReviews = ({
   List<ReviewLogEntry> reviews,
   ReviewActivitySnapshot activity,
 });
+
+class _SignOutAttempt {
+  final int sessionGeneration;
+  late final Future<void> task;
+  Future<void>? signedOutRelease;
+
+  _SignOutAttempt(this.sessionGeneration);
+}
 
 /// Owns auth + the study session: gates on the signed-in user, loads the queue
 /// (cloud, with an offline cache fallback), flips cards, schedules ratings with
@@ -160,31 +168,47 @@ class ReviewController extends ChangeNotifier {
 
   // --- Auth ---
 
-  void _onAuthChanged(AuthState _) {
+  void _onAuthChanged(AuthState change) {
     final user = api.currentUser;
-    if (user == null) {
+    if (user == null || change.event == AuthChangeEvent.signedOut) {
       // Signed out — drop the session state and show the login gate.
       RecallReadCache.of(api).clear();
+      final signOutAttempt = _signOutAttempt;
+      final signedOutGeneration = _sessionSetupGeneration;
       _sessionSetupGeneration++;
       _activeUserId = null;
       _sessionSetupOwner = null;
       _sessionLoaded = false;
-      unawaited(_releaseAfterAuthSignOut());
+      final release = _releaseAfterAuthSignOut();
+      if (signOutAttempt?.sessionGeneration == signedOutGeneration) {
+        signOutAttempt!.signedOutRelease = release;
+      }
+      unawaited(release);
       _invalidateActiveSession();
       engine.resetToDefaults();
       _undo = null; // the session (and its undo snapshot) is gone
       _hideUndo = null;
       _set(const ReviewState(loading: false));
+      // Auth events can be queued: a new login may already be current when
+      // the old signedOut event is delivered. It is still a new session even
+      // when that login has the same UID.
+      if (user != null) {
+        _activeUserId = user.id;
+        _startSignedInSession(user.id);
+      }
     } else {
       // A provider can switch accounts without emitting an intermediate local
       // sign-out. Do not let the old queue, due count, or review activity drive
       // the new owner's reminder while that owner's data is loading.
-      if (_activeUserId != user.id) {
+      final newSession = change.event == AuthChangeEvent.signedIn &&
+          _activeUserId == user.id;
+      if (_activeUserId != user.id || newSession) {
         // Shared Stats/Read aggregates belong to the previous owner.
         RecallReadCache.of(api).clear();
         _sessionSetupGeneration++;
         if (_activeUserId != null) {
           _sessionLoaded = false;
+          _sessionSetupOwner = null;
           _invalidateActiveSession();
           engine.resetToDefaults();
           _set(const ReviewState(loading: false));
@@ -297,17 +321,20 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  Future<void>? _signOutTask;
-  final Set<Future<void>> _studyActionTasks = {};
+  _SignOutAttempt? _signOutAttempt;
+  final Map<Future<void>, int> _studyActionTasks = {};
 
   /// Admit before the first producer await so sign-out can close ingress and
   /// join every action that could still append a review, flag, or withdrawal.
   Future<void> _runStudyAction(Future<void> Function() action) {
-    if (_signOutTask != null) return Future.value();
+    if (_signOutAttempt?.sessionGeneration == _sessionSetupGeneration) {
+      return Future.value();
+    }
+    final sessionGeneration = _sessionSetupGeneration;
     final completion = Completer<void>();
     late final Future<void> task;
     task = completion.future.whenComplete(() => _studyActionTasks.remove(task));
-    _studyActionTasks.add(task);
+    _studyActionTasks[task] = sessionGeneration;
     // A body's synchronous notification can itself initiate sign-out. Record
     // admission before invoking it, including before that first notification.
     action().then(completion.complete, onError: completion.completeError);
@@ -315,21 +342,30 @@ class ReviewController extends ChangeNotifier {
   }
 
   Future<void> signOut() {
-    final existing = _signOutTask;
-    if (existing != null) return existing;
+    final existing = _signOutAttempt;
+    if (existing?.sessionGeneration == _sessionSetupGeneration) {
+      return existing!.task;
+    }
     // Install the barrier synchronously, before _runSignOut can yield. A
     // failed drain/auth release reopens ingress for the preserved session.
+    final attempt = _SignOutAttempt(_sessionSetupGeneration);
     final completion = Completer<void>();
-    final task = completion.future.whenComplete(() => _signOutTask = null);
-    _signOutTask = task;
-    _runSignOut().then(completion.complete, onError: completion.completeError);
-    return task;
+    attempt.task = completion.future.whenComplete(() {
+      if (identical(_signOutAttempt, attempt)) _signOutAttempt = null;
+    });
+    _signOutAttempt = attempt;
+    _runSignOut(attempt).then(
+      completion.complete,
+      onError: completion.completeError,
+    );
+    return attempt.task;
   }
 
-  Future<void> _runSignOut() async {
+  Future<void> _runSignOut(_SignOutAttempt attempt) async {
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
     bool stillOwnsSession() =>
+        attempt.sessionGeneration == _sessionSetupGeneration &&
         ownerScope == store.activeOwnerScope &&
         ownerId == api.currentUser?.id &&
         (!store.ownerAware ||
@@ -343,7 +379,10 @@ class ReviewController extends ChangeNotifier {
     // Sign-out is deliberately fail-closed: an offline review is user data,
     // not disposable cache. Settle admitted producers before flushing their
     // durable actions; joining senders alone cannot cover an ID/write await.
-    await Future.wait<void>(List.of(_studyActionTasks));
+    await Future.wait<void>([
+      for (final entry in _studyActionTasks.entries)
+        if (entry.value == attempt.sessionGeneration) entry.key,
+    ]);
     requireSameOwner();
     await Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
     requireSameOwner();
@@ -373,7 +412,17 @@ class ReviewController extends ChangeNotifier {
     // Native delivery is account-scoped. Cancel only after the cloud/auth
     // session has actually been released; an offline/failed sign-out above
     // keeps the reminder armed instead of silently disabling every channel.
-    await _releaseAfterAuthSignOut();
+    // The auth event owns this release. A later account may already have
+    // finished preparing while the old remote logout was still pending.
+    final release = attempt.signedOutRelease;
+    if (release != null) {
+      await release;
+    } else if (api.currentUser == null &&
+        _sessionSetupGeneration == attempt.sessionGeneration) {
+      // Also cover an auth adapter whose signedOut event is delivered after
+      // its signOut future. That event will join this same local release.
+      await _releaseAfterAuthSignOut();
+    }
   }
 
   void _invalidateActiveSession() {
