@@ -6,19 +6,30 @@ class _MemorySecretStore implements SessionSecretStore {
   final values = <String, String>{};
   bool failWrites = false;
   bool failDeletes = false;
+  bool failReads = false;
+  bool retainAfterDelete = false;
+  String? readAfterWriteOverride;
+  int writeCalls = 0;
 
   @override
   Future<void> delete(String key) async {
     if (failDeletes) throw StateError('delete failed');
-    values.remove(key);
+    if (!retainAfterDelete) values.remove(key);
   }
 
   @override
-  Future<String?> read(String key) async => values[key];
+  Future<String?> read(String key) async {
+    if (failReads) throw StateError('read failed');
+    if (writeCalls > 0 && readAfterWriteOverride != null) {
+      return readAfterWriteOverride;
+    }
+    return values[key];
+  }
 
   @override
   Future<void> write(String key, String value) async {
     if (failWrites) throw StateError('write failed');
+    writeCalls++;
     values[key] = value;
   }
 }
@@ -28,6 +39,7 @@ class _MemoryLegacyCredentialStore implements LegacyCredentialStore {
   final deleteCalls = <String>[];
   bool retainAfterDelete = false;
   String? failDeleteKey;
+  String? failContainsKey;
 
   @override
   Future<void> delete(String key) async {
@@ -37,7 +49,10 @@ class _MemoryLegacyCredentialStore implements LegacyCredentialStore {
   }
 
   @override
-  Future<bool> containsKey(String key) async => values.containsKey(key);
+  Future<bool> containsKey(String key) async {
+    if (key == failContainsKey) throw StateError('contains failed for $key');
+    return values.containsKey(key);
+  }
 }
 
 void main() {
@@ -85,6 +100,74 @@ void main() {
       'legacy-session',
     );
   });
+
+  test(
+    'native secure read error refuses legacy migration without erasing it',
+    () async {
+      const legacyKey = 'sb-invented-auth-token';
+      SharedPreferences.setMockInitialValues({legacyKey: 'invented-session'});
+      final secrets = _MemorySecretStore()..failReads = true;
+      final storage = SecureRecallSupabaseLocalStorage(
+        secretStore: secrets,
+        legacyCredentialStore: _MemoryLegacyCredentialStore(),
+        secureKey: 'invented-secure-key',
+        legacyPreferencesKey: legacyKey,
+      );
+
+      await expectLater(storage.accessToken(), throwsStateError);
+
+      expect(secrets.values, isEmpty);
+      expect(
+        (await SharedPreferences.getInstance()).getString(legacyKey),
+        'invented-session',
+      );
+    },
+  );
+
+  test(
+    'unverified secure write refuses migration and retains legacy session',
+    () async {
+      const legacyKey = 'sb-invented-auth-token';
+      SharedPreferences.setMockInitialValues({legacyKey: 'invented-session'});
+      final secrets = _MemorySecretStore()
+        ..readAfterWriteOverride = 'stale-readback';
+      final storage = SecureRecallSupabaseLocalStorage(
+        secretStore: secrets,
+        legacyCredentialStore: _MemoryLegacyCredentialStore(),
+        secureKey: 'invented-secure-key',
+        legacyPreferencesKey: legacyKey,
+      );
+
+      await expectLater(storage.accessToken(), throwsStateError);
+
+      expect(secrets.writeCalls, 1);
+      expect(secrets.values['invented-secure-key'], 'invented-session');
+      expect(
+        (await SharedPreferences.getInstance()).getString(legacyKey),
+        'invented-session',
+      );
+    },
+  );
+
+  test(
+    'malformed legacy preference type fails closed without a secure write',
+    () async {
+      const legacyKey = 'sb-invented-auth-token';
+      SharedPreferences.setMockInitialValues({legacyKey: 42});
+      final secrets = _MemorySecretStore();
+      final storage = SecureRecallSupabaseLocalStorage(
+        secretStore: secrets,
+        legacyCredentialStore: _MemoryLegacyCredentialStore(),
+        secureKey: 'invented-secure-key',
+        legacyPreferencesKey: legacyKey,
+      );
+
+      await expectLater(storage.accessToken(), throwsA(isA<TypeError>()));
+
+      expect(secrets.values, isEmpty);
+      expect((await SharedPreferences.getInstance()).getInt(legacyKey), 42);
+    },
+  );
 
   test('a verified secure session wins and erases the legacy copy', () async {
     const legacyKey = 'sb-recall-auth-token';
@@ -158,6 +241,41 @@ void main() {
     await expectLater(storage.removePersistedSessionStrict(), throwsStateError);
   });
 
+  test(
+    'strict deletion rejects a native no-op and still clears legacy state',
+    () async {
+      const legacyKey = 'sb-invented-auth-token';
+      SharedPreferences.setMockInitialValues({legacyKey: 'invented-legacy'});
+      final secrets = _MemorySecretStore()
+        ..values['invented-secure-key'] = 'invented-secure'
+        ..retainAfterDelete = true;
+      final credentials = _MemoryLegacyCredentialStore();
+      final storage = SecureRecallSupabaseLocalStorage(
+        secretStore: secrets,
+        legacyCredentialStore: credentials,
+        secureKey: 'invented-secure-key',
+        legacyPreferencesKey: legacyKey,
+      );
+
+      await expectLater(
+        storage.removePersistedSessionStrict(),
+        throwsStateError,
+      );
+
+      expect(secrets.values['invented-secure-key'], 'invented-secure');
+      expect(
+        (await SharedPreferences.getInstance()).containsKey(legacyKey),
+        isFalse,
+      );
+      expect(credentials.deleteCalls, [
+        LegacyRecallCredentialCleaner.emailKey,
+        LegacyRecallCredentialCleaner.passwordKey,
+        LegacyRecallCredentialCleaner.emailKey,
+        LegacyRecallCredentialCleaner.passwordKey,
+      ]);
+    },
+  );
+
   test('startup erases the old email and password Keychain entries', () async {
     final credentials = _MemoryLegacyCredentialStore()
       ..values['recall.auth.email'] = 'person@example.com'
@@ -215,6 +333,27 @@ void main() {
       expect(credentials.deleteCalls, [
         'recall.auth.email',
         'recall.auth.password',
+      ]);
+    },
+  );
+
+  test(
+    'legacy verification read failure refuses initialization after both deletes',
+    () async {
+      final credentials = _MemoryLegacyCredentialStore()
+        ..failContainsKey = LegacyRecallCredentialCleaner.emailKey;
+      final storage = SecureRecallSupabaseLocalStorage(
+        secretStore: _MemorySecretStore(),
+        legacyCredentialStore: credentials,
+        secureKey: 'invented-secure-key',
+        legacyPreferencesKey: 'invented-legacy-key',
+      );
+
+      await expectLater(storage.initialize(), throwsStateError);
+
+      expect(credentials.deleteCalls, [
+        LegacyRecallCredentialCleaner.emailKey,
+        LegacyRecallCredentialCleaner.passwordKey,
       ]);
     },
   );
