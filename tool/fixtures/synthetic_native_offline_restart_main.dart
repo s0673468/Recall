@@ -29,10 +29,38 @@ void _require(bool ok) {
   if (!ok) throw StateError('synthetic_contract_refused');
 }
 
+// Each Android log message stays well below the observed 1023-byte boundary.
+// This helper is pure; the receiver assembles bytes before decoding UTF-8.
+List<String> syntheticNativeReceiptFrames(Map<String, dynamic> value) {
+  const chunkBytes = 240;
+  const maxBytes = 8192;
+  final bytes = utf8.encode(jsonEncode(value));
+  if (bytes.isEmpty || bytes.length > maxBytes) {
+    throw StateError('synthetic_receipt_size_invalid');
+  }
+  final digest = sha256.convert(bytes).toString();
+  final count = (bytes.length + chunkBytes - 1) ~/ chunkBytes;
+  return List<String>.generate(count, (index) {
+    final start = index * chunkBytes;
+    final end = start + chunkBytes < bytes.length
+        ? start + chunkBytes
+        : bytes.length;
+    final chunk = base64Url.encode(bytes.sublist(start, end));
+    final line =
+        'RECALL_NATIVE_OFFLINE_CHUNK v1 $digest '
+        '${bytes.length} $index $count $chunk';
+    if (line.length > 512 || line.codeUnits.any((unit) => unit > 127)) {
+      throw StateError('synthetic_packet_size_invalid');
+    }
+    return line;
+  }, growable: false);
+}
+
 void _emit(Map<String, dynamic> value) {
-  // Keep fixture telemetry as one unwrapped Android log line.
-  // ignore: avoid_print
-  print('RECALL_NATIVE_OFFLINE_JSON ${jsonEncode(value)}');
+  for (final line in syntheticNativeReceiptFrames(value)) {
+    // ignore: avoid_print
+    print(line);
+  }
 }
 
 // This guard runs before SharedPreferences.getInstance. Driver APK inspection

@@ -3,6 +3,8 @@ Raw logcat stays in memory. This driver never stops an AVD or production Recall.
 """
 from __future__ import annotations
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -16,6 +18,10 @@ import native_offline_receipt_contract as contract
 
 PACKAGE = contract.PACKAGE
 SENTINEL = 'RECALL_NATIVE_OFFLINE_JSON '
+CHUNK_SENTINEL = 'RECALL_NATIVE_OFFLINE_CHUNK '
+CHUNK_BYTES = 240
+FRAME_MAX_BYTES = 8192
+PACKET_MAX_BYTES = 512
 FAILURES = {'fixture_build_required', 'synthetic_phase_failed'}
 PHASES = {'fixture_guard', 'offline_recording', 'native_restore', 'fake_sync'}
 ASSERTION_STAGES = {'empty_native_input','initial_load','online_ready','offline_refresh',
@@ -39,11 +45,70 @@ def closed_frame_diagnostics(body, offset_chars):
         'object_suffix':body.rstrip().endswith('}')})
 
 
-def closed_event(raw, expected_phase, pid, commit):
-    events = []
+def receipt_bodies(raw, *, allow_incomplete=False):
+    """Decode only explicit v1 packets; never stitch unframed log fragments.
+
+    Polling may observe a valid ordered prefix while the producer is printing.
+    Each snapshot is checked from scratch; a missing tail must reach the existing
+    phase deadline, never count as a receipt. Direct calls refuse incomplete data.
+    """
+    legacy = []
+    packets = []
     for line in raw.splitlines():
-        if SENTINEL not in line: continue
-        body = line.split(SENTINEL, 1)[1]
+        if SENTINEL in line:
+            require(line.count(SENTINEL) == 1, 'fixture_frame_mixed_protocol')
+            legacy.append(line.split(SENTINEL, 1)[1])
+        if CHUNK_SENTINEL in line:
+            require(line.count(CHUNK_SENTINEL) == 1, 'fixture_packet_invalid')
+            packet = CHUNK_SENTINEL + line.split(CHUNK_SENTINEL, 1)[1]
+            require(packet.isascii() and len(packet) <= PACKET_MAX_BYTES,
+                    'fixture_packet_invalid')
+            packets.append(packet[len(CHUNK_SENTINEL):])
+    require(not (legacy and packets), 'fixture_frame_mixed_protocol')
+    if not packets:
+        return legacy
+    frame = None
+    chunks = []
+    for body in packets:
+        match = re.fullmatch(r'v1 ([0-9a-f]{64}) ([1-9][0-9]{0,3}) '
+                             r'(0|[1-9][0-9]{0,1}) ([1-9][0-9]{0,1}) '
+                             r'([A-Za-z0-9_-]+={0,2})', body)
+        require(match is not None, 'fixture_packet_invalid')
+        digest, size_text, index_text, count_text, encoded = match.groups()
+        size, index, count = int(size_text), int(index_text), int(count_text)
+        require(1 <= size <= FRAME_MAX_BYTES and
+                count == (size + CHUNK_BYTES - 1) // CHUNK_BYTES and
+                index < count, 'fixture_packet_metadata_invalid')
+        current = (digest, size, count)
+        if frame is None:
+            frame = current
+        require(current == frame and index == len(chunks),
+                'fixture_packet_sequence_invalid')
+        try:
+            chunk = base64.b64decode(encoded, altchars=b'-_', validate=True)
+        except (ValueError, binascii.Error):
+            raise contract.Refused('fixture_packet_encoding_invalid') from None
+        require(base64.urlsafe_b64encode(chunk).decode('ascii') == encoded,
+                'fixture_packet_encoding_invalid')
+        require(len(chunk) == min(CHUNK_BYTES, size - index * CHUNK_BYTES),
+                'fixture_packet_length_invalid')
+        chunks.append(chunk)
+    if len(chunks) != frame[2]:
+        if allow_incomplete:
+            return []
+        raise contract.Refused('fixture_frame_incomplete')
+    data = b''.join(chunks)
+    require(len(data) == frame[1] and hashlib.sha256(data).hexdigest() == frame[0],
+            'fixture_frame_checksum_invalid')
+    try:
+        return [data.decode('utf-8')]
+    except UnicodeDecodeError:
+        raise contract.Refused('fixture_frame_utf8_invalid') from None
+
+
+def closed_event(raw, expected_phase, pid, commit, *, allow_incomplete=False):
+    events = []
+    for body in receipt_bodies(raw, allow_incomplete=allow_incomplete):
         try: value = json.loads(body)
         except json.JSONDecodeError as error:
             refused = contract.Refused('fixture_json_invalid')
@@ -89,13 +154,15 @@ def phase(serial, activity, name, commit, timeout):
     text = cold.adb(serial,'shell','pidof',PACKAGE).strip()
     require(re.fullmatch(r'[1-9][0-9]*',text) is not None, 'fresh_pid_missing')
     pid = int(text); deadline = time.monotonic() + timeout
+    incomplete_frame = False
     while time.monotonic() < deadline:
         raw = cold.adb(serial,'logcat','-d','-v','epoch','--pid='+str(pid),'-s','flutter:I','*:S',
                        timeout=min(12,max(.1,deadline-time.monotonic())))
-        value = closed_event(raw,name,pid,commit)
+        value = closed_event(raw,name,pid,commit,allow_incomplete=True)
+        incomplete_frame = incomplete_frame or (CHUNK_SENTINEL in raw and value is None)
         if value is not None: return value
         time.sleep(min(.25,max(0,deadline-time.monotonic())))
-    raise contract.Refused('fixture_phase_timeout')
+    raise contract.Refused('fixture_frame_incomplete' if incomplete_frame else 'fixture_phase_timeout')
 
 
 def airplane_state(serial):
