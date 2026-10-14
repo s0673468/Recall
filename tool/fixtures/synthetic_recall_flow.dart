@@ -14,6 +14,7 @@ import 'package:health_anki_flutter/features/review/application/review_haptics.d
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
+import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
 
 /// All rows, auth identity and transport responses are generated in this file.
 /// The inherited RecallApi methods, controller and local store remain real.
