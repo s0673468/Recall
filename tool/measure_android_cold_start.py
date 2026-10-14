@@ -107,7 +107,10 @@ def permitted_source(relative: Path) -> bool:
                 relative.as_posix() in {'android/gradlew', 'android/gradlew.bat',
                     'android/gradle/wrapper/gradle-wrapper.jar'} or
                 ('res' in parts and any(part.startswith('mipmap') for part in parts) and
-                 relative.stem == 'ic_launcher' and relative.suffix in {'.png', '.webp'}))
+                 relative.stem == 'ic_launcher' and relative.suffix in {'.png', '.webp'}) or
+                (len(parts) == 7 and parts[:5] == ('android', 'app', 'src', 'main', 'res') and
+                 parts[5].startswith('drawable') and
+                 relative.stem == 'ic_launcher_foreground_bitmap' and relative.suffix in {'.png', '.webp'}))
     return False
 
 
@@ -339,6 +342,8 @@ def self_test() -> dict:
     assert not permitted_source(Path('android/local.properties'))
     assert permitted_source(Path('assets/fonts/Outfit-Regular.ttf'))
     assert permitted_source(Path('android/app/src/main/AndroidManifest.xml'))
+    assert permitted_source(Path('android/app/src/main/res/drawable-hdpi/ic_launcher_foreground_bitmap.png'))
+    assert not permitted_source(Path('android/app/src/main/res/drawable-hdpi/private_article.png'))
     assert not permitted_source(Path('ios/Runner/Info.plist'))
     for call in [lambda:process_start_us('',55),lambda:launch_metrics('Status: error\n'),
                  lambda:log_event('not_epoch '+SENTINEL+'{}')]:
@@ -360,7 +365,7 @@ def self_test() -> dict:
     try:validate_events(mutated,55,commit)
     except Refused:pass
     else:raise AssertionError('unclosed result accepted')
-    return {'self_test_checks':16,'sdk_or_adb_executed':False}
+    return {'self_test_checks':18,'sdk_or_adb_executed':False}
 
 
 def main() -> int:
