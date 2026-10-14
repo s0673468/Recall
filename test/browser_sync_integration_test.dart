@@ -18,7 +18,8 @@ import 'package:health_anki_flutter/features/settings/application/recall_prefs_c
 import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
 
 // Sanitized shared cloud model. RPC replay/conflict semantics themselves have
-// detailed coverage in recall_test.dart; this suite tests the browser wiring
+// detailed coverage in recall_multi_device_sync_test.dart and
+// recall_review_controller_test.dart; this suite tests the browser wiring
 // with the real review controller, owner-scoped cache and durable preferences.
 class _Cloud {
   Map<String, dynamic> prefs = const RecallPrefs().toJson();
