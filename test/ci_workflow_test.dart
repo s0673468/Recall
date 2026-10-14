@@ -48,9 +48,12 @@ void main() {
         './tool/flutterw test --reporter=failures-only --exclude-tags apple-mobile',
         "python3 -m unittest discover -s tool/tests -p 'test_*.py'",
       ],
-      'android-native': [
+      'android-build': [
         './tool/flutterw build apk --debug --no-pub',
         'python3 tool/check_android_release_policy.py',
+      ],
+      // Split from the build so unit tests and lint run beside it.
+      'android-gradle-checks': [
         ':app:testDebugUnitTest :app:lintDebug',
         ':app:assembleDebugAndroidTest --no-daemon --max-workers=2',
       ],
@@ -102,6 +105,8 @@ void main() {
     for (final job in [
       'concept-sync-safety:',
       'flutter:',
+      'android-build:',
+      'android-gradle-checks:',
       'android-native:',
       'flag-report:',
       'testflight-helper:',
@@ -136,15 +141,64 @@ void main() {
     expect(workflow, isNot(contains('run: sdkmanager')));
   });
 
-  test('hosted Android lane restores the Gradle cache', () {
-    final block = ci
+  test('hosted Android lanes restore the Gradle cache', () {
+    for (final job in ['android-build', 'android-gradle-checks']) {
+      final block = ci
+          .readAsStringSync()
+          .split('\n  $job:\n')
+          .last
+          .split(RegExp(r'\n  [a-z0-9-]+:\n'))
+          .first;
+      expect(block, contains('uses: actions/setup-java@v5'), reason: job);
+      expect(block, contains('cache: gradle'), reason: job);
+    }
+  });
+
+  test('only the disposable hosted lane shares a Gradle daemon', () {
+    // The release-policy probes run four Gradle builds. On a hosted VM that is
+    // discarded after the job they reuse the daemon warmed by the debug build;
+    // local and compute-host runs stay daemonless and leave no JVM running.
+    final workflow = ci.readAsStringSync();
+    final android = workflow
+        .split('\n  android-build:\n')
+        .last
+        .split(RegExp(r'\n  [a-z0-9-]+:\n'))
+        .first;
+    expect(android, contains('RECALL_GRADLE_DAEMON: "1"'));
+    expect('RECALL_GRADLE_DAEMON'.allMatches(workflow), hasLength(1));
+    expect(workflow, isNot(contains('runs-on: self-hosted')));
+    final policy = File(
+      'tool/check_android_release_policy.py',
+    ).readAsStringSync();
+    expect(
+      policy,
+      contains(
+        "'--daemon' if environment.get('RECALL_GRADLE_DAEMON') == '1' "
+        "else '--no-daemon'",
+      ),
+    );
+  });
+
+  test('required android-native check fails unless both lanes succeed', () {
+    final gate = ci
         .readAsStringSync()
         .split('\n  android-native:\n')
         .last
         .split(RegExp(r'\n  [a-z0-9-]+:\n'))
         .first;
-    expect(block, contains('uses: actions/setup-java@v5'));
-    expect(block, contains('cache: gradle'));
+    // Branch protection requires the android-native context. Without
+    // `always()` a failed lane would skip the gate, which counts as passing.
+    expect(gate, contains('\n    if: always()\n'));
+    expect(gate, contains('needs: [android-build, android-gradle-checks]'));
+    expect(gate, contains(r'${{ needs.android-build.result }}'));
+    expect(gate, contains(r'${{ needs.android-gradle-checks.result }}'));
+    expect(
+      gate,
+      contains(
+        r'[[ "$BUILD_RESULT" == success && "$CHECKS_RESULT" == success ]]',
+      ),
+    );
+    expect(gate, contains('runs-on: ubuntu-latest'));
   });
 
   test('public workflows stay on GitHub-hosted runners', () {

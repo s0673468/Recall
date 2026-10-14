@@ -44,11 +44,14 @@ def main() -> None:
         ('unsigned release has no signer and is not debuggable', 'true',
          'RECALL_UNSIGNED_RELEASE_POLICY_OK', True),
     ]
+    # Hosted CI opts in to the warm daemon left by the debug build; the VM is
+    # discarded afterwards. Everywhere else stays daemonless and leaves no JVM.
+    daemon = '--daemon' if environment.get('RECALL_GRADLE_DAEMON') == '1' else '--no-daemon'
     with tempfile.TemporaryDirectory(prefix='recall-release-policy-') as temporary:
         probe = Path(temporary) / 'probe.gradle'
         probe.write_text(PROBE)
         for label, value, expected, success in cases:
-            command = [str(ROOT / 'android/gradlew'), '--no-daemon', '--max-workers=2',
+            command = [str(ROOT / 'android/gradlew'), daemon, '--max-workers=2',
                        '--console=plain', '-I', str(probe), ':app:probeReleaseStagingPolicy']
             if value is not None:
                 command.append(f'-PrecallUnsignedRelease={value}')
