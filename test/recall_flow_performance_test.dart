@@ -159,12 +159,12 @@ void main() {
           );
           final flow = session.flow;
           try {
-            final totalWatch = Stopwatch()..start();
+            final loadWatch = Stopwatch();
             int? firstCardUs;
             flow.controller.addListener(() {
               if (firstCardUs == null &&
                   flow.controller.state.current != null) {
-                firstCardUs = totalWatch.elapsedMicroseconds;
+                firstCardUs = loadWatch.elapsedMicroseconds;
               }
             });
 
@@ -178,7 +178,7 @@ void main() {
                 },
               );
             final loadStartRequests = flow.httpFixture.totalRequests;
-            final loadWatch = Stopwatch()..start();
+            loadWatch.start();
             try {
               await flow.load().timeout(_waitLimit);
             } finally {
