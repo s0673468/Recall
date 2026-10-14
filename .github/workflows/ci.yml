@@ -77,6 +77,9 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          # Restores ~/.gradle caches and the wrapper distribution. The key hashes
+          # the Gradle build files, so dependency changes start a fresh entry.
+          cache: gradle
 
       - uses: ./.github/actions/setup-flutter
 

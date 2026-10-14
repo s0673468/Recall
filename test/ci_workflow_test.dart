@@ -136,6 +136,17 @@ void main() {
     expect(workflow, isNot(contains('run: sdkmanager')));
   });
 
+  test('hosted Android lane restores the Gradle cache', () {
+    final block = ci
+        .readAsStringSync()
+        .split('\n  android-native:\n')
+        .last
+        .split(RegExp(r'\n  [a-z0-9-]+:\n'))
+        .first;
+    expect(block, contains('uses: actions/setup-java@v5'));
+    expect(block, contains('cache: gradle'));
+  });
+
   test('public workflows stay on GitHub-hosted runners', () {
     final workflows = '${ci.readAsStringSync()}\n${pages.readAsStringSync()}';
 

@@ -87,16 +87,21 @@ List<_HeldCard> _expected(
             ? (included?.contains(card.deck) ?? true)
             : card.deck == deck);
   }).toList()..sort((a, b) => a.id.compareTo(b.id));
+  // Group once by card: scanning every log for every card made the 5000-card
+  // boundary cases quadratic (25M timestamp parses each). Same predicate.
+  final logsByCard = <dynamic, List<Map<String, dynamic>>>{};
+  for (final log in logs) {
+    logsByCard.putIfAbsent(log['card_id'], () => []).add(log);
+  }
   return marked
       .take(5000)
       .where((card) {
         final revision = card.revision;
         if (revision == null || hidden.contains(card.id)) return false;
-        return !logs.any((log) {
+        return !(logsByCard[card.id] ?? const []).any((log) {
           final rating = log['rating'];
           final at = DateTime.tryParse(log['rating_at'] as String? ?? '');
-          return log['card_id'] == card.id &&
-              const {2, 3, 4}.contains(rating) &&
+          return const {2, 3, 4}.contains(rating) &&
               at != null &&
               at.isAfter(revision);
         });
