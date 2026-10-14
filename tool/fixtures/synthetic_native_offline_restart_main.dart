@@ -249,6 +249,16 @@ class _NativeFlow {
   };
 }
 
+// Controller.load paints before its queued snapshot write finishes. Join the
+// existing store write chain before a refresh can invalidate that load token;
+// then require the earned online snapshot, without seeding or rewriting it.
+Future<void> syntheticNativeAwaitOnlineSnapshot(
+  TimedLocalReviewStore store,
+) async {
+  await store.outbox();
+  _require(await store.loadSnapshot() != null);
+}
+
 // Preserve the original one reveal followed by two sequential calls. The
 // current production guard makes the second, unrevealed call a no-op.
 Future<void> syntheticNativePhaseOneRatingActions(
@@ -279,6 +289,8 @@ Future<Map<String, dynamic>> _run(SharedPreferences prefs) async {
             !flow.controller.state.offline &&
             flow.controller.state.current?.id == 1,
       );
+      _assertionStage = 'snapshot_readback';
+      await syntheticNativeAwaitOnlineSnapshot(flow.store);
       flow.transport.offlineReads = true;
       _assertionStage = 'offline_refresh';
       await flow.controller.refresh();

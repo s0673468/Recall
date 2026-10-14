@@ -1,3 +1,5 @@
+import 'dart:async';
+
 // Parent destination: test/synthetic_native_offline_phase_one_test.dart.
 // Generated rows and in-memory platform preferences; not native acceptance.
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +7,7 @@ import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
@@ -50,9 +53,71 @@ Future<void> withGeneratedFlow(
   }
 }
 
+// Hold only the generated snapshot platform acknowledgement, leaving the
+// real controller and serialized LocalReviewStore operations intact.
+class _HeldSnapshotPlatform extends InMemorySharedPreferencesStore {
+  _HeldSnapshotPlatform() : super.empty();
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  bool acknowledged = false;
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    if (key.contains('recall_snapshot_v1') && !entered.isCompleted) {
+      entered.complete();
+      await release.future;
+      final result = await super.setValue(valueType, key, value);
+      acknowledged = result;
+      return result;
+    }
+    return super.setValue(valueType, key, value);
+  }
+
+  void open() {
+    if (!release.isCompleted) release.complete();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  test('snapshot readiness waits for the original platform ACK before offline refresh', () async {
+    final previous = SharedPreferencesStorePlatform.instance;
+    final native = _HeldSnapshotPlatform();
+    SharedPreferences.resetStatic();
+    SharedPreferencesStorePlatform.instance = native;
+    try {
+      await withGeneratedFlow((transport, controller, store) async {
+        try {
+          await controller.load();
+          await native.entered.future.timeout(const Duration(seconds: 5));
+          var ready = false;
+          final readiness = syntheticNativeAwaitOnlineSnapshot(store).then((_) {
+            ready = true;
+          });
+          await Future<void>.value();
+          expect(ready, isFalse);
+          expect(native.acknowledged, isFalse);
+          native.open();
+          await readiness.timeout(const Duration(seconds: 5));
+          expect(native.acknowledged, isTrue);
+          expect(await store.loadSnapshot(), isNotNull);
+          transport.offlineReads = true;
+          await controller.refresh();
+          await syntheticNativePhaseOneRatingActions(controller);
+          await controller.syncPending();
+          expect(controller.state.current?.id, 2);
+          expect((await store.outbox()).length, 1);
+          expect(await store.loadSnapshot(), isNotNull);
+        } finally {
+          native.open();
+        }
+      });
+    } finally {
+      native.open();
+      SharedPreferencesStorePlatform.instance = previous;
+      SharedPreferences.resetStatic();
+    }
+  });
   test('actual default controller load includes generated ML deck without explicit selection', () async {
     await withGeneratedFlow((transport, controller, store) async {
       await controller.load();
@@ -68,6 +133,7 @@ void main() {
     () async {
       await withGeneratedFlow((transport, controller, store) async {
         await controller.load();
+        await syntheticNativeAwaitOnlineSnapshot(store);
         transport.offlineReads = true;
         await controller.refresh();
         expect(controller.state.offline, isTrue);
@@ -89,6 +155,7 @@ void main() {
   test('second unrevealed call remains a production guard no-op', () async {
     await withGeneratedFlow((transport, controller, store) async {
       await controller.load();
+      await syntheticNativeAwaitOnlineSnapshot(store);
       transport.offlineReads = true;
       await controller.refresh();
       await syntheticNativePhaseOneRatingActions(controller);
