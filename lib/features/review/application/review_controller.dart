@@ -494,6 +494,20 @@ class ReviewController extends ChangeNotifier {
   ({int loadToken, String? ownerScope, CatchUpLocalState state})?
   _catchUpRatingProgress;
 
+  // A view does not expose its calendar day. Bind only views we constructed
+  // from known progress, and consult the binding only for the published view.
+  final _catchUpViewDays =
+      Expando<({int loadToken, String? ownerScope, String dayKey})>();
+
+  CatchUpView _bindCatchUpViewDay(CatchUpView view, DateTime now) {
+    _catchUpViewDays[view] = (
+      loadToken: _loadSequence,
+      ownerScope: store.activeOwnerScope,
+      dayKey: BacklogCatchUp.dayKey(now),
+    );
+    return view;
+  }
+
   /// Decks admitted to the normal all-decks stream by the latest deck read.
   /// A direct deck selection bypasses this set so optional curricula remain
   /// fully reviewable when the learner opens them explicitly.
@@ -932,21 +946,27 @@ class ReviewController extends ChangeNotifier {
           canWrite: canWrite,
         );
       }
-      return CatchUpView(
-        dueCount: 0,
-        threshold: threshold,
-        recentDailyAverage: recentAverage,
-        completedToday: 0,
+      return _bindCatchUpViewDay(
+        CatchUpView(
+          dueCount: 0,
+          threshold: threshold,
+          recentDailyAverage: recentAverage,
+          completedToday: 0,
+        ),
+        now,
       );
     }
 
     if (dueCount == 0) {
-      return CatchUpView(
-        mode: local.mode,
-        dueCount: 0,
-        threshold: threshold,
-        recentDailyAverage: recentAverage,
-        completedToday: local.completedToday,
+      return _bindCatchUpViewDay(
+        CatchUpView(
+          mode: local.mode,
+          dueCount: 0,
+          threshold: threshold,
+          recentDailyAverage: recentAverage,
+          completedToday: local.completedToday,
+        ),
+        now,
       );
     }
 
@@ -961,12 +981,15 @@ class ReviewController extends ChangeNotifier {
       );
     }
 
-    return CatchUpView(
-      mode: mode,
-      dueCount: dueCount,
-      threshold: threshold,
-      recentDailyAverage: recentAverage,
-      completedToday: local.completedToday,
+    return _bindCatchUpViewDay(
+      CatchUpView(
+        mode: mode,
+        dueCount: dueCount,
+        threshold: threshold,
+        recentDailyAverage: recentAverage,
+        completedToday: local.completedToday,
+      ),
+      now,
     );
   }
 
@@ -1180,10 +1203,13 @@ class ReviewController extends ChangeNotifier {
     final pending = await store.outbox();
     final source = _withoutPendingReviews(_catchUpSourceQueue, pending);
     _catchUpSourceQueue = source;
-    final view = _state.catchUp.copyWith(
-      mode: mode,
-      dueCount: source.where(_countsTowardsGlobalDue).length,
-      completedToday: nextLocal.completedToday,
+    final view = _bindCatchUpViewDay(
+      _state.catchUp.copyWith(
+        mode: mode,
+        dueCount: source.where(_countsTowardsGlobalDue).length,
+        completedToday: nextLocal.completedToday,
+      ),
+      now,
     );
     _catchUpRatingProgress = null;
     _catchUpProgressRevision++;
@@ -1529,21 +1555,53 @@ class ReviewController extends ChangeNotifier {
     }
 
     final now = clock();
-    final local = initial.isActive
-        ? BacklogCatchUp.normalizeLocalState(
-            await store.loadCatchUpState(),
-            now,
-          )
-        : null;
+    final today = BacklogCatchUp.dayKey(now);
+    CatchUpLocalState? local;
+    if (initial.isActive) {
+      try {
+        local = BacklogCatchUp.normalizeLocalState(
+          await store.loadCatchUpState(),
+          now,
+        );
+      } catch (_) {
+        // The review already has its durable ACK. Optional progress must not
+        // leave the rated card visible and invite a second event for it.
+        debugPrint('Recall: catch-up progress read skipped (non-fatal)');
+      }
+    }
     if (!canWrite()) return null;
+    int publishedProgress(CatchUpView view) {
+      final context = _catchUpViewDays[view];
+      return view.isActive &&
+              context?.loadToken == _loadSequence &&
+              context?.ownerScope == ownerScope &&
+              context?.dayKey == today
+          ? view.completedToday
+          : 0;
+    }
+
     // Fix the increment once. A refresh can read our saved progress while a
     // retry waits on native persistence; it must not count this rating again.
     final active = initial.isActive || _state.catchUp.isActive;
-    // Local active progress carries its day; the unreloaded view may still
-    // contain yesterday's count after normalization reset today's progress.
     var completedToday = local?.mode == CatchUpMode.active
         ? local!.completedToday
-        : math.max(initial.completedToday, _state.catchUp.completedToday);
+        : math.max(
+            publishedProgress(initial),
+            publishedProgress(_state.catchUp),
+          );
+    final ratingProgress = _catchUpRatingProgress;
+    if (ratingProgress != null &&
+        ratingProgress.loadToken == _loadSequence &&
+        ratingProgress.ownerScope == ownerScope &&
+        ratingProgress.state.mode == CatchUpMode.active &&
+        ratingProgress.state.dayKey == today) {
+      // A refused optional save does not undo a completed local rating. A
+      // newer native count can still raise this same-owner, same-day floor.
+      completedToday = math.max(
+        completedToday,
+        ratingProgress.state.completedToday,
+      );
+    }
     if (active) completedToday++;
 
     while (canWrite()) {
@@ -1560,12 +1618,15 @@ class ReviewController extends ChangeNotifier {
       var mode = current.isNone ? initial.mode : current.mode;
       if (active && mode == CatchUpMode.none) mode = CatchUpMode.active;
       final activeCompleted = completedToday;
-      final before = current.copyWith(
-        mode: mode,
-        dueCount: dueCount + 1,
-        completedToday: mode == CatchUpMode.active
-            ? activeCompleted - 1
-            : current.completedToday,
+      final before = _bindCatchUpViewDay(
+        current.copyWith(
+          mode: mode,
+          dueCount: dueCount + 1,
+          completedToday: mode == CatchUpMode.active
+              ? activeCompleted - 1
+              : current.completedToday,
+        ),
+        now,
       );
       var nextCompleted = mode == CatchUpMode.active
           ? activeCompleted
@@ -1575,10 +1636,13 @@ class ReviewController extends ChangeNotifier {
         mode = CatchUpMode.none;
         nextCompleted = 0;
       }
-      final next = current.copyWith(
-        mode: mode,
-        dueCount: dueCount,
-        completedToday: nextCompleted,
+      final next = _bindCatchUpViewDay(
+        current.copyWith(
+          mode: mode,
+          dueCount: dueCount,
+          completedToday: nextCompleted,
+        ),
+        now,
       );
       bool contextCurrent() =>
           canWrite() &&
