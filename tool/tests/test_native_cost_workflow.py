@@ -1,8 +1,14 @@
 """Security boundaries for the optional hosted native-cost workflow."""
 
 from pathlib import Path
+import hashlib
 import re
+import sys
 import unittest
+
+TOOL = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(TOOL))
+import native_checkpoint_contract as contract
 
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/recall-synthetic-native-cost.yml"
@@ -55,6 +61,25 @@ class NativeCostWorkflowPolicyTest(unittest.TestCase):
                 "${{ env.COST_RESULTS }}/native/comparison.json",
             ],
         )
+
+    def test_workflow_and_dart_entry_bind_the_same_qualified_source(self) -> None:
+        entry = (TOOL / 'fixtures/synthetic_native_outbox_cost_main.dart').read_bytes()
+        self.assertEqual(hashlib.sha256(entry).hexdigest(), contract.FIXTURE_SHA)
+        self.assertEqual(
+            re.findall(r'--fixture-sha ([0-9a-f]{64})', self.text),
+            [contract.FIXTURE_SHA] * 2,
+        )
+        self.assertEqual(
+            re.findall(r'--dart-define=RECALL_FIXTURE_SHA256=([0-9a-f]{64})', self.text),
+            [contract.FIXTURE_SHA] * 2,
+        )
+        self.assertEqual(
+            re.findall(r'--dart-define=RECALL_BASE_COMMIT=([0-9a-f]{40})', self.text),
+            [contract.SOURCE] * 2,
+        )
+        dart = entry.decode()
+        self.assertIn("_require(_baseCommit == '" + contract.SOURCE + "');", dart)
+        self.assertIn("const _storeBlob = '" + contract.STORE_BLOB + "';", dart)
 
     def test_fail_closed_order_before_disposable_emulator(self) -> None:
         text = self.text

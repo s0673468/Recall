@@ -6,12 +6,12 @@ from pathlib import PurePosixPath
 
 SCHEMA='recall-native-outbox-cost/v1'
 PACKAGE='com.german.recall.syntheticbenchmark'
-FIXTURE_SHA='01de611cc163b3677cd63700a46a49d34f53d23cb56060129de040ba5c558ff3'
-SOURCE='9b463d424aa7da6d7c391b05ae2834ee2348b5b8'
+FIXTURE_SHA='dff225704892ba703767eeab0614dc31b210d218267f7c507c1bbfbf37f4ed7f'
+SOURCE='b47ffde0fea3d60e9841b889b4f37aedfcb9bff9'
 BASE_CONTROLLER='b7dd000dbf64598addbb880b0eb49f9866b65003f8fffb6ea766fc32cd474d88'
 CHECKPOINT_CONTROLLER='5df361de71751f2733d2d75ecad863dcfac1cbe979a571a0e27a28ddf4cd51db'
-STORE_SHA='78e9acfc2a8f25f99a021ca4959d0a81004d467f5319a3923d9b684c96f5a015'
-STORE_BLOB='f865358816616a77ac47cbcf78bbf3eb3f81728d'
+STORE_SHA='6ba098ccec1d617b5c86c0ab3dfa647802d010697e7528a4687f4d36ee7d7690'
+STORE_BLOB='3f8ad48c4907a9bf4f7a28b67223229d491e076a'
 PATCH_SHA='e052e44873fabad289a80c6185dcaf4b46afe491f8529ca172b5b5b589a91578'
 TIMINGS={'sync_pending','mark_total','remove_total','native_ack_total','native_ack_max','api_apply_total'}
 COUNTS={'mark_calls','remove_calls','native_ack_writes','native_ack_chars','native_ack_utf8_bytes','apply_review_requests','accepted_unique','pending_after'}

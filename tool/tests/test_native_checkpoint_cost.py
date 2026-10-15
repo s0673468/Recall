@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 TOOL=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(TOOL))
-# Exercise the delivered helpers on sys.path; no external workspace fixtures or
-# reads of current production controller/Store/pubspec are test prerequisites.
+# Exercise delivered helpers. Generic tests stay invented; the explicit profile
+# binding regression reads only the current technical controller/Store/entrypoint.
 import native_checkpoint_contract as contract
 import prepare_native_checkpoint_cost as prepare
 
@@ -124,6 +124,61 @@ class ManifestTests(unittest.TestCase):
             if mode=='extra':manifest[0]['payload']='private'
             if mode!='hash':proof['technical_source_manifest_sha256']=H(json.dumps(manifest,sort_keys=True,separators=(',',':')).encode())
             with self.subTest(mode=mode),self.assertRaises(contract.Refused):contract.validate_provenance(proof,'baseline')
+
+
+class CurrentTechnicalProfileTests(unittest.TestCase):
+    def test_current_store_qualifies_both_profiles_and_mutation_refuses_before_copy(self):
+        repo=TOOL.parent
+        originals={path:(repo/path).read_bytes() for path in
+                   [prepare.CONTROLLER,prepare.STORE,prepare.ENTRY]}
+        real_store=originals[prepare.STORE]
+        self.assertEqual(H(real_store),contract.STORE_SHA)
+        self.assertEqual(hashlib.sha1(b'blob '+str(len(real_store)).encode()+b'\0'+real_store).hexdigest(),contract.STORE_BLOB)
+        self.assertEqual(H(originals[prepare.CONTROLLER]),contract.BASE_CONTROLLER)
+        self.assertEqual(H(originals[prepare.ENTRY]),contract.FIXTURE_SHA)
+        payload=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
+        self.assertEqual(H(payload),contract.PATCH_SHA)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);source=root/'source';source.mkdir()
+            for path,data in originals.items():
+                target=source/path;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data)
+            patch_file=root/'checkpoint.patch';patch_file.write_bytes(payload)
+            def copy_technical(args):
+                args.destination.mkdir()
+                for path in originals:
+                    target=args.destination/path
+                    target.parent.mkdir(parents=True,exist_ok=True)
+                    target.write_bytes((args.source/path).read_bytes())
+                return {'source_commit':args.source_commit,'package':contract.PACKAGE,
+                        'normal_source_unchanged':True,'namespace_and_signing_policy_unchanged':True,
+                        'test_only_transform':True,'actual_cards_articles_media_copied':False,
+                        'asset_scope':'technical-fonts-only','application_id_changes':1}
+            with patch.dict(os.environ,{'RUNNER_TEMP':temp}),patch.object(cold,'require_ci',lambda:None),patch.object(cold,'prepare',side_effect=copy_technical) as copy:
+                for variant in ['baseline','checkpoint']:
+                    args=types.SimpleNamespace(source=source,destination=root/variant,
+                        source_commit=contract.SOURCE,variant=variant,
+                        fixture_sha=contract.FIXTURE_SHA,patch=patch_file)
+                    proof=prepare.prepare(args)
+                    self.assertEqual(proof['store_sha256'],H(real_store))
+                    self.assertEqual(proof['store_git_blob'],contract.STORE_BLOB)
+                    self.assertEqual((args.destination/prepare.STORE).read_bytes(),real_store)
+                    expected=contract.BASE_CONTROLLER if variant=='baseline' else contract.CHECKPOINT_CONTROLLER
+                    self.assertEqual(H((args.destination/prepare.CONTROLLER).read_bytes()),expected)
+                self.assertEqual(copy.call_count,2)
+                self.assertTrue(all((source/path).read_bytes()==data for path,data in originals.items()))
+                # Mutate only the private temporary Store copy. Both profiles
+                # must refuse before the technical-copy boundary is called.
+                (source/prepare.STORE).write_bytes(real_store+b'\n')
+                copy.reset_mock()
+                for variant in ['baseline','checkpoint']:
+                    args=types.SimpleNamespace(source=source,destination=root/('mutated-'+variant),
+                        source_commit=contract.SOURCE,variant=variant,
+                        fixture_sha=contract.FIXTURE_SHA,patch=patch_file)
+                    with self.assertRaises(contract.Refused) as caught:prepare.prepare(args)
+                    self.assertEqual(caught.exception.code,'baseline_source_pin_invalid')
+                    self.assertFalse(args.destination.exists())
+                copy.assert_not_called()
+
 
 class DecoderTests(unittest.TestCase):
     def test_real_decoder_complete_and_incomplete_packets(self):
