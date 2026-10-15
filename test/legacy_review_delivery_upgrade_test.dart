@@ -282,7 +282,13 @@ void main() {
         }
         expect(request.url.queryParameters['card_id'], 'eq.43');
         bAttempts++;
-        throw http.ClientException('Invented B not acknowledged');
+        // A 400 response is one deterministic refused lookup. A transport
+        // exception would exercise the SDK's independent GET retry policy.
+        return _json(
+          request,
+          '{"code":"INVENTED_REFUSAL","message":"Synthetic B not acknowledged"}',
+          status: 400,
+        );
       }
 
       final first = _tab((request) => handler(request, firstGate));
