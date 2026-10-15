@@ -165,10 +165,10 @@ class PreparerTests(unittest.TestCase):
 
     def test_invented_exact_patch_scope_context_and_result_pins(self):
         # This independent check binds the tracked technical patch, without
-        # loading the old production controller. Its actual e052→5df proof is
-        # retained in the original preparation manifest, not rerun by unit CI.
+        # loading production Controller/Store. Exact frozen-source application
+        # and changed-input refusal are checked separately at profile rebind.
         real=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
-        self.assertEqual(H(real),'14a9cd98eed04b6ef637326f1d9ea20ffe898097af73529c7cb1e34cd0ad0e4c')
+        self.assertEqual(H(real),'aefc0ab0e2dfda3806284d267f452cd75e7dcd857819cfdc9a260595c209882e')
         self.assertEqual(prepare.apply_checkpoint(self.BASE,self.PATCH),self.RESULT)
         for data,payload in [(self.BASE+b'\n',self.PATCH),(self.BASE,self.PATCH+b'\n')]:
             with self.assertRaises(contract.Refused):prepare.apply_checkpoint(data,payload)

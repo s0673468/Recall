@@ -16,10 +16,10 @@
  
      final acknowledged = <Map<String, dynamic>>[];
 +    var cacheInvalidated = false;
-     final uniqueIds = LocalReviewStore.uniqueDeliveryIds(pending);
-     for (final entry in pending) {
-       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
-@@ -2174,9 +2179,24 @@
+     final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
+       pending,
+       legacyReviews: true,
+@@ -2177,9 +2182,24 @@
          debugPrint('Recall: review sync deferred (offline?)');
          break;
        }
