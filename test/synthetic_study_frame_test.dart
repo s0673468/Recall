@@ -10,6 +10,9 @@ import 'package:health_anki_flutter/theme/ui_tokens.dart';
 import '../tool/fixtures/synthetic_recall_flow.dart';
 import '../tool/fixtures/synthetic_study_frame.dart';
 
+const _fixtureWait = Duration(seconds: 10);
+const _caseTimeout = Timeout(Duration(seconds: 30));
+
 Future<({SyntheticRecallFlow flow, SyntheticStudyFrameProbe probe})> _fixture(
   WidgetTester tester,
 ) async {
@@ -17,16 +20,25 @@ Future<({SyntheticRecallFlow flow, SyntheticStudyFrameProbe probe})> _fixture(
   SharedPreferences.resetStatic();
   SharedPreferencesStorePlatform.instance =
       InMemorySharedPreferencesStore.empty();
-  final flow = await SyntheticRecallFlow.create(
-    cardCount: 20,
-    seededOutbox: 0,
-    warmCache: false,
-  );
+  // Supabase starts a real JSON isolate even with the in-memory HTTP client.
+  // Keep that lifecycle outside the widget binding's fake async clock.
+  final flow = (await tester.runAsync(
+    () => SyntheticRecallFlow.create(
+      cardCount: 20,
+      seededOutbox: 0,
+      warmCache: false,
+    ).timeout(_fixtureWait),
+  ))!;
   addTearDown(() async {
     try {
       await tester.pumpWidget(const SizedBox.shrink());
-      await flow.controller.syncPending();
-      await flow.close();
+      await tester.runAsync(() async {
+        try {
+          await flow.controller.syncPending().timeout(_fixtureWait);
+        } finally {
+          await flow.close().timeout(_fixtureWait);
+        }
+      });
     } finally {
       SharedPreferencesStorePlatform.instance = previous;
       SharedPreferences.resetStatic();
@@ -36,8 +48,10 @@ Future<({SyntheticRecallFlow flow, SyntheticStudyFrameProbe probe})> _fixture(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  await flow.load();
-  await flow.selectDeck(1);
+  await tester.runAsync(() async {
+    await flow.load().timeout(_fixtureWait);
+    await flow.selectDeck(1).timeout(_fixtureWait);
+  });
   return (flow: flow, probe: SyntheticStudyFrameProbe(flow.controller));
 }
 
@@ -63,7 +77,9 @@ void main() {
     expect(probe.hasPaintedCard(1), isTrue);
     expect(probe.hasPaintedCard(2), isFalse);
 
-    await fixture.flow.rateFirstGood();
+    await tester.runAsync(
+      () => fixture.flow.rateFirstGood().timeout(_fixtureWait),
+    );
     expect(fixture.flow.controller.state.current?.id, 2);
     expect(
       probe.hasPaintedCard(2),
@@ -88,25 +104,29 @@ void main() {
       findsOneWidget,
     );
     expect(fixture.flow.controller.state.reviewedThisSession, 1);
-    final pending = await fixture.flow.store.outbox();
+    final pending = (await tester.runAsync(
+      () => fixture.flow.store.outbox().timeout(_fixtureWait),
+    ))!;
     expect(pending, hasLength(1));
     expect(pending.single['card_id'], 1);
-  });
+  }, timeout: _caseTimeout);
 
-  testWidgets('a painted status-only root cannot qualify as a study card', (
-    tester,
-  ) async {
-    final fixture = await _fixture(tester);
-    await _mount(
-      tester,
-      SyntheticStudyFrame(
-        probe: fixture.probe,
-        child: const Center(child: Text('Synthetic benchmark ready')),
-      ),
-    );
-    expect(fixture.probe.hasPaintedCard(1), isFalse);
-    expect(fixture.probe.hasPaintedCard(2), isFalse);
-  });
+  testWidgets(
+    'a painted status-only root cannot qualify as a study card',
+    (tester) async {
+      final fixture = await _fixture(tester);
+      await _mount(
+        tester,
+        SyntheticStudyFrame(
+          probe: fixture.probe,
+          child: const Center(child: Text('Synthetic benchmark ready')),
+        ),
+      );
+      expect(fixture.probe.hasPaintedCard(1), isFalse);
+      expect(fixture.probe.hasPaintedCard(2), isFalse);
+    },
+    timeout: _caseTimeout,
+  );
 
   testWidgets(
     'a completed frame with the old current card cannot qualify card2',
@@ -117,6 +137,7 @@ void main() {
       expect(fixture.probe.hasPaintedCard(1), isTrue);
       expect(fixture.probe.hasPaintedCard(2), isFalse);
     },
+    timeout: _caseTimeout,
   );
 
   for (final opacityKind in ['opacity', 'animated-opacity']) {
@@ -146,7 +167,9 @@ void main() {
             ),
           ),
         );
-        await fixture.flow.rateFirstGood();
+        await tester.runAsync(
+          () => fixture.flow.rateFirstGood().timeout(_fixtureWait),
+        );
         await tester.pump();
         await tester.pumpAndSettle();
         fixture.probe.requestPaint();
@@ -157,29 +180,32 @@ void main() {
         await tester.pumpAndSettle();
         expect(fixture.probe.hasPaintedCard(2), isFalse);
       },
+      timeout: _caseTimeout,
     );
   }
 
   for (final hidden in ['opacity', 'offstage', 'outside-viewport']) {
-    testWidgets('a mounted production card hidden by $hidden cannot qualify', (
-      tester,
-    ) async {
-      final fixture = await _fixture(tester);
-      final study = StudyScreen(
-        controller: fixture.flow.controller,
-        nativeIos: false,
-      );
-      final child = switch (hidden) {
-        'opacity' => Opacity(opacity: 0, child: study),
-        'offstage' => Offstage(child: study),
-        _ => Transform.translate(offset: const Offset(1000, 0), child: study),
-      };
-      await _mount(
-        tester,
-        SyntheticStudyFrame(probe: fixture.probe, child: child),
-      );
-      expect(find.byType(StudyScreen, skipOffstage: false), findsOneWidget);
-      expect(fixture.probe.hasPaintedCard(1), isFalse);
-    });
+    testWidgets(
+      'a mounted production card hidden by $hidden cannot qualify',
+      (tester) async {
+        final fixture = await _fixture(tester);
+        final study = StudyScreen(
+          controller: fixture.flow.controller,
+          nativeIos: false,
+        );
+        final child = switch (hidden) {
+          'opacity' => Opacity(opacity: 0, child: study),
+          'offstage' => Offstage(child: study),
+          _ => Transform.translate(offset: const Offset(1000, 0), child: study),
+        };
+        await _mount(
+          tester,
+          SyntheticStudyFrame(probe: fixture.probe, child: child),
+        );
+        expect(find.byType(StudyScreen, skipOffstage: false), findsOneWidget);
+        expect(fixture.probe.hasPaintedCard(1), isFalse);
+      },
+      timeout: _caseTimeout,
+    );
   }
 }
