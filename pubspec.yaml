@@ -16,6 +16,7 @@ dependencies:
   google_fonts: ^8.2.1
   intl: ^0.20.2
   shared_preferences: ^2.5.4
+  shared_preferences_platform_interface: ^2.4.2
   fl_chart: ^1.2.0
   fsrs: ^2.0.0
   flutter_math_fork: ^0.7.3
@@ -37,8 +38,6 @@ dev_dependencies:
   # a fake REST transport so query-building tests can assert on the PostgREST
   # query string. Already resolved transitively via supabase_flutter.
   http: ^1.4.0
-  # Test-only in-memory native acknowledgements; package already resolved.
-  shared_preferences_platform_interface: ^2.4.2
 
 flutter:
   uses-material-design: true
