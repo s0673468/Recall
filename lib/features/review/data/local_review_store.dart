@@ -332,6 +332,238 @@ class LocalReviewStore {
     });
   }
 
+  /// Drain only captured reviews whose server acknowledgement returned.
+  /// Fresh native state may already have lost these ids in another tab; its
+  /// next queued action must never be removed in their place. Unidentified or
+  /// conflicting records remain queued rather than guessing by count.
+  Future<int> removeAcknowledgedReviews(
+    Iterable<Map<String, dynamic>> acknowledged, {
+    String? ownerScope,
+  }) => _removeAcknowledged(
+    _storageKey(_outboxKey, ownerScope: ownerScope),
+    acknowledged,
+    legacyReviews: true,
+  );
+
+  /// Flag delivery uses the same identity guard in its separate owner outbox.
+  Future<int> removeAcknowledgedFlags(
+    Iterable<Map<String, dynamic>> acknowledged, {
+    String? ownerScope,
+  }) => _removeAcknowledged(
+    _storageKey(_flagOutboxKey, ownerScope: ownerScope),
+    acknowledged,
+  );
+
+  Future<int> _removeAcknowledged(
+    String key,
+    Iterable<Map<String, dynamic>> acknowledged, {
+    bool legacyReviews = false,
+  }) {
+    final captured = [
+      for (final entry in acknowledged) Map<String, dynamic>.from(entry),
+    ];
+    final uniqueAcknowledgedIds = uniqueDeliveryIds(
+      captured,
+      legacyReviews: legacyReviews,
+    );
+    final byId = {
+      for (final entry in captured)
+        if (uniqueAcknowledgedIds.contains(_deliveryId(entry, legacyReviews)))
+          _deliveryId(entry, legacyReviews) as Object: entry,
+    };
+    return _withOutboxLock(() async {
+      final writer = await _prefs;
+      // Read persisted truth independently, then capture the current same-key
+      // cache. Never reload another producer's unacknowledged edits away.
+      final nativeView = await LocalReviewPreferences.readSnapshot(writer);
+      final native = _decodeList(nativeView.getString(key), key);
+      final cached = _readList(writer, key);
+      // A conflicting payload in either view removes deletion authority for
+      // that identity. Identical copies still denote one idempotent event.
+      final uniqueIds = uniqueDeliveryIds([
+        ...native,
+        ...cached,
+      ], legacyReviews: legacyReviews);
+      List<Map<String, dynamic>> retained(List<Map<String, dynamic>> rows) => [
+        for (final entry in rows)
+          if (!uniqueIds.contains(_deliveryId(entry, legacyReviews)) ||
+              byId[_deliveryId(entry, legacyReviews)] == null ||
+              !_sameAcknowledgedPayload(
+                entry,
+                byId[_deliveryId(entry, legacyReviews)]!,
+              ))
+            entry,
+      ];
+      final nativeRemaining = retained(native);
+      final cachedRemaining = retained(cached);
+      final remaining = _mergeUnacknowledged(
+        nativeRemaining,
+        cachedRemaining,
+        legacyReviews: legacyReviews,
+      );
+      // Even an already-empty native view needs an acknowledged cache write
+      // when its exact server-accepted action survived a refused eager setter.
+      // No matching positive server ACK grants no new write authority.
+      if (nativeRemaining.length != native.length ||
+          cachedRemaining.length != cached.length) {
+        await _writeList(writer, key, remaining);
+      }
+      return remaining.length;
+    });
+  }
+
+  static List<Map<String, dynamic>> _mergeUnacknowledged(
+    List<Map<String, dynamic>> native,
+    List<Map<String, dynamic>> cached, {
+    required bool legacyReviews,
+  }) {
+    final merged = [...native];
+    final available = <Object?, List<int>>{};
+    for (var index = 0; index < native.length; index++) {
+      available
+          .putIfAbsent(_deliveryId(native[index], legacyReviews), () => [])
+          .add(index);
+    }
+    final matched = <int>{};
+    for (final entry in cached) {
+      final candidates = available[_deliveryId(entry, legacyReviews)] ?? [];
+      int? match;
+      for (final index in candidates) {
+        if (!matched.contains(index) &&
+            _sameAcknowledgedPayload(merged[index], entry)) {
+          match = index;
+          break;
+        }
+      }
+      if (match == null) {
+        merged.add(entry); // Cache-only refusals and all conflicts survive.
+        continue;
+      }
+      matched.add(match);
+      // Match copies one-for-one so excess duplicates from either view survive.
+      // A durable attempt or unknown old marker must never turn into fresh Undo.
+      final current = merged[match];
+      if (current['delivery_attempted'] == true ||
+          entry['delivery_attempted'] == true) {
+        merged[match] = {...current, 'delivery_attempted': true};
+      } else if (current['delivery_attempted'] == false &&
+          entry['delivery_attempted'] != false) {
+        merged[match] = {...current}..remove('delivery_attempted');
+        if (entry.containsKey('delivery_attempted')) {
+          merged[match]['delivery_attempted'] = entry['delivery_attempted'];
+        }
+      }
+    }
+    return merged;
+  }
+
+  /// A local-only identity for the exact legacy backend deduplication tuple.
+  /// Never persist it or add a client id: the API must keep its original legacy
+  /// lookup instead of sending an old rating as a fresh RPC event.
+  static Object? reviewDeliveryId(Map<String, dynamic> entry) {
+    final clientId = entry['client_id'];
+    if (clientId != null) {
+      return _hasStableDeliveryId(clientId) ? clientId : null;
+    }
+    final cardId = entry['card_id'];
+    final device = entry['device'];
+    final raw = entry['last_review'];
+    if (cardId is! int ||
+        cardId <= 0 ||
+        device is! String ||
+        device.trim().isEmpty ||
+        raw is! String) {
+      return null;
+    }
+    // Original pre-client-id producers serialized a UTC ISO rating instant.
+    // Reject date-only values and calendar overflow accepted by DateTime.parse.
+    final match = _legacyRatingAt.firstMatch(raw);
+    final timestamp = DateTime.tryParse(raw);
+    if (match == null ||
+        timestamp == null ||
+        !timestamp.isUtc ||
+        timestamp.year != int.parse(match[1]!) ||
+        timestamp.month != int.parse(match[2]!) ||
+        timestamp.day != int.parse(match[3]!) ||
+        timestamp.hour != int.parse(match[4]!) ||
+        timestamp.minute != int.parse(match[5]!) ||
+        timestamp.second != int.parse(match[6]!)) {
+      return null;
+    }
+    return (legacyReviewCardId: cardId, ratingAt: timestamp, device: device);
+  }
+
+  static final _legacyRatingAt = RegExp(
+    r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?Z$',
+  );
+
+  static Object? _deliveryId(Map<String, dynamic> entry, bool legacyReviews) {
+    if (legacyReviews) return reviewDeliveryId(entry);
+    final id = entry['client_id'];
+    return _hasStableDeliveryId(id) ? id : null;
+  }
+
+  /// Identities with one immutable payload in this captured batch. Identical
+  /// copies represent the same idempotent server event; conflicting copies and
+  /// integer/string wire-id collisions remain ambiguous and cannot be sent.
+  static Set<Object> uniqueDeliveryIds(
+    Iterable<Map<String, dynamic>> entries, {
+    bool legacyReviews = false,
+  }) {
+    final byKey = <Object, Map<String, dynamic>>{};
+    final ids = <Object, Object>{};
+    final ambiguous = <Object>{};
+    Object key(Object id) => id is int ? id.toString() : id;
+    for (final entry in entries) {
+      final id = _deliveryId(entry, legacyReviews);
+      if (id == null) continue;
+      final wireKey = key(id);
+      final previous = byKey[wireKey];
+      if (previous == null) {
+        byKey[wireKey] = entry;
+        ids[wireKey] = id;
+      } else if (ids[wireKey] != id ||
+          !_sameAcknowledgedPayload(previous, entry)) {
+        ambiguous.add(wireKey);
+      }
+    }
+    return {
+      for (final entry in ids.entries)
+        if (!ambiguous.contains(entry.key)) entry.value,
+    };
+  }
+
+  static bool _hasStableDeliveryId(Object? id) =>
+      id is int || (id is String && id.isNotEmpty);
+
+  static bool _sameAcknowledgedPayload(
+    Map<String, dynamic> current,
+    Map<String, dynamic> acknowledged,
+  ) {
+    final immutableCurrent = {...current}..remove('delivery_attempted');
+    final immutableAcknowledged = {...acknowledged}
+      ..remove('delivery_attempted');
+    return _sameJsonValue(immutableCurrent, immutableAcknowledged);
+  }
+
+  static bool _sameJsonValue(Object? left, Object? right) {
+    if (left is Map && right is Map) {
+      return left.length == right.length &&
+          left.keys.every(
+            (key) =>
+                right.containsKey(key) && _sameJsonValue(left[key], right[key]),
+          );
+    }
+    if (left is List && right is List) {
+      if (left.length != right.length) return false;
+      for (var index = 0; index < left.length; index++) {
+        if (!_sameJsonValue(left[index], right[index])) return false;
+      }
+      return true;
+    }
+    return left == right;
+  }
+
   /// Drop the first [count] entries — the prefix a flush just delivered —
   /// and return how many remain. Entries enqueued while the flush ran are
   /// appended after that prefix, so they survive untouched.
@@ -644,8 +876,10 @@ class LocalReviewStore {
   List<Map<String, dynamic>> _readOutbox(SharedPreferences prefs, String key) =>
       _readList(prefs, key);
 
-  List<Map<String, dynamic>> _readList(SharedPreferences prefs, String key) {
-    final raw = prefs.getString(key);
+  List<Map<String, dynamic>> _readList(SharedPreferences prefs, String key) =>
+      _decodeList(prefs.getString(key), key);
+
+  List<Map<String, dynamic>> _decodeList(String? raw, String key) {
     if (raw == null) return [];
     try {
       return [
