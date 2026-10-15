@@ -114,13 +114,19 @@ class SyntheticRecallFlow {
   Future<void> close() => dispose();
 
   Future<void> dispose() async {
-    controller.dispose();
     try {
-      // This joins earlier snapshot/outbox work on the store's real lock.
-      await store.outbox();
-      await store.flagOutbox();
+      // Rating starts a background sender. Join its complete loop before the
+      // fixture transport or its native preferences platform can be released.
+      await controller.syncPending();
     } finally {
-      client.dispose();
+      controller.dispose();
+      try {
+        // This also joins earlier snapshot work on the store's real lock.
+        await store.outbox();
+        await store.flagOutbox();
+      } finally {
+        client.dispose();
+      }
     }
   }
 }
