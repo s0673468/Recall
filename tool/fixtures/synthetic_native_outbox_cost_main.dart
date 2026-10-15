@@ -28,13 +28,13 @@ const _patchSha = String.fromEnvironment('RECALL_PATCH_SHA256');
 const _fixtureSha = String.fromEnvironment('RECALL_FIXTURE_SHA256');
 const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
-const _storeBlob = '0c2aa6618ec3239c046783f7085d60ef02ca4457';
+const _storeBlob = '677f35e331a048e5abcc9eee8e725a1a6593db91';
 const _baselineControllerSha =
-    '30b37aded9dba800901b89aec177f6a1c82a75a3a20fd526220d1f440a0037d1';
+    '0b195cd8f51f0efa46317cc411b4d29018c893a5eac24f259fcc63983f30e8b4';
 const _checkpointControllerSha =
-    '8fb857f2c6e87b2f30ff4f7b3c024be2782e590b0a9829ecd66c57bc3502d000';
+    '92c4113297fd78187f9465264183e5992f7dfaba6379774a469a4dc02b4231e0';
 const _checkpointPatchSha =
-    'aefc0ab0e2dfda3806284d267f452cd75e7dcd857819cfdc9a260595c209882e';
+    '4cae03c8bb8de4da8afeec2d7d102d55a9bfa4739f86f844bd2c5180e1192bb6';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');
@@ -134,6 +134,22 @@ class TimedOutboxCostStore extends LocalReviewStore {
     }
   }
 
+  @override
+  Future<int> removeFirst(int count, {String? ownerScope}) async {
+    final watch = Stopwatch()..start();
+    try {
+      return await super.removeFirst(count, ownerScope: ownerScope);
+    } finally {
+      watch.stop();
+      removeCalls++;
+      removeTotalUs += watch.elapsedMicroseconds;
+    }
+  }
+
+  /// Same timing probe for the acknowledged-identity drain. Only one of the
+  /// two removal shapes runs in a given experiment build; both share the
+  /// counters so the closed count contract holds whichever shape the pinned
+  /// Controller calls.
   @override
   Future<int> removeAcknowledgedReviews(
     Iterable<Map<String, dynamic>> acknowledged, {
@@ -327,7 +343,7 @@ Future<void> main() async {
   try {
     _require(_enabled && kDebugMode && Platform.isAndroid);
     _require(RegExp(r'^[0-9a-f]{40}$').hasMatch(_sourceCommit));
-    _require(_baseCommit == '2177762320603656737d551e73508366333e80fb');
+    _require(_baseCommit == '1dc9ea4e15fc644dc843a7d2ca8eb07ded54fbe4');
     _require(RegExp(r'^[0-9a-f]{64}$').hasMatch(_fixtureSha));
     _require(
       (_variant == 'baseline' &&
