@@ -24,6 +24,29 @@ def failure(**changes):
             'failed_phase': 'deck_load', **changes}
 
 
+class TechnicalAssetManifestTests(unittest.TestCase):
+    def test_current_manifest_retains_runtime_preferences_dependency_and_fonts_only(self):
+        manifest = (SCRIPT.parent.parent / 'pubspec.yaml').read_bytes()
+        transformed = consumer.technical_assets_only(manifest)
+        dependencies = transformed.split(b'dev_dependencies:', 1)[0]
+        self.assertIn(b'  shared_preferences_platform_interface: ^2.4.2\n', dependencies)
+        self.assertEqual(transformed.split(b'  assets:\n', 1)[1],
+                         b'    - assets/fonts/\n')
+        self.assertEqual(transformed.split(b'  assets:\n', 1)[0],
+                         manifest.split(b'  assets:\n', 1)[0])
+
+    def test_unapproved_manifest_and_asset_additions_are_refused(self):
+        manifest = (SCRIPT.parent.parent / 'pubspec.yaml').read_bytes()
+        changed_assets = manifest.replace(b'    - assets/fonts/\n',
+            b'    - assets/fonts/\n    - assets/invented-study.json\n')
+        self.assertNotEqual(changed_assets, manifest)
+        for unapproved in (manifest + b'# unreviewed manifest change\n', changed_assets):
+            with self.subTest(asset_change=unapproved == changed_assets):
+                with self.assertRaises(consumer.Refused) as caught:
+                    consumer.technical_assets_only(unapproved)
+                self.assertEqual(caught.exception.code, 'pubspec_source_pin_changed')
+
+
 class ClosedFailureTests(unittest.TestCase):
     def test_allowlisted_phases_survive_projection(self):
         for phase in consumer.FIXTURE_FAILED_PHASES:
