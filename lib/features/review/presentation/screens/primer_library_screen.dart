@@ -12,11 +12,13 @@ import 'primer_screen.dart';
 class PrimerLibraryScreen extends StatelessWidget {
   final List<ConceptPage> pages;
   final List<ConceptNodeInfo> conceptNodes;
+  final ValueChanged<ConceptPage>? onOpenPrimer;
 
   const PrimerLibraryScreen({
     super.key,
     required this.pages,
     required this.conceptNodes,
+    this.onOpenPrimer,
   });
 
   @override
@@ -28,17 +30,10 @@ class PrimerLibraryScreen extends StatelessWidget {
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: ListView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.fromLTRB(
-              UiSpacing.md,
-              UiSpacing.md,
-              UiSpacing.md,
-              UiSpacing.xl,
-            ),
-            children: [
-              PrimerLibraryContent(pages: pages, conceptNodes: conceptNodes),
-            ],
+          child: PrimerLibraryContent._owningViewport(
+            pages: pages,
+            conceptNodes: conceptNodes,
+            onOpenPrimer: onOpenPrimer,
           ),
         ),
       ),
@@ -55,6 +50,7 @@ class PrimerLibraryContent extends StatefulWidget {
   final ValueChanged<String>? onQueryChanged;
   final ValueChanged<ConceptPage>? onOpenPrimer;
   final bool collapsedBrowse;
+  final bool _ownsViewport;
 
   const PrimerLibraryContent({
     super.key,
@@ -64,7 +60,16 @@ class PrimerLibraryContent extends StatefulWidget {
     this.onQueryChanged,
     this.onOpenPrimer,
     this.collapsedBrowse = false,
-  });
+  }) : _ownsViewport = false;
+
+  const PrimerLibraryContent._owningViewport({
+    required this.pages,
+    required this.conceptNodes,
+    this.onOpenPrimer,
+  }) : browseExcludedNodeIds = const {},
+       onQueryChanged = null,
+       collapsedBrowse = false,
+       _ownsViewport = true;
 
   @override
   State<PrimerLibraryContent> createState() => _PrimerLibraryContentState();
@@ -115,7 +120,8 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
           return moduleOrder == 0 ? a.title.compareTo(b.title) : moduleOrder;
         });
 
-    return Column(
+    final controls = Column(
+      key: const ValueKey('recall_primer_library_controls'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Material(
@@ -157,41 +163,93 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
               label: Text(_browseExpanded ? 'Hide library' : 'Browse library'),
             ),
           ),
+      ],
+    );
+    final empty = Padding(
+      padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
+      child: Text(
+        query.isNotEmpty
+            ? 'No primers match your search.'
+            : widget.pages.isEmpty
+            ? 'No primers available.'
+            : widget.collapsedBrowse
+            ? 'All available primers are in your reading list.'
+            : 'All available primers are shown above.',
+        style: const TextStyle(color: UiColors.textMuted),
+      ),
+    );
+    PrimerRow buildRow(ConceptPage page) => PrimerRow(
+      page: page,
+      module: moduleByNode[page.nodeId],
+      onTap: () => widget.onOpenPrimer != null
+          ? widget.onOpenPrimer!(page)
+          : Navigator.of(context).push(
+              buildRecallPageRoute<void>(
+                nativeIos: recallRunsAsNativeIos(),
+                builder: (_) =>
+                    PrimerScreen(page: page, conceptNodes: widget.conceptNodes),
+              ),
+            ),
+    );
+
+    if (widget._ownsViewport) {
+      final rowIndices = {
+        for (var index = 0; index < pages.length; index++)
+          ValueKey('recall_primer_list_item_${pages[index].nodeId}'): index + 1,
+      };
+      // This builder owns the screen's viewport. A nested shrink-wrapped list
+      // would still lay out every primer inside the outer scrolling child.
+      return ListView.builder(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: const EdgeInsets.fromLTRB(
+          UiSpacing.md,
+          UiSpacing.md,
+          UiSpacing.md,
+          UiSpacing.xl,
+        ),
+        itemCount: pages.isEmpty ? 2 : pages.length + 1,
+        semanticChildCount: pages.length,
+        addSemanticIndexes: false,
+        findChildIndexCallback: (key) =>
+            key == const ValueKey('recall_primer_library_controls')
+            ? 0
+            : rowIndices[key],
+        itemBuilder: (context, index) {
+          if (index == 0) return controls;
+          if (pages.isEmpty) return empty;
+          final page = pages[index - 1];
+          return IndexedSemantics(
+            key: ValueKey('recall_primer_list_item_${page.nodeId}'),
+            index: index - 1,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (index == 1)
+                  const Divider(height: 1, color: UiColors.border),
+                buildRow(page),
+                Divider(
+                  height: 1,
+                  color: index == pages.length
+                      ? UiColors.border
+                      : UiColors.borderSubtle,
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        controls,
         if (query.isNotEmpty || !widget.collapsedBrowse || _browseExpanded)
           if (pages.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
-              child: Text(
-                query.isNotEmpty
-                    ? 'No primers match your search.'
-                    : widget.pages.isEmpty
-                    ? 'No primers available.'
-                    : widget.collapsedBrowse
-                    ? 'All available primers are in your reading list.'
-                    : 'All available primers are shown above.',
-                style: const TextStyle(color: UiColors.textMuted),
-              ),
-            )
+            empty
           else
             RecallListGroup(
-              children: [
-                for (final page in pages)
-                  PrimerRow(
-                    page: page,
-                    module: moduleByNode[page.nodeId],
-                    onTap: () => widget.onOpenPrimer != null
-                        ? widget.onOpenPrimer!(page)
-                        : Navigator.of(context).push(
-                            buildRecallPageRoute<void>(
-                              nativeIos: recallRunsAsNativeIos(),
-                              builder: (_) => PrimerScreen(
-                                page: page,
-                                conceptNodes: widget.conceptNodes,
-                              ),
-                            ),
-                          ),
-                  ),
-              ],
+              children: [for (final page in pages) buildRow(page)],
             ),
       ],
     );
