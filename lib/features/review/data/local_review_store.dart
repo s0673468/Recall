@@ -735,13 +735,26 @@ class LocalReviewStore {
   Future<void> removeHiddenCard(int cardId) =>
       _updateHidden((ids) => ids..remove(cardId));
 
-  Future<void> replaceHiddenCards(Set<int> cardIds) =>
-      _updateHidden((_) => {...cardIds});
+  /// Bind a delayed refresh to its namespace and recheck cancellation in-lock.
+  Future<void> replaceHiddenCards(
+    Set<int> cardIds, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) => _updateHidden(
+    (_) => {...cardIds},
+    ownerScope: ownerScope,
+    canWrite: canWrite,
+  );
 
-  Future<void> _updateHidden(Set<int> Function(Set<int>) change) {
-    final key = _storageKey(_hiddenCardsKey);
+  Future<void> _updateHidden(
+    Set<int> Function(Set<int>) change, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) {
+    final key = _storageKey(_hiddenCardsKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
+      if (canWrite != null && !canWrite()) return;
       final next = change(_readHidden(prefs, key));
       final ids = next.toList()..sort();
       final written = await prefs.setString(key, jsonEncode(ids));
