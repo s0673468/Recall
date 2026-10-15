@@ -137,11 +137,8 @@ class SyntheticStudyFrame extends SingleChildRenderObjectWidget {
       _StudyFrameRenderBox(probe._afterPaint);
 
   @override
-  void updateRenderObject(
-    BuildContext context,
-    _StudyFrameRenderBox renderObject,
-  ) {
-    renderObject.onPaint = probe._afterPaint;
+  void updateRenderObject(BuildContext context, RenderObject renderObject) {
+    (renderObject as _StudyFrameRenderBox).onPaint = probe._afterPaint;
   }
 }
 
