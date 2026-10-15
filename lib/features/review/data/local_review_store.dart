@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catch_up_state.dart';
+import 'local_review_preferences.dart';
 import 'models.dart';
 
 /// On-device persistence so Recall opens instantly and works offline:
@@ -349,9 +350,9 @@ class LocalReviewStore {
   Future<CatchUpLocalState> loadCatchUpState() {
     final key = _storageKey(catchUpKey);
     return _withOutboxLock(() async {
-      // SharedPreferences updates its memory cache before native persistence
-      // acknowledges the write. Read only after the shared writer has settled.
-      final prefs = await _prefs;
+      // A settled writer may have refused its eager cache update. Read native
+      // progress without replacing unrelated pending producer values in cache.
+      final prefs = await LocalReviewPreferences.readSnapshot(await _prefs);
       final raw = prefs.getString(key);
       if (raw == null) return CatchUpLocalState.none;
       try {
