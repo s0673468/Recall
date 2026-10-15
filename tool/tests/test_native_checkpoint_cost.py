@@ -189,7 +189,8 @@ class PreparerTests(unittest.TestCase):
         files={prepare.CONTROLLER:self.BASE,prepare.STORE:self.STORE,prepare.ENTRY:self.FIXTURE,
           'android/app/build.gradle.kts':self.GRADLE,'pubspec.yaml':self.PUBSPEC,
           'tool/fixtures/synthetic_android_main.dart':b'void main() {}',
-          'tool/fixtures/synthetic_recall_flow.dart':b'// invented helper','assets/fonts/invented.ttf':b'inventedfont',
+          'tool/fixtures/synthetic_recall_flow.dart':b'// invented helper',
+          'tool/fixtures/synthetic_study_frame.dart':b'// invented paint helper','assets/fonts/invented.ttf':b'inventedfont',
           'assets/private/never-read.txt':b'invented excluded corpus','config/secret.env':b'invented excluded config','android/key.properties':b'invented excluded signing'}
         for rel,data in files.items():
             path=source/rel;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)

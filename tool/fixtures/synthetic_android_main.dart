@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'synthetic_recall_flow.dart';
+import 'synthetic_study_frame.dart';
 
 const _sourceCommit = String.fromEnvironment('RECALL_BENCH_SOURCE_COMMIT');
 const _fixtureBuild = bool.fromEnvironment('RECALL_SYNTHETIC_BENCHMARK');
@@ -33,7 +34,8 @@ Future<void> main() async {
   }
   final binding = WidgetsFlutterBinding.ensureInitialized();
   final ready = ValueNotifier<bool>(false);
-  runApp(_SyntheticBenchmarkRoot(ready: ready));
+  final study = ValueNotifier<SyntheticStudyFrameProbe?>(null);
+  runApp(_SyntheticBenchmarkRoot(ready: ready, study: study));
   SyntheticRecallFlow? flow;
   var phase = 'first_frame';
   try {
@@ -67,9 +69,17 @@ Future<void> main() async {
     final rootReadyUs = entry.elapsedMicroseconds;
     _record('root_ready', {'dart_main_elapsed_us': rootReadyUs});
 
+    phase = 'review_surface';
+    final probe = SyntheticStudyFrameProbe(flow.controller);
+    study.value = probe;
+    await probe.waitForPaintedCard(1).timeout(_limit);
+
     phase = 'rating';
     final rate = Stopwatch()..start();
     await flow.rateFirstGood().timeout(_limit);
+    final rateToNextUs = rate.elapsedMicroseconds;
+    phase = 'rating_frame';
+    await probe.waitForPaintedCard(2).timeout(_limit);
     rate.stop();
     final pending = await flow.store.outbox().timeout(_limit);
     if (flow.controller.state.current?.id != 2 ||
@@ -81,6 +91,8 @@ Future<void> main() async {
     final nativeAckUs = flow.store.lastEnqueueAckUs;
     final requests = flow.httpFixture.totalRequests;
     phase = 'dispose';
+    study.value = null;
+    await binding.endOfFrame.timeout(_limit);
     await flow.close().timeout(_limit);
     flow = null;
     _record('done', {
@@ -89,7 +101,8 @@ Future<void> main() async {
         'dart_main_root_ready': rootReadyUs,
         'fixture_setup': setup.elapsedMicroseconds,
         'deck_load': load.elapsedMicroseconds,
-        'rating_to_next': rate.elapsedMicroseconds,
+        'rating_to_next': rateToNextUs,
+        'rating_to_next_painted_frame': rate.elapsedMicroseconds,
         'native_enqueue_ack': nativeAckUs,
       },
       'integrity': {
@@ -98,6 +111,9 @@ Future<void> main() async {
         'next_card_id': 2,
         'http_requests': requests,
         'native_preferences': true,
+        'initial_card_painted': true,
+        'next_card_painted': true,
+        'painted_next_card_id': 2,
       },
     });
   } catch (_) {
@@ -117,23 +133,29 @@ Future<void> main() async {
 }
 
 class _SyntheticBenchmarkRoot extends StatelessWidget {
-  const _SyntheticBenchmarkRoot({required this.ready});
+  const _SyntheticBenchmarkRoot({required this.ready, required this.study});
 
   final ValueListenable<bool> ready;
+  final ValueListenable<SyntheticStudyFrameProbe?> study;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     home: Scaffold(
-      body: Center(
-        child: ValueListenableBuilder<bool>(
-          valueListenable: ready,
-          builder: (context, loaded, child) => Text(
-            loaded
-                ? 'Synthetic benchmark ready'
-                : 'Synthetic benchmark starting',
-          ),
-        ),
+      body: ValueListenableBuilder<SyntheticStudyFrameProbe?>(
+        valueListenable: study,
+        builder: (context, probe, child) => probe != null
+            ? Padding(padding: const EdgeInsets.all(16), child: probe.screen())
+            : Center(
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: ready,
+                  builder: (context, loaded, child) => Text(
+                    loaded
+                        ? 'Synthetic benchmark ready'
+                        : 'Synthetic benchmark starting',
+                  ),
+                ),
+              ),
       ),
     ),
   );

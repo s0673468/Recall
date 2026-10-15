@@ -29,6 +29,7 @@ class NativePrepareTest(unittest.TestCase):
             write('pubspec.yaml', b'flutter:\n  assets:\n    - assets/private/\n')
             write('tool/fixtures/synthetic_android_main.dart', b'void main() {}\n')
             write('tool/fixtures/synthetic_recall_flow.dart', b'// invented flow\n')
+            write('tool/fixtures/synthetic_study_frame.dart', b'// invented paint probe\n')
             write('tool/fixtures/synthetic_native_offline_restart_main.dart',
                   b'void main() {} // invented offline restart\n')
             write('tool/run_synthetic_native_offline_restart.py',
