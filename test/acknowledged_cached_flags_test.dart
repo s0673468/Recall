@@ -65,9 +65,8 @@ Map<String, dynamic> _review(String id, {bool attempted = false}) => {
 };
 
 String _key({bool review = false, String? owner}) =>
-    'flutter.' +
-    (review ? 'recall_outbox_v1' : 'flag_outbox_v1') +
-    (owner == null ? '' : ':owner:$owner');
+    'flutter.${review ? 'recall_outbox_v1' : 'flag_outbox_v1'}'
+    '${owner == null ? '' : ':owner:$owner'}';
 
 _Native _install({
   List<Map<String, dynamic>> flags = const [],
