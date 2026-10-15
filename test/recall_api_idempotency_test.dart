@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -96,7 +97,8 @@ void main() {
             to: request,
           );
         }
-        if (request.method == 'GET' && request.url.path.endsWith('review_log')) {
+        if (request.method == 'GET' &&
+            request.url.path.endsWith('review_log')) {
           return json('[]', to: request);
         }
         if (request.method == 'GET' && request.url.path.endsWith('cards')) {
@@ -110,9 +112,12 @@ void main() {
           );
         }
         if (request.method == 'PATCH') {
-          return json(jsonEncode([
-            {'id': 42},
-          ]), to: request);
+          return json(
+            jsonEncode([
+              {'id': 42},
+            ]),
+            to: request,
+          );
         }
         return json(jsonEncode({'id': 88}), status: 201, to: request);
       }),
@@ -157,6 +162,37 @@ void main() {
       RecallApi(client).applyReview(entry),
       throwsA(isA<PostgrestException>()),
     );
+  });
+
+  test('RPC transport failure does not start client-side replay', () async {
+    final requests = <http.BaseRequest>[];
+    final client = SupabaseClient(
+      'https://recall-fixture.invalid',
+      'invented-public-key',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        throw http.ClientException('invented transport failure', request.url);
+      }),
+      authOptions: const AuthClientOptions(autoRefreshToken: false),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      RecallApi(client).applyReview({
+        ...entry,
+        'device': 'android',
+        'client_id': 'invented-transport-review-1',
+      }),
+      throwsA(isA<http.ClientException>()),
+    );
+
+    expect(requests, hasLength(1));
+    final request = requests.single as http.Request;
+    expect(request.method, 'POST');
+    expect(request.url.path, endsWith('/rpc/apply_review'));
+    final body = jsonDecode(request.body) as Map<String, dynamic>;
+    expect(body['p_client_event_id'], 'invented-transport-review-1');
+    expect(body['p_card_id'], 42);
   });
 
   test('a replay returns the existing log without applying twice', () async {
@@ -234,9 +270,12 @@ void main() {
           );
         }
         if (request.method == 'PATCH') {
-          return json(jsonEncode([
-            {'id': 42},
-          ]), to: request);
+          return json(
+            jsonEncode([
+              {'id': 42},
+            ]),
+            to: request,
+          );
         }
         if (request.method == 'POST') {
           return json(jsonEncode({'id': 88}), status: 201, to: request);
@@ -280,59 +319,69 @@ void main() {
     );
   });
 
-  test('a review older than the card keeps its rep but not the schedule', () async {
-    final requests = <http.BaseRequest>[];
-    http.Response json(String body, {int status = 200, http.BaseRequest? to}) =>
-        http.Response(
-          body,
-          status,
-          request: to,
-          headers: {'content-type': 'application/json'},
-        );
-    final client = SupabaseClient(
-      'https://example.supabase.co',
-      'anon-key',
-      httpClient: MockClient((request) async {
-        requests.add(request);
-        final absent = rpcAbsent(request);
-        if (absent != null) return absent;
-        final path = request.url.path;
-        if (request.method == 'GET' && path.endsWith('review_log')) {
-          return json('[]', to: request);
-        }
-        if (request.method == 'GET' && path.endsWith('cards')) {
-          // Another device already synced a *later* review of this card.
-          return json(
-            jsonEncode({
-              'reps': 9,
-              'lapses': 2,
-              'last_review': '2026-07-20T08:00:00.000Z',
-            }),
-            to: request,
-          );
-        }
-        if (request.method == 'PATCH') {
-          return json(jsonEncode([
-            {'id': 42},
-          ]), to: request);
-        }
-        return json(jsonEncode({'id': 90}), status: 201, to: request);
-      }),
-      authOptions: const AuthClientOptions(autoRefreshToken: false),
-    );
-    addTearDown(client.dispose);
+  test(
+    'a review older than the card keeps its rep but not the schedule',
+    () async {
+      final requests = <http.BaseRequest>[];
+      http.Response json(
+        String body, {
+        int status = 200,
+        http.BaseRequest? to,
+      }) => http.Response(
+        body,
+        status,
+        request: to,
+        headers: {'content-type': 'application/json'},
+      );
+      final client = SupabaseClient(
+        'https://example.supabase.co',
+        'anon-key',
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          final absent = rpcAbsent(request);
+          if (absent != null) return absent;
+          final path = request.url.path;
+          if (request.method == 'GET' && path.endsWith('review_log')) {
+            return json('[]', to: request);
+          }
+          if (request.method == 'GET' && path.endsWith('cards')) {
+            // Another device already synced a *later* review of this card.
+            return json(
+              jsonEncode({
+                'reps': 9,
+                'lapses': 2,
+                'last_review': '2026-07-20T08:00:00.000Z',
+              }),
+              to: request,
+            );
+          }
+          if (request.method == 'PATCH') {
+            return json(
+              jsonEncode([
+                {'id': 42},
+              ]),
+              to: request,
+            );
+          }
+          return json(jsonEncode({'id': 90}), status: 201, to: request);
+        }),
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+      );
+      addTearDown(client.dispose);
 
-    await RecallApi(client).applyReview(entry);
+      await RecallApi(client).applyReview(entry);
 
-    final patched =
-        jsonDecode((requests[3] as http.Request).body) as Map<String, dynamic>;
-    expect(patched, containsPair('reps', 10)); // the review still counts
-    // …but none of the scheduling columns are touched, so the newer device's
-    // due date survives.
-    expect(patched.keys, isNot(contains('due')));
-    expect(patched.keys, isNot(contains('stability')));
-    expect(patched.keys, isNot(contains('last_review')));
-  });
+      final patched =
+          jsonDecode((requests[3] as http.Request).body)
+              as Map<String, dynamic>;
+      expect(patched, containsPair('reps', 10)); // the review still counts
+      // …but none of the scheduling columns are touched, so the newer device's
+      // due date survives.
+      expect(patched.keys, isNot(contains('due')));
+      expect(patched.keys, isNot(contains('stability')));
+      expect(patched.keys, isNot(contains('last_review')));
+    },
+  );
 
   test('flag replay upserts with the durable client event id', () async {
     final requests = <http.BaseRequest>[];
@@ -366,6 +415,46 @@ void main() {
     expect(
       jsonDecode(request.body),
       containsPair('client_event_id', 'flag-42-1'),
+    );
+  });
+
+  test('flag transport failure does not fall back to a plain insert', () async {
+    final requests = <http.BaseRequest>[];
+    final client = SupabaseClient(
+      'https://recall-fixture.invalid',
+      'invented-public-key',
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        throw const SocketException('invented transport failure');
+      }),
+      authOptions: const AuthClientOptions(autoRefreshToken: false),
+    );
+    addTearDown(client.dispose);
+
+    await expectLater(
+      RecallApi(client).applyFlag({
+        'card_id': 42,
+        'guid': 'invented-guid',
+        'reason': 'confusing',
+        'flagged_at': '2026-07-13T12:34:56.789Z',
+        'device': 'android',
+        'client_id': 'invented-transport-flag-1',
+      }),
+      throwsA(isA<SocketException>()),
+    );
+
+    expect(requests, hasLength(1));
+    final request = requests.single as http.Request;
+    expect(request.method, 'POST');
+    expect(request.url.path, endsWith('/rest/v1/note_flags'));
+    expect(
+      request.url.query,
+      contains('on_conflict=card_id%2Cclient_event_id'),
+    );
+    expect(request.headers['prefer'], contains('resolution=ignore-duplicates'));
+    expect(
+      jsonDecode(request.body),
+      containsPair('client_event_id', 'invented-transport-flag-1'),
     );
   });
 }
