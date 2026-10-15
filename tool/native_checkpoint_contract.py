@@ -6,13 +6,13 @@ from pathlib import PurePosixPath
 
 SCHEMA='recall-native-outbox-cost/v1'
 PACKAGE='com.german.recall.syntheticbenchmark'
-FIXTURE_SHA='01de611cc163b3677cd63700a46a49d34f53d23cb56060129de040ba5c558ff3'
-SOURCE='9b463d424aa7da6d7c391b05ae2834ee2348b5b8'
-BASE_CONTROLLER='b7dd000dbf64598addbb880b0eb49f9866b65003f8fffb6ea766fc32cd474d88'
-CHECKPOINT_CONTROLLER='5df361de71751f2733d2d75ecad863dcfac1cbe979a571a0e27a28ddf4cd51db'
-STORE_SHA='78e9acfc2a8f25f99a021ca4959d0a81004d467f5319a3923d9b684c96f5a015'
-STORE_BLOB='f865358816616a77ac47cbcf78bbf3eb3f81728d'
-PATCH_SHA='e052e44873fabad289a80c6185dcaf4b46afe491f8529ca172b5b5b589a91578'
+FIXTURE_SHA='f65d65721c0e93092af12351687e873cca0471debb5f27f93e21c5909b772072'
+SOURCE='1720934f4ee18ccdbde06d8883fb73086e2d40a3'
+BASE_CONTROLLER='30b37aded9dba800901b89aec177f6a1c82a75a3a20fd526220d1f440a0037d1'
+CHECKPOINT_CONTROLLER='8fb857f2c6e87b2f30ff4f7b3c024be2782e590b0a9829ecd66c57bc3502d000'
+STORE_SHA='3dafb213fa6dc99104aecf06cd42269f7572e7540c64fb12ba7df1c46aa829ff'
+STORE_BLOB='f7b3af7cb02fc13ccff3c1cc58a8661d743afd68'
+PATCH_SHA='aefc0ab0e2dfda3806284d267f452cd75e7dcd857819cfdc9a260595c209882e'
 TIMINGS={'sync_pending','mark_total','remove_total','native_ack_total','native_ack_max','api_apply_total'}
 COUNTS={'mark_calls','remove_calls','native_ack_writes','native_ack_chars','native_ack_utf8_bytes','apply_review_requests','accepted_unique','pending_after'}
 KEYS={'schema','phase','baseline_source_commit','source_commit','variant','controller_sha256','store_git_blob','fixture_sha256','patch_sha256','package','pid','pending_seeded','build_mode','environment','native_preferences','fake_http_only','power_loss_tested','physical_device_tested','real_provider_contacted','timing_us','counts'}
