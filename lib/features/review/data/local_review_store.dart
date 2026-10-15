@@ -624,9 +624,9 @@ class LocalReviewStore {
 
   Future<CatchUpLocalState> _readCatchUpState(String key) {
     return _withOutboxLock(() async {
-      // SharedPreferences updates its memory cache before native persistence
-      // acknowledges the write. Read only after the shared writer has settled.
-      final prefs = await _prefs;
+      // A settled writer may have refused its eager cache update. Read native
+      // progress without replacing unrelated pending producer values in cache.
+      final prefs = await LocalReviewPreferences.readSnapshot(await _prefs);
       final raw = prefs.getString(key);
       if (raw == null) return CatchUpLocalState.none;
       try {
