@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catch_up_state.dart';
+import 'local_review_preferences.dart';
 import 'models.dart';
 
 /// On-device persistence so Recall opens instantly and works offline:
@@ -300,6 +301,122 @@ class LocalReviewStore {
       await _writeList(prefs, key, list);
       return true;
     });
+  }
+
+  /// Drain only captured reviews whose server acknowledgement returned.
+  /// Fresh native state may already have lost these ids in another tab; its
+  /// next queued action must never be removed in their place. Unidentified or
+  /// duplicate-id legacy records remain queued rather than guessing by count.
+  Future<int> removeAcknowledgedReviews(
+    Iterable<Map<String, dynamic>> acknowledged, {
+    String? ownerScope,
+  }) => _removeAcknowledged(
+    _storageKey(_outboxKey, ownerScope: ownerScope),
+    acknowledged,
+  );
+
+  /// Flag delivery uses the same identity guard in its separate owner outbox.
+  Future<int> removeAcknowledgedFlags(
+    Iterable<Map<String, dynamic>> acknowledged, {
+    String? ownerScope,
+  }) => _removeAcknowledged(
+    _storageKey(_flagOutboxKey, ownerScope: ownerScope),
+    acknowledged,
+  );
+
+  Future<int> _removeAcknowledged(
+    String key,
+    Iterable<Map<String, dynamic>> acknowledged,
+  ) {
+    final captured = [
+      for (final entry in acknowledged) Map<String, dynamic>.from(entry),
+    ];
+    final uniqueAcknowledgedIds = uniqueDeliveryIds(captured);
+    final byId = {
+      for (final entry in captured)
+        if (uniqueAcknowledgedIds.contains(entry['client_id']))
+          entry['client_id'] as Object: entry,
+    };
+    return _withOutboxLock(() async {
+      // Do not reload the global SharedPreferences cache: an unrelated failed
+      // producer may still rely on its existing cache. This view is native-only.
+      final prefs = await LocalReviewPreferences.readSnapshot(
+        await SharedPreferences.getInstance(),
+      );
+      final list = _decodeList(prefs.getString(key), key);
+      final uniqueIds = uniqueDeliveryIds(list);
+      final remaining = <Map<String, dynamic>>[];
+      for (final entry in list) {
+        final id = entry['client_id'];
+        final sent = byId[id];
+        if (sent == null ||
+            !uniqueIds.contains(id) ||
+            !_sameAcknowledgedPayload(entry, sent)) {
+          remaining.add(entry);
+        }
+      }
+      if (remaining.length != list.length &&
+          !await prefs.setString(key, jsonEncode(remaining))) {
+        throw LocalOutboxWriteException(key);
+      }
+      return remaining.length;
+    });
+  }
+
+  /// IDs that identify exactly one persisted event in this captured batch.
+  /// Legacy, malformed and duplicate identities cannot be safely drained, so
+  /// the controller must retain them without repeatedly transporting them.
+  static Set<Object> uniqueDeliveryIds(Iterable<Map<String, dynamic>> entries) {
+    final captured = entries.toList();
+    final occurrences = <String, int>{};
+    for (final entry in captured) {
+      final id = entry['client_id'];
+      if (_hasStableDeliveryId(id)) {
+        // RecallApi sends client ids as strings, including older integer ids.
+        occurrences.update(
+          id.toString(),
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+      }
+    }
+    return {
+      for (final entry in captured)
+        if (_hasStableDeliveryId(entry['client_id']) &&
+            occurrences[entry['client_id'].toString()] == 1)
+          entry['client_id'] as Object,
+    };
+  }
+
+  static bool _hasStableDeliveryId(Object? id) =>
+      id is int || (id is String && id.isNotEmpty);
+
+  static bool _sameAcknowledgedPayload(
+    Map<String, dynamic> current,
+    Map<String, dynamic> acknowledged,
+  ) {
+    final immutableCurrent = {...current}..remove('delivery_attempted');
+    final immutableAcknowledged = {...acknowledged}
+      ..remove('delivery_attempted');
+    return _sameJsonValue(immutableCurrent, immutableAcknowledged);
+  }
+
+  static bool _sameJsonValue(Object? left, Object? right) {
+    if (left is Map && right is Map) {
+      return left.length == right.length &&
+          left.keys.every(
+            (key) =>
+                right.containsKey(key) && _sameJsonValue(left[key], right[key]),
+          );
+    }
+    if (left is List && right is List) {
+      if (left.length != right.length) return false;
+      for (var index = 0; index < left.length; index++) {
+        if (!_sameJsonValue(left[index], right[index])) return false;
+      }
+      return true;
+    }
+    return left == right;
   }
 
   /// Drop the first [count] entries — the prefix a flush just delivered —
@@ -614,8 +731,10 @@ class LocalReviewStore {
   List<Map<String, dynamic>> _readOutbox(SharedPreferences prefs, String key) =>
       _readList(prefs, key);
 
-  List<Map<String, dynamic>> _readList(SharedPreferences prefs, String key) {
-    final raw = prefs.getString(key);
+  List<Map<String, dynamic>> _readList(SharedPreferences prefs, String key) =>
+      _decodeList(prefs.getString(key), key);
+
+  List<Map<String, dynamic>> _decodeList(String? raw, String key) {
     if (raw == null) return [];
     try {
       return [
