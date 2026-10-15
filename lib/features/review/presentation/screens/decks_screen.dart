@@ -95,104 +95,105 @@ class DecksScreenState extends State<DecksScreen> {
                         ? entry.value.neu
                         : 0),
               );
-              return ListView(
+              return CustomScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 keyboardDismissBehavior:
                     ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.fromLTRB(
-                  UiSpacing.md,
-                  UiSpacing.md,
-                  UiSpacing.md,
-                  UiSpacing.xl,
-                ),
-                children: [
-                  const RecallPageHeader(title: 'Decks'),
-                  const SizedBox(height: UiSpacing.lg),
-                  TextField(
-                    key: const Key('recall_deck_search'),
-                    controller: _searchController,
-                    autocorrect: false,
-                    textInputAction: TextInputAction.search,
-                    decoration: InputDecoration(
-                      hintText: 'Find a deck',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      suffixIcon: query.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: 'Clear search',
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _query = '');
-                              },
-                              icon: const Icon(Icons.close, size: 20),
-                            ),
-                    ),
-                    onChanged: (value) => setState(() => _query = value),
-                  ),
-                  const SizedBox(height: UiSpacing.lg),
-                  RecallMotionSwap(
-                    child: snap.hasError
-                        ? _CountError(onRetry: _retry)
-                        : snap.connectionState == ConnectionState.done
-                        ? const SizedBox.shrink(
-                            key: ValueKey('deck_counts_ready'),
-                          )
-                        : const Padding(
-                            key: ValueKey('deck_counts_loading'),
-                            padding: EdgeInsets.only(bottom: UiSpacing.sm),
-                            child: LinearProgressIndicator(minHeight: 2),
+                slivers: [
+                  _sliverBox(
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SizedBox(height: UiSpacing.md),
+                        const RecallPageHeader(title: 'Decks'),
+                        const SizedBox(height: UiSpacing.lg),
+                        TextField(
+                          key: const Key('recall_deck_search'),
+                          controller: _searchController,
+                          autocorrect: false,
+                          textInputAction: TextInputAction.search,
+                          decoration: InputDecoration(
+                            hintText: 'Find a deck',
+                            prefixIcon: const Icon(Icons.search, size: 20),
+                            suffixIcon: query.isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: 'Clear search',
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      _setQuery('');
+                                    },
+                                    icon: const Icon(Icons.close, size: 20),
+                                  ),
                           ),
+                          onChanged: _setQuery,
+                        ),
+                        const SizedBox(height: UiSpacing.lg),
+                        RecallMotionSwap(
+                          child: snap.hasError
+                              ? _CountError(onRetry: _retry)
+                              : snap.connectionState == ConnectionState.done
+                              ? const SizedBox.shrink(
+                                  key: ValueKey('deck_counts_ready'),
+                                )
+                              : const Padding(
+                                  key: ValueKey('deck_counts_loading'),
+                                  padding: EdgeInsets.only(bottom: UiSpacing.sm),
+                                  child: LinearProgressIndicator(minHeight: 2),
+                                ),
+                        ),
+                        if (query.isEmpty)
+                          _automaticHero(
+                            due: totalDue,
+                            neu: totalNew,
+                            onTap: () => widget.onStudyDeck(null),
+                          ),
+                      ],
+                    ),
                   ),
-                  if (query.isEmpty)
-                    _automaticHero(
-                      due: totalDue,
-                      neu: totalNew,
-                      onTap: () => widget.onStudyDeck(null),
-                    ),
                   if (coreDecks.isNotEmpty) ...[
-                    const SizedBox(height: UiSpacing.lg),
-                    const Text(
-                      'Included in automatic review',
-                      style: TextStyle(fontSize: 12, color: UiColors.textMuted),
+                    _sliverBox(
+                      const Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(height: UiSpacing.lg),
+                          Text(
+                            'Included in automatic review',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: UiColors.textMuted,
+                            ),
+                          ),
+                          SizedBox(height: UiSpacing.sm),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: UiSpacing.sm),
                     _deckGroup(coreDecks, counts),
                   ],
-                  if (optionalDecks.isNotEmpty) ...[
-                    const SizedBox(height: UiSpacing.lg),
-                    ExpansionTile(
-                      key: ValueKey(
-                        'recall_optional_decks_${query.isNotEmpty}',
-                      ),
+                  if (optionalDecks.isNotEmpty)
+                    _OptionalDecks(
+                      key: ValueKey(query.isNotEmpty),
+                      searching: query.isNotEmpty,
                       initiallyExpanded: query.isNotEmpty || _optionalExpanded,
+                      count: optionalDecks.length,
                       onExpansionChanged: (expanded) {
                         if (query.isEmpty) _optionalExpanded = expanded;
                       },
-                      tilePadding: const EdgeInsets.symmetric(
-                        horizontal: UiSpacing.xs,
-                      ),
-                      childrenPadding: EdgeInsets.zero,
-                      title: Row(
-                        children: [
-                          const Expanded(child: Text('Optional curricula')),
-                          const SizedBox(width: UiSpacing.sm),
-                          Text(
-                            '${optionalDecks.length}',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                      children: [_deckGroup(optionalDecks, counts)],
+                      sliver: _deckGroup(optionalDecks, counts),
                     ),
-                  ],
                   if (query.isNotEmpty && matches.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: UiSpacing.lg),
-                      child: Text(
-                        'No matching decks.',
-                        style: TextStyle(color: UiColors.textMuted),
+                    _sliverBox(
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: UiSpacing.lg),
+                        child: Text(
+                          'No matching decks.',
+                          style: TextStyle(color: UiColors.textMuted),
+                        ),
                       ),
                     ),
+                  const SliverToBoxAdapter(
+                    child: SizedBox(height: UiSpacing.xl),
+                  ),
                 ],
               );
             },
@@ -238,20 +239,54 @@ class DecksScreenState extends State<DecksScreen> {
     );
   }
 
+  Widget _sliverBox(Widget child) => SliverPadding(
+    padding: const EdgeInsets.symmetric(horizontal: UiSpacing.md),
+    sliver: SliverToBoxAdapter(child: child),
+  );
+
   Widget _deckGroup(
     List<DeckRow> decks,
     Map<int, ({int due, int neu})>? counts,
-  ) => RecallListGroup(
-    children: [
-      for (final deck in decks)
-        _tile(
-          label: deck.name.replaceAll('::', '  ›  '),
-          due: counts?[deck.deckId]?.due,
-          neu: counts?[deck.deckId]?.neu,
-          onTap: () => widget.onStudyDeck(deck.deckId),
+  ) {
+    final indices = {
+      for (var index = 0; index < decks.length; index++)
+        decks[index].deckId: index,
+    };
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: UiSpacing.md),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final deck = decks[index];
+            return Container(
+              key: ValueKey(deck.deckId),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: index == 0 ? UiColors.border : UiColors.borderSubtle,
+                  ),
+                  bottom: index == decks.length - 1
+                      ? const BorderSide(color: UiColors.border)
+                      : BorderSide.none,
+                ),
+              ),
+              child: _tile(
+                label: deck.name.replaceAll('::', '  ›  '),
+                due: counts?[deck.deckId]?.due,
+                neu: counts?[deck.deckId]?.neu,
+                onTap: () => widget.onStudyDeck(deck.deckId),
+              ),
+            );
+          },
+          childCount: decks.length,
+          findChildIndexCallback: (key) =>
+              key is ValueKey<int> ? indices[key.value] : null,
         ),
-    ],
-  );
+      ),
+    );
+  }
+
+  void _setQuery(String value) => setState(() => _query = value);
 
   Widget _tile({
     required String label,
@@ -301,6 +336,76 @@ class DecksScreenState extends State<DecksScreen> {
       _counts = widget.api.fetchDeckCounts();
     });
   }
+}
+
+/// The expansion state shares the optional section's lifecycle. Removing all
+/// results or changing search mode recreates it just as the original tile did.
+/// Its rows remain slivers in the screen's viewport instead of tile children.
+class _OptionalDecks extends StatefulWidget {
+  const _OptionalDecks({
+    super.key,
+    required this.searching,
+    required this.initiallyExpanded,
+    required this.count,
+    required this.onExpansionChanged,
+    required this.sliver,
+  });
+
+  final bool searching;
+  final bool initiallyExpanded;
+  final int count;
+  final ValueChanged<bool> onExpansionChanged;
+  final Widget sliver;
+
+  @override
+  State<_OptionalDecks> createState() => _OptionalDecksState();
+}
+
+class _OptionalDecksState extends State<_OptionalDecks> {
+  late bool _expanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.initiallyExpanded;
+  }
+
+  @override
+  Widget build(BuildContext context) => SliverMainAxisGroup(
+    slivers: [
+      SliverPadding(
+        padding: const EdgeInsets.fromLTRB(
+          UiSpacing.md,
+          UiSpacing.lg,
+          UiSpacing.md,
+          0,
+        ),
+        sliver: SliverToBoxAdapter(
+          child: ExpansionTile(
+            key: ValueKey('recall_optional_decks_${widget.searching}'),
+            initiallyExpanded: _expanded,
+            onExpansionChanged: (expanded) {
+              setState(() => _expanded = expanded);
+              widget.onExpansionChanged(expanded);
+            },
+            tilePadding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs),
+            childrenPadding: EdgeInsets.zero,
+            title: Row(
+              children: [
+                const Expanded(child: Text('Optional curricula')),
+                const SizedBox(width: UiSpacing.sm),
+                Text(
+                  '${widget.count}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      if (_expanded) widget.sliver,
+    ],
+  );
 }
 
 class _CountError extends StatelessWidget {
