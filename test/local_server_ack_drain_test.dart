@@ -15,7 +15,7 @@ import 'support/recall_acceptance_fixture.dart';
 enum _Failure { none, refused, thrownBefore, thrownAfter }
 
 class _Native extends InMemorySharedPreferencesStore {
-  _Native(Map<String, Object> values) : super.withData(values);
+  _Native(super.values) : super.withData();
 
   _Failure nextFailure = _Failure.none;
   bool failRead = false;
