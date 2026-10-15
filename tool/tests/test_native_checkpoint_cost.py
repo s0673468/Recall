@@ -166,9 +166,15 @@ class CurrentTechnicalProfileTests(unittest.TestCase):
                     self.assertEqual(H((args.destination/prepare.CONTROLLER).read_bytes()),expected)
                 self.assertEqual(copy.call_count,2)
                 self.assertTrue(all((source/path).read_bytes()==data for path,data in originals.items()))
-                # Mutate only the private temporary Store copy. Both profiles
-                # must refuse before the technical-copy boundary is called.
-                (source/prepare.STORE).write_bytes(real_store+b'\n')
+                # Change the real quota-refusal branch only in the private
+                # temporary Store copy. Both profiles must refuse this semantic
+                # change before the technical-copy boundary is called.
+                quota_guard=b'if (error is LocalPreferenceWriteNotCommitted) {'
+                self.assertEqual(real_store.count(quota_guard),1)
+                mutated_store=real_store.replace(quota_guard,
+                    b'if (error is! LocalPreferenceWriteNotCommitted) {')
+                self.assertNotEqual(mutated_store,real_store)
+                (source/prepare.STORE).write_bytes(mutated_store)
                 copy.reset_mock()
                 for variant in ['baseline','checkpoint']:
                     args=types.SimpleNamespace(source=source,destination=root/('mutated-'+variant),

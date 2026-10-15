@@ -77,6 +77,18 @@ class NativeCostWorkflowPolicyTest(unittest.TestCase):
             re.findall(r'--dart-define=RECALL_BASE_COMMIT=([0-9a-f]{40})', self.text),
             [contract.SOURCE] * 2,
         )
+        self.assertEqual(
+            re.findall(r'--dart-define=RECALL_CONTROLLER_SHA256=([0-9a-f]{64})', self.text),
+            [contract.BASE_CONTROLLER, contract.CHECKPOINT_CONTROLLER],
+        )
+        self.assertEqual(
+            re.findall(r'--dart-define=RECALL_PATCH_SHA256=(none|[0-9a-f]{64})', self.text),
+            ['none', contract.PATCH_SHA],
+        )
+        self.assertEqual(
+            hashlib.sha256((TOOL / 'fixtures/checkpoint-drain-only.patch').read_bytes()).hexdigest(),
+            contract.PATCH_SHA,
+        )
         dart = entry.decode()
         self.assertIn("_require(_baseCommit == '" + contract.SOURCE + "');", dart)
         self.assertIn("const _storeBlob = '" + contract.STORE_BLOB + "';", dart)
