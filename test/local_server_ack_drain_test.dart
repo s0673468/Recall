@@ -15,7 +15,7 @@ import 'support/recall_acceptance_fixture.dart';
 enum _Failure { none, refused, thrownBefore, thrownAfter }
 
 class _Native extends InMemorySharedPreferencesStore {
-  _Native(Map<String, Object> values) : super.withData(values);
+  _Native(super.values) : super.withData();
 
   _Failure nextFailure = _Failure.none;
   bool failRead = false;
@@ -249,7 +249,7 @@ void main() {
     );
 
     test(
-      'same-id payload conflicts, duplicate identities and legacy rows stay queued: flag=$flag',
+      'same-id payload conflicts and malformed legacy rows stay queued: flag=$flag',
       () async {
         final a = _entry('invented-a', flag);
         final native = _install(flag, [a]);
@@ -259,7 +259,10 @@ void main() {
         for (final rows in [
           [mismatch],
           [extra],
-          [a, a],
+          [
+            a,
+            {...a, 'card_id': 999},
+          ],
           [
             {...a, 'client_id': 11},
             {...a, 'client_id': '11'},
@@ -277,10 +280,22 @@ void main() {
           expect(native.writes, writes);
         }
         await _seed(native, flag, [a]);
-        expect(await _drain(store, flag, [a, a]), 1);
+        expect(
+          await _drain(store, flag, [
+            a,
+            {...a, 'card_id': 999},
+          ]),
+          1,
+        );
         expect(await _persisted(native, flag), [a]);
-        // A legacy record has no stable identity. Retain it even after transport
-        // succeeds: it cannot authorize deleting another indistinguishable row.
+        await _seed(native, flag, [
+          a,
+          {...a, 'delivery_attempted': true},
+        ]);
+        expect(await _drain(store, flag, [a, a]), 0);
+        expect(await _persisted(native, flag), isEmpty);
+        // These malformed legacy records lack the original review timestamp and
+        // device. They cannot authorize deletion by a guessed identity.
         final legacyA = {...a}..remove('client_id');
         final legacyB = {...legacyA, 'card_id': 999};
         final identified = _entry('invented-identified', flag);
@@ -349,7 +364,7 @@ void main() {
           if (invalid == 'wire-collision') a['client_id'] = 11;
           final rows = [
             a,
-            if (invalid == 'duplicate') {...a},
+            if (invalid == 'duplicate') {...a, 'card_id': 999},
             if (invalid == 'wire-collision') {...a, 'client_id': '11'},
             _entry('invented-b', flag),
           ];

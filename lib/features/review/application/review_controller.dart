@@ -2148,12 +2148,15 @@ class ReviewController extends ChangeNotifier {
     if (pending.isEmpty) return;
 
     final acknowledged = <Map<String, dynamic>>[];
-    final uniqueIds = LocalReviewStore.uniqueDeliveryIds(pending);
+    final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
+      pending,
+      legacyReviews: true,
+    );
     for (final entry in pending) {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
-      // A legacy or ambiguous identity cannot be safely removed after ACK.
-      // Keep it visible for recovery without reapplying it on every flush.
-      if (!uniqueIds.contains(entry['client_id'])) break;
+      // Older reviews retain their original (card, rating time, device) server
+      // deduplication path. Malformed or ambiguous identities stay queued.
+      if (!uniqueIds.contains(LocalReviewStore.reviewDeliveryId(entry))) break;
       try {
         final eventId = entry['client_id'];
         // Persist before transport. If Undo already removed it, skip this

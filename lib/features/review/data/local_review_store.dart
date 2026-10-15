@@ -335,13 +335,14 @@ class LocalReviewStore {
   /// Drain only captured reviews whose server acknowledgement returned.
   /// Fresh native state may already have lost these ids in another tab; its
   /// next queued action must never be removed in their place. Unidentified or
-  /// duplicate-id legacy records remain queued rather than guessing by count.
+  /// conflicting records remain queued rather than guessing by count.
   Future<int> removeAcknowledgedReviews(
     Iterable<Map<String, dynamic>> acknowledged, {
     String? ownerScope,
   }) => _removeAcknowledged(
     _storageKey(_outboxKey, ownerScope: ownerScope),
     acknowledged,
+    legacyReviews: true,
   );
 
   /// Flag delivery uses the same identity guard in its separate owner outbox.
@@ -355,16 +356,20 @@ class LocalReviewStore {
 
   Future<int> _removeAcknowledged(
     String key,
-    Iterable<Map<String, dynamic>> acknowledged,
-  ) {
+    Iterable<Map<String, dynamic>> acknowledged, {
+    bool legacyReviews = false,
+  }) {
     final captured = [
       for (final entry in acknowledged) Map<String, dynamic>.from(entry),
     ];
-    final uniqueAcknowledgedIds = uniqueDeliveryIds(captured);
+    final uniqueAcknowledgedIds = uniqueDeliveryIds(
+      captured,
+      legacyReviews: legacyReviews,
+    );
     final byId = {
       for (final entry in captured)
-        if (uniqueAcknowledgedIds.contains(entry['client_id']))
-          entry['client_id'] as Object: entry,
+        if (uniqueAcknowledgedIds.contains(_deliveryId(entry, legacyReviews)))
+          _deliveryId(entry, legacyReviews) as Object: entry,
     };
     return _withOutboxLock(() async {
       // Do not reload the global SharedPreferences cache: an unrelated failed
@@ -373,10 +378,10 @@ class LocalReviewStore {
         await SharedPreferences.getInstance(),
       );
       final list = _decodeList(prefs.getString(key), key);
-      final uniqueIds = uniqueDeliveryIds(list);
+      final uniqueIds = uniqueDeliveryIds(list, legacyReviews: legacyReviews);
       final remaining = <Map<String, dynamic>>[];
       for (final entry in list) {
-        final id = entry['client_id'];
+        final id = _deliveryId(entry, legacyReviews);
         final sent = byId[id];
         if (sent == null ||
             !uniqueIds.contains(id) ||
@@ -392,28 +397,79 @@ class LocalReviewStore {
     });
   }
 
-  /// IDs that identify exactly one persisted event in this captured batch.
-  /// Legacy, malformed and duplicate identities cannot be safely drained, so
-  /// the controller must retain them without repeatedly transporting them.
-  static Set<Object> uniqueDeliveryIds(Iterable<Map<String, dynamic>> entries) {
-    final captured = entries.toList();
-    final occurrences = <String, int>{};
-    for (final entry in captured) {
-      final id = entry['client_id'];
-      if (_hasStableDeliveryId(id)) {
-        // RecallApi sends client ids as strings, including older integer ids.
-        occurrences.update(
-          id.toString(),
-          (count) => count + 1,
-          ifAbsent: () => 1,
-        );
+  /// A local-only identity for the exact legacy backend deduplication tuple.
+  /// Never persist it or add a client id: the API must keep its original legacy
+  /// lookup instead of sending an old rating as a fresh RPC event.
+  static Object? reviewDeliveryId(Map<String, dynamic> entry) {
+    final clientId = entry['client_id'];
+    if (clientId != null) {
+      return _hasStableDeliveryId(clientId) ? clientId : null;
+    }
+    final cardId = entry['card_id'];
+    final device = entry['device'];
+    final raw = entry['last_review'];
+    if (cardId is! int ||
+        cardId <= 0 ||
+        device is! String ||
+        device.trim().isEmpty ||
+        raw is! String) {
+      return null;
+    }
+    // Original pre-client-id producers serialized a UTC ISO rating instant.
+    // Reject date-only values and calendar overflow accepted by DateTime.parse.
+    final match = _legacyRatingAt.firstMatch(raw);
+    final timestamp = DateTime.tryParse(raw);
+    if (match == null ||
+        timestamp == null ||
+        !timestamp.isUtc ||
+        timestamp.year != int.parse(match[1]!) ||
+        timestamp.month != int.parse(match[2]!) ||
+        timestamp.day != int.parse(match[3]!) ||
+        timestamp.hour != int.parse(match[4]!) ||
+        timestamp.minute != int.parse(match[5]!) ||
+        timestamp.second != int.parse(match[6]!)) {
+      return null;
+    }
+    return (legacyReviewCardId: cardId, ratingAt: timestamp, device: device);
+  }
+
+  static final _legacyRatingAt = RegExp(
+    r'^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,6})?Z$',
+  );
+
+  static Object? _deliveryId(Map<String, dynamic> entry, bool legacyReviews) {
+    if (legacyReviews) return reviewDeliveryId(entry);
+    final id = entry['client_id'];
+    return _hasStableDeliveryId(id) ? id : null;
+  }
+
+  /// Identities with one immutable payload in this captured batch. Identical
+  /// copies represent the same idempotent server event; conflicting copies and
+  /// integer/string wire-id collisions remain ambiguous and cannot be sent.
+  static Set<Object> uniqueDeliveryIds(
+    Iterable<Map<String, dynamic>> entries, {
+    bool legacyReviews = false,
+  }) {
+    final byKey = <Object, Map<String, dynamic>>{};
+    final ids = <Object, Object>{};
+    final ambiguous = <Object>{};
+    Object key(Object id) => id is int ? id.toString() : id;
+    for (final entry in entries) {
+      final id = _deliveryId(entry, legacyReviews);
+      if (id == null) continue;
+      final wireKey = key(id);
+      final previous = byKey[wireKey];
+      if (previous == null) {
+        byKey[wireKey] = entry;
+        ids[wireKey] = id;
+      } else if (ids[wireKey] != id ||
+          !_sameAcknowledgedPayload(previous, entry)) {
+        ambiguous.add(wireKey);
       }
     }
     return {
-      for (final entry in captured)
-        if (_hasStableDeliveryId(entry['client_id']) &&
-            occurrences[entry['client_id'].toString()] == 1)
-          entry['client_id'] as Object,
+      for (final entry in ids.entries)
+        if (!ambiguous.contains(entry.key)) entry.value,
     };
   }
 
