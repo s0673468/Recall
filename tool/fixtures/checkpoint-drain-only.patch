@@ -1,59 +1,47 @@
 --- a/lib/features/review/application/review_controller.dart
 +++ b/lib/features/review/application/review_controller.dart
-@@ -2136,6 +2136,12 @@
+@@ -2136,6 +2136,10 @@
      } while (_flushFollowUp);
    }
  
-+  // Checkpoint delivered prefixes while a large outbox drains. Every event
-+  // still receives its own durable attempted marker before transport. Once a
-+  // prefix is acknowledged by the server, removing it bounds the size of the
-+  // JSON value rewritten for later attempt markers without changing its format.
++  // Checkpoint only captured, server-acknowledged identity batches. Each
++  // event still receives its own durable attempted marker before transport.
 +  static const int _reviewFlushCheckpointSize = 32;
 +
    /// Send queued reviews oldest-first. Stops at the first failure (keeps the
-   /// rest queued) so a flaky network never drops a review. Only the delivered
-   /// prefix is removed from the outbox, so ratings enqueued while this ran
-@@ -2147,7 +2153,8 @@
-     final pending = await store.outbox(ownerScope: ownerScope);
+   /// rest queued) so a flaky network never drops a review. Drain captured,
+   /// server-acknowledged identities, even when another tab already removed one;
+@@ -2148,6 +2152,7 @@
      if (pending.isEmpty) return;
  
--    var sent = 0;
-+    var sentSinceCheckpoint = 0;
+     final acknowledged = <Map<String, dynamic>>[];
 +    var cacheInvalidated = false;
+     final uniqueIds = LocalReviewStore.uniqueDeliveryIds(pending);
      for (final entry in pending) {
        if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
-       try {
-@@ -2165,15 +2172,30 @@
-           _showFlagNotice('Synced reviews cannot be undone');
-         }
-         await api.applyReview(entry);
--        sent++;
-       } catch (_) {
+@@ -2174,9 +2179,24 @@
          debugPrint('Recall: review sync deferred (offline?)');
          break;
        }
-+      sentSinceCheckpoint++;
-+      if (sentSinceCheckpoint >= _reviewFlushCheckpointSize) {
++      if (acknowledged.length >= _reviewFlushCheckpointSize) {
 +        if (!cacheInvalidated) {
 +          RecallReadCache.of(api).reviewsChanged();
 +          cacheInvalidated = true;
 +        }
-+        // Keep this outside the transport catch: an uncertain native removal
-+        // must not be retried in this pass, which could drop a later event.
-+        await store.removeFirst(sentSinceCheckpoint, ownerScope: ownerScope);
-+        sentSinceCheckpoint = 0;
++        // A failed native acknowledgement stops this pass; it never licenses
++        // draining a later event in place of this captured identity batch.
++        await store.removeAcknowledgedReviews(
++          acknowledged,
++          ownerScope: ownerScope,
++        );
++        acknowledged.clear();
 +      }
      }
      // Delivered reviews changed the server's log and due dates.
--    if (sent > 0) RecallReadCache.of(api).reviewsChanged();
--    final remaining = await store.removeFirst(sent, ownerScope: ownerScope);
-+    if (sentSinceCheckpoint > 0 && !cacheInvalidated) {
+-    if (acknowledged.isNotEmpty) RecallReadCache.of(api).reviewsChanged();
++    if (acknowledged.isNotEmpty && !cacheInvalidated) {
 +      RecallReadCache.of(api).reviewsChanged();
 +    }
-+    final remaining = await store.removeFirst(
-+      sentSinceCheckpoint,
-+      ownerScope: ownerScope,
-+    );
-     if (_flushStillOwnsSession(ownerId, ownerScope) &&
-         _state.pendingSync != remaining) {
-       _set(_state.copyWith(pendingSync: remaining));
+     final remaining = await store.removeAcknowledgedReviews(
+       acknowledged,
+       ownerScope: ownerScope,

@@ -168,7 +168,7 @@ class PreparerTests(unittest.TestCase):
         # loading the old production controller. Its actual e052→5df proof is
         # retained in the original preparation manifest, not rerun by unit CI.
         real=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
-        self.assertEqual(H(real),'e052e44873fabad289a80c6185dcaf4b46afe491f8529ca172b5b5b589a91578')
+        self.assertEqual(H(real),'14a9cd98eed04b6ef637326f1d9ea20ffe898097af73529c7cb1e34cd0ad0e4c')
         self.assertEqual(prepare.apply_checkpoint(self.BASE,self.PATCH),self.RESULT)
         for data,payload in [(self.BASE+b'\n',self.PATCH),(self.BASE,self.PATCH+b'\n')]:
             with self.assertRaises(contract.Refused):prepare.apply_checkpoint(data,payload)
