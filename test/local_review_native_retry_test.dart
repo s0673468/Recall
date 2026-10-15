@@ -5,12 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
+import 'package:health_anki_flutter/features/review/data/local_review_preferences.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 
 enum _Outcome {
   succeed,
   refuse,
   throwBeforeCommit,
+  quotaRejectedBeforeCommit,
   commitThenThrow,
   commitDrainThenThrow,
 }
@@ -60,6 +62,8 @@ class _Native extends InMemorySharedPreferencesStore {
       case _Outcome.throwBeforeCommit:
         _failNextRead = failReconciliationRead;
         throw StateError('synthetic pre-commit failure');
+      case _Outcome.quotaRejectedBeforeCommit:
+        throw const LocalPreferenceWriteNotCommitted();
       case _Outcome.commitThenThrow:
         await super.setValue(valueType, key, value);
         _failNextRead = failReconciliationRead;
@@ -145,6 +149,88 @@ void main() {
     ]);
   });
 
+  for (final flag in [false, true]) {
+    test(
+      'proven quota rejection admits no pending action: flag=$flag',
+      () async {
+        final native = _install();
+        final store = LocalReviewStore();
+        final key = flag ? 'flag_outbox_v1' : 'recall_outbox_v1';
+        Future<int> append(String id) => flag
+            ? store.enqueueFlag(_flag(id))
+            : store.enqueueReview(_review(id));
+        Future<List<Object?>> ids() =>
+            flag ? _flagIds(store) : _reviewIds(store);
+        native
+          ..affectedKey = key
+          ..outcome = _Outcome.quotaRejectedBeforeCommit;
+        await expectLater(
+          append('quota-rejected'),
+          throwsA(isA<LocalPreferenceWriteNotCommitted>()),
+        );
+        expect(await ids(), isEmpty);
+        // The legacy cache contains the rejected value; it is not durable truth.
+        expect(
+          (await SharedPreferences.getInstance()).getString(key),
+          contains('quota-rejected'),
+        );
+        native.outcome = _Outcome.succeed;
+        expect(await append('fresh-click'), 1);
+        expect(await ids(), ['fresh-click']);
+        SharedPreferences.resetStatic();
+        final restarted = LocalReviewStore();
+        expect(flag ? await _flagIds(restarted) : await _reviewIds(restarted), [
+          'fresh-click',
+        ]);
+        if (flag) {
+          expect(await store.removeFirstFlag(1), 0);
+        } else {
+          expect(await store.removeFirst(1), 0);
+        }
+        await store.clear(requireEmptyOutboxes: true);
+      },
+    );
+
+    test(
+      'quota rejection preserves earlier pending actions: flag=$flag',
+      () async {
+        final native = _install();
+        final store = LocalReviewStore();
+        Future<int> append(String id) => flag
+            ? store.enqueueFlag(_flag(id))
+            : store.enqueueReview(_review(id));
+        Future<List<Object?>> ids() =>
+            flag ? _flagIds(store) : _reviewIds(store);
+        native.affectedKey = flag ? 'flag_outbox_v1' : 'recall_outbox_v1';
+        expect(await append('durable-first'), 1);
+        native.outcome = _Outcome.refuse;
+        await expectLater(
+          append('earlier-retryable'),
+          throwsA(isA<LocalOutboxWriteException>()),
+        );
+        native.outcome = _Outcome.quotaRejectedBeforeCommit;
+        await expectLater(
+          append('quota-rejected'),
+          throwsA(isA<LocalPreferenceWriteNotCommitted>()),
+        );
+        expect(await ids(), ['durable-first']);
+        final pending = await store
+            .clear(requireEmptyOutboxes: true)
+            .then<Object?>((_) => null, onError: (Object error) => error);
+        expect(pending, isA<LocalOutboxNotEmptyException>());
+        final error = pending as LocalOutboxNotEmptyException;
+        expect(flag ? error.pendingFlags : error.pendingReviews, 2);
+        native.outcome = _Outcome.succeed;
+        expect(await append('later-accepted'), 3);
+        expect(await ids(), [
+          'durable-first',
+          'earlier-retryable',
+          'later-accepted',
+        ]);
+      },
+    );
+  }
+
   test(
     'retrying the same client id writes once and preserves attempt marker',
     () async {
@@ -190,7 +276,7 @@ void main() {
   });
 
   test(
-    'pre-commit throw quarantines review and blocks later producer',
+    'unclassified throw stays uncertain and blocks later producer',
     () async {
       final native = _install();
       final store = LocalReviewStore();

@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/application/review_haptics.dart';
+import 'package:health_anki_flutter/features/review/data/local_review_preferences.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
 
@@ -53,6 +55,7 @@ class _Api extends SanitizedRecallApi {
   bool failSignOut = false;
   bool failAfterLocalSignOut = false;
   bool failDismiss = true;
+  _Gate? beforeApplyReview;
   _Gate? beforeLocalSignOut;
   _Gate? afterLocalSignOut;
   final reviewAttempts = <String>[];
@@ -75,6 +78,9 @@ class _Api extends SanitizedRecallApi {
   @override
   Future<int?> applyReview(Map<String, dynamic> entry) async {
     reviewAttempts.add(entry['client_id'].toString());
+    final gate = beforeApplyReview;
+    beforeApplyReview = null;
+    if (gate != null) await gate.hold();
     if (failWrites) throw StateError('invented lost acknowledgement');
     return super.applyReview(entry);
   }
@@ -158,6 +164,35 @@ class _Store extends LocalReviewStore {
   }
 }
 
+class _QuotaNative extends InMemorySharedPreferencesStore {
+  _QuotaNative() : super.empty();
+
+  bool rejectNextReview = false;
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async {
+    if (rejectNextReview && key.contains('recall_outbox_v1')) {
+      rejectNextReview = false;
+      // This synthetic backend explicitly proves it did not commit. The
+      // browser-only classifier tests exercise the actual native DOM bridge.
+      throw const LocalPreferenceWriteNotCommitted();
+    }
+    return super.setValue(valueType, key, value);
+  }
+}
+
+_QuotaNative _installQuotaNative() {
+  final previous = SharedPreferencesStorePlatform.instance;
+  SharedPreferences.resetStatic();
+  final native = _QuotaNative();
+  SharedPreferencesStorePlatform.instance = native;
+  addTearDown(() {
+    SharedPreferencesStorePlatform.instance = previous;
+    SharedPreferences.resetStatic();
+  });
+  return native;
+}
+
 Future<void> _until(bool Function() ready) async {
   for (var i = 0; i < 100; i++) {
     if (ready()) return;
@@ -221,6 +256,73 @@ Future<Object?> _outcome(Future<void> action) async {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  test(
+    'quota recovery retries the visible card once and signs out normally',
+    () async {
+      final native = _installQuotaNative();
+      final (:controller, :api, :store) = await _session();
+      final owner = store.activeOwnerScope!;
+      final delivery = _Gate();
+      addTearDown(delivery.open);
+      api
+        ..failWrites = false
+        ..beforeApplyReview = delivery;
+      native.rejectNextReview = true;
+      controller.flip();
+      await expectLater(
+        controller.rate(Rating.good),
+        throwsA(isA<LocalPreferenceWriteNotCommitted>()),
+      );
+      final rejectedId = store.lastMintedId!;
+      expect(controller.state.current?.id, 101);
+      expect(controller.state.index, 0);
+      expect(controller.state.showBack, isTrue);
+      expect(controller.state.reviewedThisSession, 0);
+      expect(await store.outbox(), isEmpty);
+      expect(api.reviewAttempts, isEmpty);
+
+      await controller.rate(Rating.good);
+      await delivery.entered.future.timeout(const Duration(seconds: 5));
+      final acceptedId = store.lastMintedId!;
+      expect(acceptedId, isNot(rejectedId));
+      expect(controller.state.current?.id, 102);
+      expect(controller.state.reviewedThisSession, 1);
+      final pending = await store.outbox();
+      expect(pending, hasLength(1));
+      expect(pending.single['client_id'], acceptedId);
+      expect(pending.single['card_id'], 101);
+      expect(api.reviewAttempts, [acceptedId]);
+
+      delivery.open();
+      await controller.syncPending();
+      expect(api.appliedReviewCardIds, [101]);
+      expect(api.reviewAttempts, [acceptedId]);
+      expect(await store.outbox(), isEmpty);
+      await controller.signOut();
+      expect(api.signOutCalls, 1);
+      expect(api.currentUser, isNull);
+      expect(await store.outbox(ownerScope: owner), isEmpty);
+    },
+  );
+
+  test('a rejected quota rating does not become a sign-out blocker', () async {
+    final native = _installQuotaNative();
+    final (:controller, :api, :store) = await _session();
+    final owner = store.activeOwnerScope!;
+    native.rejectNextReview = true;
+    controller.flip();
+    await expectLater(
+      controller.rate(Rating.good),
+      throwsA(isA<LocalPreferenceWriteNotCommitted>()),
+    );
+    expect(await store.outbox(), isEmpty);
+    expect(api.reviewAttempts, isEmpty);
+    await controller.signOut();
+    expect(api.signOutCalls, 1);
+    expect(api.currentUser, isNull);
+    expect(await store.outbox(ownerScope: owner), isEmpty);
+  });
 
   test(
     'fresh actions between empty check and clear survive sign-out',
@@ -724,78 +826,84 @@ void main() {
     },
   );
 
-  test('same UID replacement during old producer drain cannot sign out new session', () async {
-    final (:controller, :api, :store) = await _session();
-    api.failWrites = false;
-    final producer = _Gate();
-    addTearDown(producer.open);
-    store.nextId = producer;
-    controller.flip();
-    final oldRating = _outcome(controller.rate(Rating.good));
-    await producer.entered.future;
-    final oldSignOut = _outcome(controller.signOut());
-    await api.signIn(
-      email: 'synthetic-signout-a@example.invalid',
-      password: 'invented-password',
-    );
-    await Future<void>.delayed(Duration.zero);
-    producer.open();
-    expect(await oldRating, isNull);
-    expect(await oldSignOut, isA<StateError>());
-    expect(api.signOutCalls, 0);
-    expect(api.currentUser, isNotNull);
-    await _until(
-      () => !controller.state.loading && controller.state.current?.id == 101,
-    );
-    expect(await store.outbox(), isEmpty);
-  });
+  test(
+    'same UID replacement during old producer drain cannot sign out new session',
+    () async {
+      final (:controller, :api, :store) = await _session();
+      api.failWrites = false;
+      final producer = _Gate();
+      addTearDown(producer.open);
+      store.nextId = producer;
+      controller.flip();
+      final oldRating = _outcome(controller.rate(Rating.good));
+      await producer.entered.future;
+      final oldSignOut = _outcome(controller.signOut());
+      await api.signIn(
+        email: 'synthetic-signout-a@example.invalid',
+        password: 'invented-password',
+      );
+      await Future<void>.delayed(Duration.zero);
+      producer.open();
+      expect(await oldRating, isNull);
+      expect(await oldSignOut, isA<StateError>());
+      expect(api.signOutCalls, 0);
+      expect(api.currentUser, isNotNull);
+      await _until(
+        () => !controller.state.loading && controller.state.current?.id == 101,
+      );
+      expect(await store.outbox(), isEmpty);
+    },
+  );
 
-  test('replacement account sign-out drains its own flag while old rating ID is held', () async {
-    final (:controller, :api, :store) = await _session();
-    final oldProducer = _Gate();
-    final newProducer = _Gate();
-    addTearDown(oldProducer.open);
-    addTearDown(newProducer.open);
-    store.nextId = oldProducer;
-    controller.flip();
-    final oldRating = _outcome(controller.rate(Rating.good));
-    await oldProducer.entered.future;
-    final oldSignOut = _outcome(controller.signOut());
-    await _signInLoaded(
-      controller,
-      api,
-      store,
-      'synthetic-signout-b@example.invalid',
-    );
-    final ownerB = store.activeOwnerScope!;
-    api.failWrites = false;
-    store.nextId = newProducer;
-    final newFlag = _outcome(controller.flag('wrong'));
-    await newProducer.entered.future;
-    final newSignOut = _outcome(controller.signOut());
-    try {
-      newProducer.open();
-      expect(await newFlag, isNull);
-      // A's ID gate remains closed. A's producer must not join B's drain.
-      for (var i = 0; i < 200; i++) {
-        await Future<void>.delayed(Duration.zero);
+  test(
+    'replacement account sign-out drains its own flag while old rating ID is held',
+    () async {
+      final (:controller, :api, :store) = await _session();
+      final oldProducer = _Gate();
+      final newProducer = _Gate();
+      addTearDown(oldProducer.open);
+      addTearDown(newProducer.open);
+      store.nextId = oldProducer;
+      controller.flip();
+      final oldRating = _outcome(controller.rate(Rating.good));
+      await oldProducer.entered.future;
+      final oldSignOut = _outcome(controller.signOut());
+      await _signInLoaded(
+        controller,
+        api,
+        store,
+        'synthetic-signout-b@example.invalid',
+      );
+      final ownerB = store.activeOwnerScope!;
+      api.failWrites = false;
+      store.nextId = newProducer;
+      final newFlag = _outcome(controller.flag('wrong'));
+      await newProducer.entered.future;
+      final newSignOut = _outcome(controller.signOut());
+      try {
+        newProducer.open();
+        expect(await newFlag, isNull);
+        // A's ID gate remains closed. A's producer must not join B's drain.
+        for (var i = 0; i < 200; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(oldProducer.release.isCompleted, isFalse);
+        expect(api.signOutCalls, 1);
+        expect(api.flagAttempts, [store.lastMintedId]);
+        expect(await store.flagOutbox(ownerScope: ownerB), isEmpty);
+        expect(await newSignOut, isNull);
+        expect(api.currentUser, isNull);
+      } finally {
+        oldProducer.open();
+        newProducer.open();
+        await oldRating;
+        await oldSignOut;
+        await newFlag;
+        await newSignOut;
       }
-      expect(oldProducer.release.isCompleted, isFalse);
       expect(api.signOutCalls, 1);
-      expect(api.flagAttempts, [store.lastMintedId]);
-      expect(await store.flagOutbox(ownerScope: ownerB), isEmpty);
-      expect(await newSignOut, isNull);
-      expect(api.currentUser, isNull);
-    } finally {
-      oldProducer.open();
-      newProducer.open();
-      await oldRating;
-      await oldSignOut;
-      await newFlag;
-      await newSignOut;
-    }
-    expect(api.signOutCalls, 1);
-  });
+    },
+  );
 
   test('malformed outbox prevents guarded cache removal', () async {
     SharedPreferences.setMockInitialValues({

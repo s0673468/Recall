@@ -17,6 +17,7 @@ dependencies:
   intl: ^0.20.2
   shared_preferences: ^2.5.4
   shared_preferences_platform_interface: ^2.4.2
+  shared_preferences_web: 2.4.3
   fl_chart: ^1.2.0
   fsrs: ^2.0.0
   flutter_math_fork: ^0.7.3

@@ -726,6 +726,12 @@ class LocalReviewStore {
     try {
       written = await prefs.setString(key, encoded);
     } catch (error, stackTrace) {
+      if (error is LocalPreferenceWriteNotCommitted) {
+        // The incoming action was rejected, so the controller stays on this
+        // card. Retaining it would replay it alongside a fresh-ID retry click.
+        // Earlier retryable or unknown actions keep their original status.
+        rethrow;
+      }
       // Every retryable item included in this unknown write becomes unknown
       // too, even if its earlier attempt was a definite refusal.
       final uncertain = _uncertainAppends.putIfAbsent(key, () => []);
