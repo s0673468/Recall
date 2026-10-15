@@ -560,8 +560,11 @@ class LocalReviewStore {
   /// Remove only a positively never-attempted queued review. Legacy entries
   /// without this marker are uncertain and remain deliverable. Returns the
   /// removal result and pending count; never drops an ambiguous server commit.
-  Future<({bool removed, int remaining})> removeEntry(Object clientId) {
-    final key = _storageKey(_outboxKey);
+  Future<({bool removed, int remaining})> removeEntry(
+    Object clientId, {
+    String? ownerScope,
+  }) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       final list = _readOutbox(prefs, key);
@@ -581,6 +584,16 @@ class LocalReviewStore {
   /// than affecting the review outbox or queue load.
   Future<CatchUpLocalState> loadCatchUpState() {
     final key = _storageKey(catchUpKey);
+    return _readCatchUpState(key);
+  }
+
+  /// Read the account captured by a delayed Undo, even after an owner change.
+  Future<CatchUpLocalState> loadCatchUpStateForOwner(String? ownerScope) {
+    final key = _storageKey(catchUpKey, ownerScope: ownerScope);
+    return _readCatchUpState(key);
+  }
+
+  Future<CatchUpLocalState> _readCatchUpState(String key) {
     return _withOutboxLock(() async {
       // SharedPreferences updates its memory cache before native persistence
       // acknowledges the write. Read only after the shared writer has settled.
