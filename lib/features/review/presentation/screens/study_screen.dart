@@ -199,6 +199,7 @@ class StudyScreen extends StatelessWidget {
           neu: s.newRemaining,
           session: s.reviewedThisSession,
           offline: s.offline,
+          serverError: s.serverError,
           pendingSync: s.pendingSync,
           onUndo: undoable ? controller.undo : null,
           notice: controller.flagNotice,
@@ -309,6 +310,10 @@ class _Header extends StatelessWidget {
   final int neu;
   final int session;
   final bool offline;
+
+  /// With [offline]: the server answered with an error, so the saved queue is
+  /// labelled as such rather than as offline.
+  final bool serverError;
   final int pendingSync;
   final VoidCallback? onUndo;
   final VoidCallback? onDislike;
@@ -324,12 +329,15 @@ class _Header extends StatelessWidget {
     required this.offline,
     required this.pendingSync,
     required this.onMore,
+    this.serverError = false,
     required this.onSession,
     this.onUndo,
     this.onDislike,
     this.onDelete,
     this.notice,
   });
+
+  String get offlineLabel => serverError ? 'Server error' : 'Offline';
 
   @override
   Widget build(BuildContext context) => Column(
@@ -439,8 +447,8 @@ class _Header extends StatelessWidget {
             child: Text(
               offline
                   ? (pendingSync > 0
-                        ? 'Offline · $pendingSync waiting to sync'
-                        : 'Offline')
+                        ? '$offlineLabel · $pendingSync waiting to sync'
+                        : offlineLabel)
                   : '$pendingSync syncing',
               style: const TextStyle(
                 color: UiColors.textSecondary,
