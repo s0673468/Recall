@@ -1104,9 +1104,9 @@ class ReviewController extends ChangeNotifier {
         now,
       );
     }
-    // Only the stream that owns the episode can end it. An empty or small
-    // deck opened meanwhile must not reset the shared daily progress.
-    final ownsEpisode = local.coversStream(
+    // Only a stream that includes the episode's backlog can end it. An empty
+    // or small deck opened meanwhile must not reset the shared daily progress.
+    final mayEndEpisode = local.endsFrom(
       CatchUpLocalState.streamFor(_state.deckFilter),
     );
     if (local != rawLocal) {
@@ -1121,7 +1121,7 @@ class ReviewController extends ChangeNotifier {
     final threshold = BacklogCatchUp.thresholdForAverage(recentAverage);
 
     if (dueCount == 0 && clearWhenEmpty) {
-      if (local.mode != CatchUpMode.none && ownsEpisode) {
+      if (local.mode != CatchUpMode.none && mayEndEpisode) {
         await _saveCatchUpStateQuietly(
           CatchUpLocalState.none,
           canWrite: canWrite,
@@ -1156,7 +1156,7 @@ class ReviewController extends ChangeNotifier {
     // threshold, forget the dismissal so a later large backlog can ask again.
     if (mode == CatchUpMode.dismissed && dueCount <= threshold) {
       mode = CatchUpMode.none;
-      if (ownsEpisode) {
+      if (mayEndEpisode) {
         await _saveCatchUpStateQuietly(
           CatchUpLocalState(mode: mode, dayKey: local.dayKey),
           canWrite: canWrite,
@@ -1707,6 +1707,7 @@ class ReviewController extends ChangeNotifier {
             card: card,
             index: session.index,
             catchUp: catchUpBefore.view,
+            catchUpStream: catchUpBefore.stream,
             catchUpSourceQueue: catchUpBefore.source,
             previousLastReviewedAt: session.lastReviewedAt,
             previousReviewActivityKnown: session.reviewActivityKnown,
@@ -1752,7 +1753,8 @@ class ReviewController extends ChangeNotifier {
     if (!_state.offline) unawaited(_flushOutbox());
   }
 
-  Future<({CatchUpView view, List<ReviewCard> source})?> _recordCatchUpReview(
+  Future<({CatchUpView view, String? stream, List<ReviewCard> source})?>
+  _recordCatchUpReview(
     ReviewCard card, {
     required bool countsTowardsGlobalDue,
     required String? ownerScope,
@@ -1763,6 +1765,7 @@ class ReviewController extends ChangeNotifier {
     if (!countsTowardsGlobalDue) {
       return (
         view: initial,
+        stream: null,
         source: List<ReviewCard>.unmodifiable([
           if (!_catchUpSourceQueue.any((candidate) => candidate.id == card.id))
             card,
@@ -1831,8 +1834,8 @@ class ReviewController extends ChangeNotifier {
     if (active) completedToday++;
     // An unreadable episode keeps the former behaviour: any stream may end it.
     final episodeStream = local?.deckStream;
-    final ownsEpisode =
-        local?.coversStream(CatchUpLocalState.streamFor(_state.deckFilter)) ??
+    final mayEndEpisode =
+        local?.endsFrom(CatchUpLocalState.streamFor(_state.deckFilter)) ??
         true;
 
     while (canWrite()) {
@@ -1879,7 +1882,7 @@ class ReviewController extends ChangeNotifier {
           canWrite() &&
           identical(current, _state.catchUp) &&
           identical(source, _catchUpSourceQueue);
-      if (next.isNone && !before.isNone && ownsEpisode) {
+      if (next.isNone && !before.isNone && mayEndEpisode) {
         await _saveCatchUpStateQuietly(
           CatchUpLocalState.none,
           ownerScope: ownerScope,
@@ -1919,6 +1922,7 @@ class ReviewController extends ChangeNotifier {
       _set(_state.copyWith(catchUp: next));
       return (
         view: before,
+        stream: episodeStream,
         source: List<ReviewCard>.unmodifiable([
           if (!source.any((candidate) => candidate.id == card.id)) card,
           ...source,
@@ -1930,6 +1934,7 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> _restoreCatchUpState(
     CatchUpView view, {
+    required String? episodeStream,
     required String? ownerScope,
     required bool Function() canWrite,
   }) async {
@@ -1945,7 +1950,7 @@ class ReviewController extends ChangeNotifier {
         debugPrint('Recall: catch-up undo read skipped (non-fatal)');
       }
       if (!canWrite()) return;
-      if (raw.coversStream(stream)) {
+      if (raw.endsFrom(stream)) {
         await _saveCatchUpStateQuietly(
           CatchUpLocalState.none,
           ownerScope: ownerScope,
@@ -1970,8 +1975,11 @@ class ReviewController extends ChangeNotifier {
         mode: view.mode,
         dayKey: BacklogCatchUp.dayKey(now),
         completedToday: completedToday,
-        // Only this stream's own rating can have cleared the episode.
-        deckStream: raw.mode == CatchUpMode.none ? stream : raw.deckStream,
+        // A rating that ended the episode restores it to the stream that
+        // owned it; all decks can end a single deck's episode.
+        deckStream: raw.mode == CatchUpMode.none
+            ? episodeStream ?? stream
+            : raw.deckStream,
       ),
       ownerScope: ownerScope,
       canWrite: canWrite,
@@ -1996,6 +2004,7 @@ class ReviewController extends ChangeNotifier {
             (!containsRatedCard && _countsTowardsGlobalDue(undo.card) ? 1 : 0),
         completedToday: undo.catchUp.completedToday,
       ),
+      catchUpStream: undo.catchUpStream,
       catchUpSourceQueue: List<ReviewCard>.unmodifiable([
         if (!containsRatedCard) undo.card,
         ...source,
@@ -2581,6 +2590,7 @@ class ReviewController extends ChangeNotifier {
       }
       await _restoreCatchUpState(
         u.catchUp,
+        episodeStream: u.catchUpStream,
         ownerScope: ownerScope,
         canWrite: undoCurrent,
       );
@@ -2848,6 +2858,7 @@ class _UndoRecord {
   final ReviewCard card;
   final int index;
   final CatchUpView catchUp;
+  final String? catchUpStream;
   final List<ReviewCard> catchUpSourceQueue;
   final DateTime? previousLastReviewedAt;
   final bool previousReviewActivityKnown;
@@ -2857,6 +2868,7 @@ class _UndoRecord {
     required this.card,
     required this.index,
     required this.catchUp,
+    required this.catchUpStream,
     required this.catchUpSourceQueue,
     required this.previousLastReviewedAt,
     required this.previousReviewActivityKnown,

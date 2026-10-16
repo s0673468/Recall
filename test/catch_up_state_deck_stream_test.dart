@@ -38,6 +38,26 @@ void main() {
       expect(state.coversStream('deck:2'), isFalse);
     });
 
+    test('all decks ends any episode; a deck ends only its own', () {
+      const deckOwned = CatchUpLocalState(
+        mode: CatchUpMode.dismissed,
+        deckStream: 'deck:1',
+      );
+      expect(deckOwned.endsFrom(CatchUpLocalState.allStream), isTrue);
+      expect(deckOwned.endsFrom('deck:1'), isTrue);
+      expect(deckOwned.endsFrom('deck:2'), isFalse);
+
+      const allOwned = CatchUpLocalState(
+        mode: CatchUpMode.active,
+        deckStream: CatchUpLocalState.allStream,
+      );
+      expect(allOwned.endsFrom(CatchUpLocalState.allStream), isTrue);
+      expect(allOwned.endsFrom('deck:1'), isFalse);
+
+      const unscoped = CatchUpLocalState(mode: CatchUpMode.active);
+      expect(unscoped.endsFrom('deck:1'), isTrue);
+    });
+
     test('day normalization keeps mode and stream, resets progress', () {
       const state = CatchUpLocalState(
         mode: CatchUpMode.active,

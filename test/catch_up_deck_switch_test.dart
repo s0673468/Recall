@@ -252,6 +252,160 @@ void main() {
     });
   });
 
+  group('all decks covers an episode owned by one deck', () {
+    bool isDue(ReviewCard card) => card.deckId != _newOnlyDeck;
+
+    test('an empty all-decks load ends a deck-owned plan', () async {
+      final api = FakeRecallApi(_cards(), decks: _decks);
+      final controller = _controller(api);
+
+      await controller.load(deckId: _bigDeck);
+      await controller.startCatchUp();
+      await controller.selectDeck(null);
+      expect(controller.state.catchUp.isActive, isTrue);
+
+      api.queue.removeWhere(isDue);
+      await controller.refresh();
+
+      expect(controller.state.catchUp.isNone, isTrue);
+      expect(await controller.store.loadCatchUpState(), CatchUpLocalState.none);
+    });
+
+    test('rating the last all-decks card ends a deck-owned plan', () async {
+      final api = FakeRecallApi(_cards(), decks: _decks);
+      final controller = _controller(api);
+
+      await controller.load(deckId: _bigDeck);
+      await controller.startCatchUp();
+      api.queue.removeWhere((card) => isDue(card) && card.id != 1000);
+      await controller.selectDeck(null);
+      expect(controller.state.catchUp.isActive, isTrue);
+
+      await _rate(controller, 1);
+
+      expect(controller.state.catchUp.isNone, isTrue);
+      expect(await controller.store.loadCatchUpState(), CatchUpLocalState.none);
+
+      api.queue.addAll(_cards().where((card) => card.id > 1000 && isDue(card)));
+      await controller.refresh();
+      expect(controller.state.catchUp.isActive, isFalse);
+      expect(controller.state.catchUp.shouldOffer, isTrue);
+    });
+
+    test(
+      'undo after all decks ended it restores the plan to its deck',
+      () async {
+        final api = FakeRecallApi(_cards(), decks: _decks);
+        final controller = _controller(api);
+
+        await controller.load(deckId: _bigDeck);
+        await controller.startCatchUp();
+        api.queue.removeWhere((card) => isDue(card) && card.id != 1000);
+        await controller.selectDeck(null);
+        // Offline keeps the rating in the outbox so that Undo can remove it.
+        api.beforeQueue = () async => throw StateError('offline');
+        await controller.refresh();
+        expect(controller.state.offline, isTrue);
+        expect(controller.state.catchUp.isActive, isTrue);
+        await _rate(controller, 1);
+        expect(controller.state.catchUp.isNone, isTrue);
+        expect(
+          await controller.store.loadCatchUpState(),
+          CatchUpLocalState.none,
+        );
+
+        await controller.undo();
+
+        expect(
+          await controller.store.loadCatchUpState(),
+          const CatchUpLocalState(
+            mode: CatchUpMode.active,
+            dayKey: '2026-08-05',
+            deckStream: 'deck:$_bigDeck',
+          ),
+        );
+      },
+    );
+
+    test('a small all-decks backlog expires a deck-owned dismissal', () async {
+      final api = FakeRecallApi(_cards(), decks: _decks);
+      final controller = _controller(api);
+
+      await controller.load(deckId: _bigDeck);
+      await controller.showAll();
+      api.queue.removeWhere(
+        (card) => card.deckId == _bigDeck && card.id >= 1010,
+      );
+      await controller.selectDeck(null);
+
+      expect(controller.state.catchUp.isNone, isTrue);
+      expect(
+        (await controller.store.loadCatchUpState()).mode,
+        CatchUpMode.none,
+      );
+
+      api.queue.addAll(
+        _cards().where((card) => card.id >= 1010 && isDue(card)),
+      );
+      await controller.refresh();
+      expect(controller.state.catchUp.shouldOffer, isTrue);
+    });
+
+    test(
+      'rating all decks below the threshold expires a deck-owned dismissal',
+      () async {
+        final api = FakeRecallApi(_cards(), decks: _decks);
+        final controller = _controller(api);
+
+        await controller.load(deckId: _bigDeck);
+        await controller.showAll();
+        await controller.selectDeck(null);
+        expect(controller.state.catchUp.isDismissed, isTrue);
+        final aboveThreshold =
+            controller.state.catchUp.dueCount -
+            controller.state.catchUp.threshold;
+
+        await _rate(controller, aboveThreshold);
+
+        expect(controller.state.catchUp.isNone, isTrue);
+        expect(
+          (await controller.store.loadCatchUpState()).mode,
+          CatchUpMode.none,
+        );
+
+        api.queue.addAll([
+          for (var i = 0; i < 10; i++)
+            testCard(
+              id: 4000 + i,
+              deckId: _smallDeck,
+              state: 2,
+              stability: 3,
+              difficulty: 5,
+              due: _now.subtract(const Duration(hours: 1)),
+              lastReview: _now.subtract(const Duration(days: 3)),
+            ),
+        ]);
+        await controller.refresh();
+        expect(controller.state.catchUp.shouldOffer, isTrue);
+      },
+    );
+
+    test('an empty deck still keeps an all-decks plan', () async {
+      final api = FakeRecallApi(_cards(), decks: _decks);
+      final controller = _controller(api);
+
+      await controller.load();
+      await controller.startCatchUp();
+      api.queue.removeWhere((card) => card.deckId == _smallDeck);
+      await controller.selectDeck(_smallDeck);
+      expect(controller.state.catchUp.dueCount, 0);
+
+      final stored = await controller.store.loadCatchUpState();
+      expect(stored.mode, CatchUpMode.active);
+      expect(stored.deckStream, 'all');
+    });
+  });
+
   group('catch-up within a single deck is unchanged', () {
     test('an emptied selected deck still clears its own episode', () async {
       final api = FakeRecallApi(_cards(), decks: _decks);

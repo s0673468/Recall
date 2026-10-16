@@ -11,9 +11,9 @@ class CatchUpLocalState {
   final int completedToday;
 
   /// The study stream (all decks or one selected deck) whose backlog the
-  /// learner opted into or dismissed. Only that stream can end the episode;
-  /// a small or new-only deck opened meanwhile says nothing about it. Null for
-  /// state saved before streams were recorded, which every stream may end.
+  /// learner opted into or dismissed. Only that stream or all decks can end
+  /// the episode; another small or new-only deck says nothing about it. Null
+  /// for state saved before streams were recorded, which every stream may end.
   final String? deckStream;
 
   const CatchUpLocalState({
@@ -23,11 +23,18 @@ class CatchUpLocalState {
     this.deckStream,
   });
 
+  static const allStream = 'all';
+
   static String streamFor(int? deckId) =>
-      deckId == null ? 'all' : 'deck:$deckId';
+      deckId == null ? allStream : 'deck:$deckId';
 
   bool coversStream(String stream) =>
       deckStream == null || deckStream == stream;
+
+  /// Whether an empty or small backlog in [stream] ends this episode. All
+  /// decks includes every deck, so it ends any episode; a single deck ends
+  /// only its own.
+  bool endsFrom(String stream) => stream == allStream || coversStream(stream);
 
   CatchUpLocalState copyWith({
     CatchUpMode? mode,
