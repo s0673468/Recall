@@ -43,8 +43,12 @@ class LocalReviewStore {
   Future<SharedPreferences>? _prefsFuture;
   // A false native result is a definite refusal; a thrown call has unknown
   // commit status. Keep both only in this Store and under the exact scoped key.
+  // A proven quota refusal admits no pending action: its optimistic cache
+  // value is resynced in LocalReviewPreferences, and its id is tombstoned
+  // here so an acknowledgement merge can never persist it from a stale cache.
   final Map<String, List<Map<String, dynamic>>> _retryableAppends = {};
   final Map<String, List<Map<String, dynamic>>> _uncertainAppends = {};
+  final Map<String, Set<Object>> _quotaRefusedIds = {};
   String? _installId;
   int _eventSequence = 0;
   String? _activeOwnerScope;
@@ -403,7 +407,17 @@ class LocalReviewStore {
             entry,
       ];
       final nativeRemaining = retained(native);
-      final cachedRemaining = retained(cached);
+      final cachedRemaining = [
+        for (final entry in retained(cached))
+          // A proven quota refusal never committed: even a stale shared-cache
+          // copy must not be merged into native truth, or a fresh-ID retry
+          // would later submit both ratings for the same card.
+          if (_quotaRefusedIds[key]?.contains(
+                _deliveryId(entry, legacyReviews),
+              ) !=
+              true)
+            entry,
+      ];
       final remaining = _mergeUnacknowledged(
         nativeRemaining,
         cachedRemaining,
@@ -949,6 +963,7 @@ class LocalReviewStore {
     if (!removed) throw LocalOutboxWriteException(key);
     _retryableAppends.remove(key);
     _uncertainAppends.remove(key);
+    _quotaRefusedIds.remove(key);
   }
 
   Future<int> _appendProducer(
@@ -991,6 +1006,12 @@ class LocalReviewStore {
         // The incoming action was rejected, so the controller stays on this
         // card. Retaining it would replay it alongside a fresh-ID retry click.
         // Earlier retryable or unknown actions keep their original status.
+        // Tombstone the refused id so a stale shared-cache copy can never be
+        // merged into native truth by a later acknowledgement.
+        final refusedId = appended?['client_id'] ?? entry['client_id'];
+        if (refusedId != null) {
+          _quotaRefusedIds.putIfAbsent(key, () => {}).add(refusedId);
+        }
         rethrow;
       }
       // Every retryable item included in this unknown write becomes unknown
@@ -1027,6 +1048,11 @@ class LocalReviewStore {
       );
       if (entries?.isEmpty ?? false) pending.remove(key);
     }
+    // A refused id that later appears durable actually committed (or was
+    // re-minted and accepted): it must rejoin acknowledgement merges.
+    final refused = _quotaRefusedIds[key];
+    refused?.removeWhere(ids.contains);
+    if (refused?.isEmpty ?? false) _quotaRefusedIds.remove(key);
   }
 
   int _pendingCount(String key, List<Map<String, dynamic>> durable) {

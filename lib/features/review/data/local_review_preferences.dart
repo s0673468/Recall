@@ -57,7 +57,23 @@ class LocalReviewPreferences {
     try {
       return await action();
     } catch (error, stackTrace) {
-      if (write_failure.isDefinitelyUncommittedWrite(error, backend)) {
+      final definitelyUncommitted =
+          error is LocalPreferenceWriteNotCommitted ||
+          write_failure.isDefinitelyUncommittedWrite(error, backend);
+      if (definitelyUncommitted) {
+        // SharedPreferences updates its in-memory cache before the native
+        // call, so a definite refusal leaves the rejected value in the shared
+        // cache. A later acknowledgement merge reads that cache and would
+        // otherwise persist the rejected review. Resync best-effort; the
+        // refusal itself is never masked.
+        try {
+          await _writer.reload();
+        } catch (_) {
+          // A failed resync cannot grant retry authority.
+        }
+        if (error is LocalPreferenceWriteNotCommitted) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
         Error.throwWithStackTrace(
           const LocalPreferenceWriteNotCommitted(),
           stackTrace,

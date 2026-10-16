@@ -169,10 +169,12 @@ void main() {
           throwsA(isA<LocalPreferenceWriteNotCommitted>()),
         );
         expect(await ids(), isEmpty);
-        // The legacy cache contains the rejected value; it is not durable truth.
+        // A definite refusal is evicted from the shared cache: only native
+        // truth survives, so a later acknowledgement merge can never persist
+        // the rejected review and double-submit it with a fresh-ID retry.
         expect(
           (await SharedPreferences.getInstance()).getString(key),
-          contains('quota-rejected'),
+          isNot(contains('quota-rejected')),
         );
         native.outcome = _Outcome.succeed;
         expect(await append('fresh-click'), 1);
