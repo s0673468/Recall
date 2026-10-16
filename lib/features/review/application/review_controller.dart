@@ -4,7 +4,13 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:supabase_flutter/supabase_flutter.dart'
-    show AuthChangeEvent, AuthException, AuthState, User;
+    show
+        AuthApiException,
+        AuthChangeEvent,
+        AuthException,
+        AuthState,
+        PostgrestException,
+        User;
 
 import '../../../core/background/background_sync_coordinator.dart';
 import '../../../core/diagnostics/operational_diagnostics.dart';
@@ -86,6 +92,13 @@ class ReviewController extends ChangeNotifier {
   static const saveUnconfirmedNotice =
       "Couldn't confirm that save — try again.";
 
+  static const _accountSetupError =
+      'Recall could not prepare this account. Try again.';
+  static const _offlineLoadError =
+      'Recall is offline and no saved study queue is available.';
+  static const _serverLoadError =
+      "Recall's server returned an error. Try again later.";
+
   final RecallApi api;
   final FsrsEngine engine;
   final LocalReviewStore store;
@@ -107,6 +120,10 @@ class ReviewController extends ChangeNotifier {
   Future<void>? _sessionSetupTask;
   int _sessionSetupGeneration = 0;
   Future<void>? _signedOutReleaseTask;
+
+  /// The signed-in session whose account setup did not complete. A reload of
+  /// that session re-runs the setup instead of loading without its scope.
+  ({String ownerId, int generation})? _failedSessionSetup;
 
   ReviewController({
     required this.api,
@@ -251,11 +268,12 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  void _startSignedInSession(String ownerId) {
+  void _startSignedInSession(String ownerId, {bool retry = false}) {
     if (_sessionSetupOwner == ownerId && _sessionSetupTask != null) return;
     final generation = _sessionSetupGeneration;
     late final Future<void> task;
-    task = _prepareSignedInSession(ownerId, generation).whenComplete(() {
+    task = _prepareSignedInSession(ownerId, generation, retry: retry)
+        .whenComplete(() {
       if (identical(_sessionSetupTask, task)) {
         _sessionSetupTask = null;
         _sessionSetupOwner = null;
@@ -266,7 +284,13 @@ class ReviewController extends ChangeNotifier {
     unawaited(task);
   }
 
-  Future<void> _prepareSignedInSession(String ownerId, int generation) async {
+  /// A [retry] (the user's Retry after a failed setup) always reloads the
+  /// queue once the setup succeeds; its spinner is already showing.
+  Future<void> _prepareSignedInSession(
+    String ownerId,
+    int generation, {
+    bool retry = false,
+  }) async {
     // Supabase can emit a new signed-in session while the previous account's
     // native reminder and local preference cleanup is still running. Never
     // activate the new owner until that account-scoped release has completed,
@@ -291,11 +315,12 @@ class ReviewController extends ChangeNotifier {
     } catch (_) {
       if (api.currentUser?.id == ownerId &&
           _sessionSetupGeneration == generation) {
+        _failedSessionSetup = (ownerId: ownerId, generation: generation);
         _set(
           _state.copyWith(
             loading: false,
             authSubmitting: false,
-            error: 'Recall could not prepare this account. Try again.',
+            error: _accountSetupError,
           ),
         );
       }
@@ -305,10 +330,13 @@ class ReviewController extends ChangeNotifier {
         _sessionSetupGeneration != generation) {
       return;
     }
+    _failedSessionSetup = null;
 
     unawaited(_afterSignIn());
-    if (_state.queue.isEmpty && !_state.loading) {
-      await _loadSafely();
+    if (retry) {
+      await _loadSafely(deckId: _state.deckFilter, sessionReady: true);
+    } else if (_state.queue.isEmpty && !_state.loading) {
+      await _loadSafely(sessionReady: true);
     } else {
       notifyListeners();
     }
@@ -486,9 +514,11 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> initialize() => _loadSafely();
 
-  Future<void> _loadSafely({int? deckId}) async {
+  /// [sessionReady] is set by the account setup itself, which must load the
+  /// queue directly rather than wait on (or re-run) its own setup.
+  Future<void> _loadSafely({int? deckId, bool sessionReady = false}) async {
     try {
-      await load(deckId: deckId);
+      await (sessionReady ? _loadQueue(deckId: deckId) : load(deckId: deckId));
     } on LocalOutboxCorruptException {
       // Durable writes must fail closed, but malformed local storage must not
       // become another startup crash. Stop the session and surface a stable
@@ -554,7 +584,50 @@ class ReviewController extends ChangeNotifier {
   /// re-reads storage meanwhile must keep them hidden.
   final Set<int> _hidesInFlight = {};
 
-  Future<void> load({int? deckId, bool keepReviewed = true}) async {
+  Future<void> load({int? deckId, bool keepReviewed = true}) {
+    final ownerId = api.currentUser?.id;
+    if (ownerId != null) {
+      final failed = _failedSessionSetup;
+      if (failed != null &&
+          failed.ownerId == ownerId &&
+          failed.generation == _sessionSetupGeneration) {
+        return _retrySessionSetup(ownerId);
+      }
+      final setup = _sessionSetupTask;
+      if (setup != null &&
+          _sessionSetupOwner == ownerId &&
+          !_flushStillOwnsSession(ownerId, store.activeOwnerScope)) {
+        // This account is still being prepared; that setup loads the queue.
+        return setup;
+      }
+    }
+    return _loadQueue(deckId: deckId, keepReviewed: keepReviewed);
+  }
+
+  /// Re-runs the account setup that failed for [ownerId]'s session, then
+  /// loads its queue. Every outcome clears the spinner it shows.
+  Future<void> _retrySessionSetup(String ownerId) async {
+    final running = _sessionSetupTask;
+    if (running != null && _sessionSetupOwner == ownerId) {
+      await running; // a Retry is already in progress
+      return;
+    }
+    final generation = _sessionSetupGeneration;
+    final loadToken = _loadSequence;
+    _set(_state.copyWith(loading: true, error: null, authSubmitting: false));
+    _startSignedInSession(ownerId, retry: true);
+    final setup = _sessionSetupTask;
+    if (setup != null) await setup;
+    // The setup returned without loading (the session changed under it) and
+    // nothing else has taken over the state.
+    if (generation == _sessionSetupGeneration &&
+        loadToken == _loadSequence &&
+        _state.loading) {
+      _set(_state.copyWith(loading: false));
+    }
+  }
+
+  Future<void> _loadQueue({int? deckId, bool keepReviewed = true}) async {
     _sessionLoaded = true;
     final loadToken = ++_loadSequence;
     // Reloading (refresh/deck switch) leaves the session the last rating was
@@ -587,7 +660,11 @@ class ReviewController extends ChangeNotifier {
     // a spinner) and let the network fetch below replace it in the background.
     // Not on a deck switch — the snapshot holds the previous filter's queue.
     final cachedHidden = await _loadHiddenCardsQuietly();
-    if (loadToken != _loadSequence || cachedHidden == null) return;
+    if (loadToken != _loadSequence) return; // superseded by a newer load
+    if (cachedHidden == null) {
+      _settleLoadWithoutAccountScope();
+      return;
+    }
     _hiddenCardIds = {...cachedHidden, ..._hidesInFlight};
     var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
@@ -753,6 +830,7 @@ class ReviewController extends ChangeNotifier {
             loading: false,
             error: null,
             offline: false,
+            serverError: false,
             decks: decks,
             queue: presentedQueue,
             index: 0,
@@ -783,6 +861,7 @@ class ReviewController extends ChangeNotifier {
             loading: false,
             error: null,
             offline: false,
+            serverError: false,
             queue: retained,
             decks: decks,
             pendingSync: pendingSync,
@@ -806,18 +885,35 @@ class ReviewController extends ChangeNotifier {
           globalDueUpdatedAt: globalDueUpdatedAt,
         ),
       );
-    } catch (_) {
+    } catch (error) {
       if (loadToken != _loadSequence) return; // superseded by a newer load
+      // A server reply on a working connection keeps the same saved-queue
+      // fallback as offline, but is never described as offline.
+      final serverError = _isServerError(error);
       if (_state.queue.isNotEmpty) {
         // Already showing the snapshot (or an active session) — stay on it.
-        _set(_state.copyWith(loading: false, error: null, offline: true));
+        _set(
+          _state.copyWith(
+            loading: false,
+            error: null,
+            offline: true,
+            serverError: serverError,
+          ),
+        );
         return;
       }
       if (snapshotPainted) {
         // The initial snapshot was valid but every card may have been filtered
         // as pending. Do not reload its raw queue after a successful flush has
         // emptied the outbox; those cards were already reviewed and delivered.
-        _set(_state.copyWith(loading: false, error: null, offline: true));
+        _set(
+          _state.copyWith(
+            loading: false,
+            error: null,
+            offline: true,
+            serverError: serverError,
+          ),
+        );
         return;
       }
       final snapshot = await store.loadSnapshot(deckId: _state.deckFilter);
@@ -847,6 +943,7 @@ class ReviewController extends ChangeNotifier {
             loading: false,
             error: null,
             offline: true,
+            serverError: serverError,
             decks: snapshot.decks,
             queue: _presentedQueue(queue, catchUp),
             index: 0,
@@ -867,12 +964,46 @@ class ReviewController extends ChangeNotifier {
         _set(
           _state.copyWith(
             loading: false,
-            error: 'Recall is offline and no saved study queue is available.',
+            error: serverError ? _serverLoadError : _offlineLoadError,
+            serverError: serverError,
           ),
         );
       }
     }
   }
+
+  /// A load that still owns the screen found the signed-in account's local
+  /// scope inactive, so it cannot read or write that account's queue. Clear
+  /// the spinner and, unless a sign-out is releasing that scope on purpose,
+  /// offer Retry, which re-runs the account setup.
+  void _settleLoadWithoutAccountScope() {
+    final ownerId = api.currentUser?.id;
+    final signingOut =
+        _signOutAttempt?.sessionGeneration == _sessionSetupGeneration;
+    final unprepared =
+        ownerId != null &&
+        !signingOut &&
+        !_flushStillOwnsSession(ownerId, store.activeOwnerScope);
+    if (unprepared) {
+      _failedSessionSetup = (
+        ownerId: ownerId,
+        generation: _sessionSetupGeneration,
+      );
+    }
+    _set(
+      _state.copyWith(
+        loading: false,
+        error: unprepared ? _accountSetupError : _state.error,
+      ),
+    );
+  }
+
+  /// Whether a failed load was answered by Recall's server (permission/RLS,
+  /// 5xx, missing function, rejected session) rather than unreachable. Any
+  /// other failure, including socket, DNS and timeout errors, keeps the
+  /// offline treatment.
+  static bool _isServerError(Object error) =>
+      error is PostgrestException || error is AuthApiException;
 
   List<ReviewCard> _withoutPendingReviews(
     List<ReviewCard> queue,
