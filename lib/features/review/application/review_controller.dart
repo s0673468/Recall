@@ -1194,7 +1194,9 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh() => load(deckId: _state.deckFilter);
+  /// Retry/reload uses the startup recovery path: a corrupt outbox shows the
+  /// same recovery message instead of escaping from the button's callback.
+  Future<void> refresh() => _loadSafely(deckId: _state.deckFilter);
 
   /// Refreshes a stale aggregate after foregrounding without displacing an
   /// active card. The outbox is flushed by [load] before the cloud count is
