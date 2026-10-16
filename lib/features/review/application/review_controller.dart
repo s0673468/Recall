@@ -11,6 +11,7 @@ import '../../../core/diagnostics/operational_diagnostics.dart';
 import '../../settings/application/recall_prefs_controller.dart';
 import '../../settings/domain/recall_prefs.dart';
 import '../data/catch_up_state.dart';
+import '../data/local_review_preferences.dart';
 import '../data/local_review_store.dart';
 import '../data/models.dart';
 import '../data/recall_api.dart';
@@ -54,6 +55,10 @@ class _SignOutAttempt {
 ///  - single-level undo: the most recent rating can be reverted until the
 ///    next rating lands or the queue is reloaded (see [undo]).
 class ReviewController extends ChangeNotifier {
+  /// Shown in the study header when the device refused to store a rating or
+  /// flag. Nothing was saved, so the card stays on screen for a redo.
+  static const saveRefusedNotice = "Couldn't save that — try again.";
+
   final RecallApi api;
   final FsrsEngine engine;
   final LocalReviewStore store;
@@ -1435,14 +1440,26 @@ class ReviewController extends ChangeNotifier {
     // card so the review can never be lost); it also returns the new pending
     // count so advancing doesn't re-read + re-decode the whole outbox.
     var appendAdmitted = false;
-    final pending = await store.enqueueReview(
-      entry,
-      ownerScope: ownerScope,
-      canWrite: () {
-        appendAdmitted = canAppend();
-        return appendAdmitted;
-      },
-    );
+    final int pending;
+    try {
+      pending = await store.enqueueReview(
+        entry,
+        ownerScope: ownerScope,
+        canWrite: () {
+          appendAdmitted = canAppend();
+          return appendAdmitted;
+        },
+      );
+    } catch (error) {
+      if (!_isRefusedSave(error)) rethrow;
+      // The card stays on its answer so the user can redo the rating, and the
+      // redo gets a fresh id. Discard the refused copy before that redo.
+      await _discardRefused(
+        () => store.removeEntry(clientId, ownerScope: ownerScope),
+      );
+      if (sessionCurrent()) _showFlagNotice(saveRefusedNotice);
+      rethrow;
+    }
     // A cancelled producer returns the existing pending count without an
     // append. Once admitted and acknowledged, a same-deck reload must still
     // consume this visible card, even if its fetch fails and retains it.
@@ -1804,15 +1821,23 @@ class ReviewController extends ChangeNotifier {
         hideReasons.contains(reason)) {
       return;
     }
+    final clientId = await store.newEventId();
     final entry = <String, dynamic>{
       'card_id': card.id,
       'guid': card.guid,
       'reason': reason,
       'flagged_at': clock().toUtc().toIso8601String(),
       'device': api.device,
-      'client_id': await store.newEventId(),
+      'client_id': clientId,
     };
-    await store.enqueueFlag(entry);
+    try {
+      await store.enqueueFlag(entry);
+    } catch (error) {
+      if (!_isRefusedSave(error)) rethrow;
+      await _discardRefused(() => store.removeFlagEntry(clientId));
+      _showFlagNotice(saveRefusedNotice);
+      rethrow;
+    }
     _showFlagNotice('Flagged for the weekly review');
     // Send behind the UI; a failure (e.g. table not created yet) just leaves
     // the flag queued for the next flush.
@@ -1842,10 +1867,23 @@ class ReviewController extends ChangeNotifier {
     _hiddenCardIds = {..._hiddenCardIds, card.id};
     _hidesInFlight.add(card.id);
     notifyListeners();
+    void restoreVisibility() {
+      // Nothing durable was recorded, so the card is not hidden.
+      _hidesInFlight.remove(card.id);
+      if (!wasHidden) {
+        _hiddenCardIds = {..._hiddenCardIds}..remove(card.id);
+      }
+    }
+
     try {
       final String clientId;
       try {
         clientId = await store.newEventId();
+      } catch (_) {
+        restoreVisibility();
+        rethrow;
+      }
+      try {
         await store.enqueueFlag(<String, dynamic>{
           'card_id': card.id,
           'guid': card.guid,
@@ -1854,12 +1892,11 @@ class ReviewController extends ChangeNotifier {
           'device': api.device,
           'client_id': clientId,
         });
-      } catch (_) {
-        // Nothing durable was recorded, so the card is not hidden.
-        _hidesInFlight.remove(card.id);
-        if (!wasHidden) {
-          _hiddenCardIds = {..._hiddenCardIds}..remove(card.id);
-        }
+      } catch (error) {
+        restoreVisibility();
+        if (!_isRefusedSave(error)) rethrow;
+        await _discardRefused(() => store.removeFlagEntry(clientId));
+        _showFlagNotice(saveRefusedNotice);
         rethrow;
       }
       _hidesInFlight.remove(card.id);
@@ -2125,6 +2162,24 @@ class ReviewController extends ChangeNotifier {
   /// A short, inline confirmation for the last flag. It sits in the header,
   /// never over the rating buttons, and fades on its own.
   String? get flagNotice => _flagNotice;
+
+  /// A save the device storage refused before commit. Nothing was stored, so
+  /// the action is neither shown nor sent. An unknown-commit failure is not
+  /// included: it has no proof either way and keeps its existing handling.
+  static bool _isRefusedSave(Object error) =>
+      error is LocalOutboxWriteException ||
+      error is LocalPreferenceWriteNotCommitted;
+
+  /// Drop any copy the store retained for a later write of a refused action,
+  /// so the user's redo cannot land beside it as a second event. Best-effort:
+  /// a failed read leaves that copy, and the refusal still surfaces.
+  Future<void> _discardRefused(Future<Object?> Function() discard) async {
+    try {
+      await discard();
+    } catch (_) {
+      debugPrint('Recall: refused save discard skipped (non-fatal)');
+    }
+  }
 
   void _showFlagNotice(String text) {
     _flagNoticeTimer?.cancel();
