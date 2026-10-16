@@ -486,9 +486,9 @@ class ReviewController extends ChangeNotifier {
 
   Future<void> initialize() => _loadSafely();
 
-  Future<void> _loadSafely({int? deckId}) async {
+  Future<void> _loadSafely({int? deckId, bool keepReviewed = true}) async {
     try {
-      await load(deckId: deckId);
+      await load(deckId: deckId, keepReviewed: keepReviewed);
     } on LocalOutboxCorruptException {
       // Durable writes must fail closed, but malformed local storage must not
       // become another startup crash. Stop the session and surface a stable
@@ -1212,8 +1212,10 @@ class ReviewController extends ChangeNotifier {
     return _loadSafely(deckId: _state.deckFilter);
   }
 
+  /// Deck switching also uses the recovery path, so a corrupt outbox shows the
+  /// recovery message instead of escaping from the deck picker.
   Future<void> selectDeck(int? deckId) =>
-      load(deckId: deckId, keepReviewed: false);
+      _loadSafely(deckId: deckId, keepReviewed: false);
 
   /// Opt into the currently offered catch-up episode. This only changes the
   /// local presentation list; it does not reload, reschedule, or write a card.
