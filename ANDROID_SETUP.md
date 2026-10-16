@@ -2,7 +2,7 @@
 
 Recall's Android app uses the same Flutter screens, Supabase contracts, FSRS
 scheduler, offline snapshot, durable review and flag outboxes, reminders,
-settings, and statistics as iOS and web. The checked-in Android target is host
+settings, and statistics as the web client. The checked-in Android target is host
 and platform integration code; scheduling and data ownership stay in Dart.
 
 Android is an active personal release target. Keep updates on the existing
@@ -56,8 +56,8 @@ JAVA_HOME="/path/to/jdk-17-or-newer" ./gradlew :app:assembleDebug :app:assembleD
 ```
 
 These analysis, unit-test, lint and build commands do not need a phone or GitHub
-Actions minutes. Run compatible local work on quiet ger-z through fleet-compute;
-use M1 for Apple-only checks. The public repository runs all seven required CI
+Actions minutes. Run compatible local work on quiet ger-z through fleet-compute.
+The public repository runs all seven required CI
 jobs on standard GitHub-hosted runners, with explicit job timeouts. A timeout
 or unavailable runner is a failed or blocked check, never a test pass.
 
@@ -191,6 +191,9 @@ adb shell dumpsys package com.german.health_anki_flutter
   reconciliation schedules from current account state.
 
 ## iOS parity and Android conventions
+
+iOS is not maintained (Android + web only). This section records how Android
+mirrors the preserved iOS integrations; it is not an iOS build or test path.
 
 The native apps share one Flutter product surface. Study, Decks, Stats, Read,
 FSRS scheduling and previews, rich HTML/LaTeX/media cards, flags, catch-up,
