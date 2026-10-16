@@ -26,9 +26,9 @@ BASE_PUBSPEC_SHA = '588b38c44b248d8d1a82c6fe2a98fe758f520a67ca78a394d361e22df281
 SENTINEL = 'RECALL_ANDROID_BENCH_JSON '
 SCHEMA = 'recall-synthetic-android/v1'
 FIXTURE_FAILURE_CODES = {'fixture_build_required', 'synthetic_phase_failed'}
-FIXTURE_FAILED_PHASES = {'first_frame', 'fixture_setup', 'deck_load', 'rating', 'dispose'}
+FIXTURE_FAILED_PHASES = {'first_frame', 'fixture_setup', 'deck_load', 'review_surface', 'rating', 'rating_frame', 'dispose'}
 TIMINGS = {'dart_main_first_frame', 'dart_main_root_ready', 'fixture_setup',
-           'deck_load', 'rating_to_next', 'native_enqueue_ack'}
+           'deck_load', 'rating_to_next', 'rating_to_next_painted_frame', 'native_enqueue_ack'}
 
 
 class Refused(Exception):
@@ -165,7 +165,8 @@ def prepare(args: argparse.Namespace) -> dict:
     require(regular_bytes(source / 'android/app/build.gradle.kts') == original_gradle and
             regular_bytes(source / 'pubspec.yaml') == original_pubspec, 'original_source_changed')
     require((destination / 'tool/fixtures/synthetic_android_main.dart').is_file() and
-            (destination / 'tool/fixtures/synthetic_recall_flow.dart').is_file(), 'fixture_helper_missing')
+            (destination / 'tool/fixtures/synthetic_recall_flow.dart').is_file() and
+            (destination / 'tool/fixtures/synthetic_study_frame.dart').is_file(), 'fixture_helper_missing')
     require(any((destination / 'assets/fonts').glob('*.ttf')) or
             any((destination / 'assets/fonts').glob('*.otf')), 'technical_fonts_missing')
     return {'schema': 'recall-synthetic-android-provenance/v1', 'source_commit': args.source_commit,
@@ -176,7 +177,8 @@ def prepare(args: argparse.Namespace) -> dict:
             'application_id_changes': 1, 'namespace_and_signing_policy_unchanged': True,
             'asset_scope': 'technical-fonts-only', 'actual_cards_articles_media_copied': False,
             'entrypoint_sha256': sha(regular_bytes(destination / 'tool/fixtures/synthetic_android_main.dart')),
-            'flow_helper_sha256': sha(regular_bytes(destination / 'tool/fixtures/synthetic_recall_flow.dart'))}
+            'flow_helper_sha256': sha(regular_bytes(destination / 'tool/fixtures/synthetic_recall_flow.dart')),
+            'study_frame_helper_sha256': sha(regular_bytes(destination / 'tool/fixtures/synthetic_study_frame.dart'))}
 
 
 def adb(serial: str, *arguments: str, timeout: float = 12) -> str:
@@ -273,13 +275,20 @@ def validate_events(events: dict[str, tuple[int, dict]], pid: int, commit: str) 
     require(isinstance(timing, dict) and set(timing) == TIMINGS and
             all(type(value) is int and value >= 0 for value in timing.values()), 'fixture_timings_invalid')
     require(integrity == {'cards_loaded':20,'pending_after_rating':1,'next_card_id':2,
-                         'http_requests':integrity.get('http_requests'),'native_preferences':True} and
+                         'http_requests':integrity.get('http_requests'),'native_preferences':True,
+                         'initial_card_painted':True,'next_card_painted':True,'painted_next_card_id':2} and
+            all(type(integrity.get(key)) is bool for key in
+                ['native_preferences','initial_card_painted','next_card_painted']) and
+            all(type(integrity.get(key)) is int for key in
+                ['cards_loaded','pending_after_rating','next_card_id','painted_next_card_id']) and
             type(integrity.get('http_requests')) is int and integrity['http_requests'] > 0,
             'fixture_integrity_invalid')
     require(events['first_frame'][1].get('dart_main_elapsed_us') == timing['dart_main_first_frame'] and
             events['root_ready'][1].get('dart_main_elapsed_us') == timing['dart_main_root_ready'],
             'fixture_phase_timings_disagree')
     require(timing['dart_main_root_ready'] >= timing['dart_main_first_frame'], 'fixture_clock_order_invalid')
+    require(timing['rating_to_next_painted_frame'] >= timing['rating_to_next'],
+            'fixture_rating_frame_clock_invalid')
     return done
 
 
@@ -359,6 +368,7 @@ def run(args: argparse.Namespace) -> dict:
             'package':PACKAGE,'sample_count':len(samples),'samples':samples,
             'clock_scope':{'process_frame':'android-logcat-realtime-epoch-proxy',
                            'phase_work':'dart-stopwatch-monotonic','launch_done':'host-monotonic',
+                           'rating_frame':'rating-invocation-to-framework-paint-complete-not-gpu-presentation',
                            'logging_delay_bounded':False},
             'normal_app_auth_provider_startup_covered':False,'release_or_personal_device_measurement':False}
 
@@ -385,7 +395,8 @@ def self_test() -> dict:
     events={'first_frame':(1,{**common,'phase':'first_frame','dart_main_elapsed_us':1}),
             'root_ready':(2,{**common,'phase':'root_ready','dart_main_elapsed_us':2}),
             'done':(3,{**common,'phase':'done','timing_us':timing,'integrity':
-                {'cards_loaded':20,'pending_after_rating':1,'next_card_id':2,'http_requests':1,'native_preferences':True}})}
+                {'cards_loaded':20,'pending_after_rating':1,'next_card_id':2,'http_requests':1,'native_preferences':True,'initial_card_painted':True,
+                 'next_card_painted':True,'painted_next_card_id':2}})}
     assert validate_events(events,55,commit)['timing_us']==timing
     for bad in [54,56]:
         try:validate_events(events,bad,commit)

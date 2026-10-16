@@ -2285,9 +2285,9 @@ class ReviewController extends ChangeNotifier {
   }
 
   /// Send queued reviews oldest-first. Stops at the first failure (keeps the
-  /// rest queued) so a flaky network never drops a review. Only the delivered
-  /// prefix is removed from the outbox, so ratings enqueued while this ran
-  /// are never clobbered.
+  /// rest queued) so a flaky network never drops a review. Drain captured,
+  /// server-acknowledged identities, even when another tab already removed one;
+  /// a stale delivered count must never remove a later queued action.
   Future<void> _flushOnce() async {
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
@@ -2295,9 +2295,16 @@ class ReviewController extends ChangeNotifier {
     final pending = await store.outbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
-    var sent = 0;
+    final acknowledged = <Map<String, dynamic>>[];
+    final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
+      pending,
+      legacyReviews: true,
+    );
     for (final entry in pending) {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
+      // Older reviews retain their original (card, rating time, device) server
+      // deduplication path. Malformed or ambiguous identities stay queued.
+      if (!uniqueIds.contains(LocalReviewStore.reviewDeliveryId(entry))) break;
       try {
         final eventId = entry['client_id'];
         // Persist before transport. If Undo already removed it, skip this
@@ -2313,15 +2320,18 @@ class ReviewController extends ChangeNotifier {
           _showFlagNotice('Synced reviews cannot be undone');
         }
         await api.applyReview(entry);
-        sent++;
+        acknowledged.add(entry);
       } catch (_) {
         debugPrint('Recall: review sync deferred (offline?)');
         break;
       }
     }
     // Delivered reviews changed the server's log and due dates.
-    if (sent > 0) RecallReadCache.of(api).reviewsChanged();
-    final remaining = await store.removeFirst(sent, ownerScope: ownerScope);
+    if (acknowledged.isNotEmpty) RecallReadCache.of(api).reviewsChanged();
+    final remaining = await store.removeAcknowledgedReviews(
+      acknowledged,
+      ownerScope: ownerScope,
+    );
     if (_flushStillOwnsSession(ownerId, ownerScope) &&
         _state.pendingSync != remaining) {
       _set(_state.copyWith(pendingSync: remaining));
@@ -2367,8 +2377,8 @@ class ReviewController extends ChangeNotifier {
 
   /// Send queued flags oldest-first. Stops at the first failure (keeps the
   /// rest queued) so a missing note_flags table or a flaky network never drops
-  /// a flag; only the delivered prefix is removed. Flags carry no UI badge, so
-  /// this makes no state change — it stays silent and out of the review path.
+  /// a flag; only captured, server-acknowledged identities can be removed.
+  /// Flags carry no UI badge, so this stays silent and out of the review path.
   Future<void> _flushFlagsOnce() async {
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
@@ -2376,9 +2386,13 @@ class ReviewController extends ChangeNotifier {
     final pending = await store.flagOutbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
-    var sent = 0;
+    final acknowledged = <Map<String, dynamic>>[];
+    final uniqueIds = LocalReviewStore.uniqueDeliveryIds(pending);
     for (final entry in pending) {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
+      // A legacy or ambiguous identity cannot be safely removed after ACK.
+      // Keep it visible for recovery without reapplying it on every flush.
+      if (!uniqueIds.contains(entry['client_id'])) break;
       try {
         if (entry['op'] == dismissOp) {
           await api.dismissFlag(
@@ -2388,13 +2402,13 @@ class ReviewController extends ChangeNotifier {
         } else {
           await api.applyFlag(entry);
         }
-        sent++;
+        acknowledged.add(entry);
       } catch (_) {
         debugPrint('Recall: flag sync deferred (table missing?)');
         break;
       }
     }
-    await store.removeFirstFlag(sent, ownerScope: ownerScope);
+    await store.removeAcknowledgedFlags(acknowledged, ownerScope: ownerScope);
   }
 
   /// Background work (queue loads, outbox flushes) can finish after the

@@ -28,13 +28,13 @@ const _patchSha = String.fromEnvironment('RECALL_PATCH_SHA256');
 const _fixtureSha = String.fromEnvironment('RECALL_FIXTURE_SHA256');
 const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
-const _storeBlob = 'f865358816616a77ac47cbcf78bbf3eb3f81728d';
+const _storeBlob = '677f35e331a048e5abcc9eee8e725a1a6593db91';
 const _baselineControllerSha =
-    'b7dd000dbf64598addbb880b0eb49f9866b65003f8fffb6ea766fc32cd474d88';
+    '36cc07b4bc83149673c2a1353a480e41137a0fa8102a525912351630d63ef081';
 const _checkpointControllerSha =
-    '5df361de71751f2733d2d75ecad863dcfac1cbe979a571a0e27a28ddf4cd51db';
+    '1de4edbf61cdf5f1c7cd854f1e846140b798f0193bd299ae29cf339492b9497d';
 const _checkpointPatchSha =
-    'e052e44873fabad289a80c6185dcaf4b46afe491f8529ca172b5b5b589a91578';
+    'e164264887a97dbd2981ab938f22cc87cfd4550b7b2b1b8c2cccfc979f18d905';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');
@@ -135,10 +135,16 @@ class TimedOutboxCostStore extends LocalReviewStore {
   }
 
   @override
-  Future<int> removeFirst(int count, {String? ownerScope}) async {
+  Future<int> removeAcknowledgedReviews(
+    Iterable<Map<String, dynamic>> acknowledged, {
+    String? ownerScope,
+  }) async {
     final watch = Stopwatch()..start();
     try {
-      return await super.removeFirst(count, ownerScope: ownerScope);
+      return await super.removeAcknowledgedReviews(
+        acknowledged,
+        ownerScope: ownerScope,
+      );
     } finally {
       watch.stop();
       removeCalls++;
@@ -321,7 +327,7 @@ Future<void> main() async {
   try {
     _require(_enabled && kDebugMode && Platform.isAndroid);
     _require(RegExp(r'^[0-9a-f]{40}$').hasMatch(_sourceCommit));
-    _require(_baseCommit == '9b463d424aa7da6d7c391b05ae2834ee2348b5b8');
+    _require(_baseCommit == '65ccdd07fa6f04d9f6172449dc9582a93c388f4a');
     _require(RegExp(r'^[0-9a-f]{64}$').hasMatch(_fixtureSha));
     _require(
       (_variant == 'baseline' &&
