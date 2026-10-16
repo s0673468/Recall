@@ -494,6 +494,20 @@ class ReviewController extends ChangeNotifier {
   ({int loadToken, String? ownerScope, CatchUpLocalState state})?
   _catchUpRatingProgress;
 
+  // A view does not expose its calendar day. Bind only views we constructed
+  // from known progress, and consult the binding only for the published view.
+  final _catchUpViewDays =
+      Expando<({int loadToken, String? ownerScope, String dayKey})>();
+
+  CatchUpView _bindCatchUpViewDay(CatchUpView view, DateTime now) {
+    _catchUpViewDays[view] = (
+      loadToken: _loadSequence,
+      ownerScope: store.activeOwnerScope,
+      dayKey: BacklogCatchUp.dayKey(now),
+    );
+    return view;
+  }
+
   /// Decks admitted to the normal all-decks stream by the latest deck read.
   /// A direct deck selection bypasses this set so optional curricula remain
   /// fully reviewable when the learner opens them explicitly.
@@ -540,8 +554,9 @@ class ReviewController extends ChangeNotifier {
     // Cold start: paint the cached snapshot immediately (a card in hand beats
     // a spinner) and let the network fetch below replace it in the background.
     // Not on a deck switch — the snapshot holds the previous filter's queue.
-    _hiddenCardIds = {...await _loadHiddenCardsQuietly(), ..._hidesInFlight};
-    if (loadToken != _loadSequence) return;
+    final cachedHidden = await _loadHiddenCardsQuietly();
+    if (loadToken != _loadSequence || cachedHidden == null) return;
+    _hiddenCardIds = {...cachedHidden, ..._hidesInFlight};
     var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
       final snapshot = await store.loadSnapshot(deckId: _state.deckFilter);
@@ -932,21 +947,27 @@ class ReviewController extends ChangeNotifier {
           canWrite: canWrite,
         );
       }
-      return CatchUpView(
-        dueCount: 0,
-        threshold: threshold,
-        recentDailyAverage: recentAverage,
-        completedToday: 0,
+      return _bindCatchUpViewDay(
+        CatchUpView(
+          dueCount: 0,
+          threshold: threshold,
+          recentDailyAverage: recentAverage,
+          completedToday: 0,
+        ),
+        now,
       );
     }
 
     if (dueCount == 0) {
-      return CatchUpView(
-        mode: local.mode,
-        dueCount: 0,
-        threshold: threshold,
-        recentDailyAverage: recentAverage,
-        completedToday: local.completedToday,
+      return _bindCatchUpViewDay(
+        CatchUpView(
+          mode: local.mode,
+          dueCount: 0,
+          threshold: threshold,
+          recentDailyAverage: recentAverage,
+          completedToday: local.completedToday,
+        ),
+        now,
       );
     }
 
@@ -961,12 +982,15 @@ class ReviewController extends ChangeNotifier {
       );
     }
 
-    return CatchUpView(
-      mode: mode,
-      dueCount: dueCount,
-      threshold: threshold,
-      recentDailyAverage: recentAverage,
-      completedToday: local.completedToday,
+    return _bindCatchUpViewDay(
+      CatchUpView(
+        mode: mode,
+        dueCount: dueCount,
+        threshold: threshold,
+        recentDailyAverage: recentAverage,
+        completedToday: local.completedToday,
+      ),
+      now,
     );
   }
 
@@ -1180,10 +1204,13 @@ class ReviewController extends ChangeNotifier {
     final pending = await store.outbox();
     final source = _withoutPendingReviews(_catchUpSourceQueue, pending);
     _catchUpSourceQueue = source;
-    final view = _state.catchUp.copyWith(
-      mode: mode,
-      dueCount: source.where(_countsTowardsGlobalDue).length,
-      completedToday: nextLocal.completedToday,
+    final view = _bindCatchUpViewDay(
+      _state.catchUp.copyWith(
+        mode: mode,
+        dueCount: source.where(_countsTowardsGlobalDue).length,
+        completedToday: nextLocal.completedToday,
+      ),
+      now,
     );
     _catchUpRatingProgress = null;
     _catchUpProgressRevision++;
@@ -1529,21 +1556,60 @@ class ReviewController extends ChangeNotifier {
     }
 
     final now = clock();
-    final local = initial.isActive
-        ? BacklogCatchUp.normalizeLocalState(
-            await store.loadCatchUpState(),
-            now,
-          )
-        : null;
+    final today = BacklogCatchUp.dayKey(now);
+    CatchUpLocalState? local;
+    if (initial.isActive) {
+      try {
+        local = BacklogCatchUp.normalizeLocalState(
+          await store.loadCatchUpState(),
+          now,
+        );
+      } catch (_) {
+        // The review already has its durable ACK. Optional progress must not
+        // leave the rated card visible and invite a second event for it.
+        debugPrint('Recall: catch-up progress read skipped (non-fatal)');
+      }
+    }
     if (!canWrite()) return null;
+    // A binding is consulted only in the published view's construction
+    // context. A view retained across a failed or offline load outlives the
+    // loads that kept it, so match the published binding rather than the live
+    // load sequence; a rebuilt view supersedes older bindings on its own.
+    final publishedToken = _catchUpViewDays[_state.catchUp]?.loadToken;
+    int publishedProgress(CatchUpView view) {
+      final context = _catchUpViewDays[view];
+      return view.isActive &&
+              context != null &&
+              publishedToken != null &&
+              context.loadToken == publishedToken &&
+              context.ownerScope == ownerScope &&
+              context.dayKey == today
+          ? view.completedToday
+          : 0;
+    }
+
     // Fix the increment once. A refresh can read our saved progress while a
     // retry waits on native persistence; it must not count this rating again.
     final active = initial.isActive || _state.catchUp.isActive;
-    // Local active progress carries its day; the unreloaded view may still
-    // contain yesterday's count after normalization reset today's progress.
     var completedToday = local?.mode == CatchUpMode.active
         ? local!.completedToday
-        : math.max(initial.completedToday, _state.catchUp.completedToday);
+        : math.max(
+            publishedProgress(initial),
+            publishedProgress(_state.catchUp),
+          );
+    final ratingProgress = _catchUpRatingProgress;
+    if (ratingProgress != null &&
+        ratingProgress.loadToken == _loadSequence &&
+        ratingProgress.ownerScope == ownerScope &&
+        ratingProgress.state.mode == CatchUpMode.active &&
+        ratingProgress.state.dayKey == today) {
+      // A refused optional save does not undo a completed local rating. A
+      // newer native count can still raise this same-owner, same-day floor.
+      completedToday = math.max(
+        completedToday,
+        ratingProgress.state.completedToday,
+      );
+    }
     if (active) completedToday++;
 
     while (canWrite()) {
@@ -1560,12 +1626,15 @@ class ReviewController extends ChangeNotifier {
       var mode = current.isNone ? initial.mode : current.mode;
       if (active && mode == CatchUpMode.none) mode = CatchUpMode.active;
       final activeCompleted = completedToday;
-      final before = current.copyWith(
-        mode: mode,
-        dueCount: dueCount + 1,
-        completedToday: mode == CatchUpMode.active
-            ? activeCompleted - 1
-            : current.completedToday,
+      final before = _bindCatchUpViewDay(
+        current.copyWith(
+          mode: mode,
+          dueCount: dueCount + 1,
+          completedToday: mode == CatchUpMode.active
+              ? activeCompleted - 1
+              : current.completedToday,
+        ),
+        now,
       );
       var nextCompleted = mode == CatchUpMode.active
           ? activeCompleted
@@ -1575,10 +1644,13 @@ class ReviewController extends ChangeNotifier {
         mode = CatchUpMode.none;
         nextCompleted = 0;
       }
-      final next = current.copyWith(
-        mode: mode,
-        dueCount: dueCount,
-        completedToday: nextCompleted,
+      final next = _bindCatchUpViewDay(
+        current.copyWith(
+          mode: mode,
+          dueCount: dueCount,
+          completedToday: nextCompleted,
+        ),
+        now,
       );
       bool contextCurrent() =>
           canWrite() &&
@@ -1629,15 +1701,26 @@ class ReviewController extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _restoreCatchUpState(CatchUpView view) async {
+  Future<void> _restoreCatchUpState(
+    CatchUpView view, {
+    required String? ownerScope,
+    required bool Function() canWrite,
+  }) async {
+    if (!canWrite()) return;
     if (view.mode == CatchUpMode.none) {
-      await _saveCatchUpStateQuietly(CatchUpLocalState.none);
+      await _saveCatchUpStateQuietly(
+        CatchUpLocalState.none,
+        ownerScope: ownerScope,
+        canWrite: canWrite,
+      );
+      if (!canWrite()) return;
       _catchUpRatingProgress = null;
       _catchUpProgressRevision++;
       return;
     }
     final now = clock();
-    final raw = await store.loadCatchUpState();
+    final raw = await store.loadCatchUpStateForOwner(ownerScope);
+    if (!canWrite()) return;
     final local = BacklogCatchUp.normalizeLocalState(raw, now);
     final completedToday =
         raw.mode == CatchUpMode.none || raw.dayKey == BacklogCatchUp.dayKey(now)
@@ -1649,7 +1732,10 @@ class ReviewController extends ChangeNotifier {
         dayKey: BacklogCatchUp.dayKey(now),
         completedToday: completedToday,
       ),
+      ownerScope: ownerScope,
+      canWrite: canWrite,
     );
+    if (!canWrite()) return;
     _catchUpRatingProgress = null;
     _catchUpProgressRevision++;
   }
@@ -1915,17 +2001,28 @@ class ReviewController extends ChangeNotifier {
   /// The cached hidden set plus the durable flag outbox. The outbox is the
   /// crash-safe record: the cache write after a hide is best-effort, so a
   /// queued hide must count even if the cache never saw it.
-  Future<Set<int>> _loadHiddenCardsQuietly() async {
+  /// Returns null when another load or account superseded these reads.
+  Future<Set<int>?> _loadHiddenCardsQuietly() async {
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    bool stillCurrent() =>
+        loadToken == _loadSequence &&
+        ownerId == api.currentUser?.id &&
+        _flushStillOwnsSession(ownerId, ownerScope);
+    if (!stillCurrent()) return null;
     Set<int> cached;
     try {
       cached = await store.hiddenCardIds();
     } catch (_) {
       cached = _hiddenCardIds;
     }
+    if (!stillCurrent()) return null;
     try {
-      return _applyPendingFlagOps(cached, await store.flagOutbox());
+      final pending = await store.flagOutbox(ownerScope: ownerScope);
+      return stillCurrent() ? _applyPendingFlagOps(cached, pending) : null;
     } catch (_) {
-      return cached;
+      return stillCurrent() ? cached : null;
     }
   }
 
@@ -1951,28 +2048,46 @@ class ReviewController extends ChangeNotifier {
   /// have not synced. A failed read keeps the local set, so an outage never
   /// brings hidden cards back.
   Future<void> _refreshHiddenCards() async {
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    bool stillCurrent() =>
+        loadToken == _loadSequence &&
+        ownerId == api.currentUser?.id &&
+        _flushStillOwnsSession(ownerId, ownerScope);
+    if (!stillCurrent()) return;
     final before = _hiddenCardIds;
     // Read the local queue before the server: a flag delivered between the
     // two reads is then either still queued here or already visible there.
     final List<Map<String, dynamic>> pending;
     try {
-      pending = await store.flagOutbox();
+      pending = await store.flagOutbox(ownerScope: ownerScope);
     } catch (_) {
       return;
     }
+    if (!stillCurrent()) return;
     Set<int>? server;
     try {
       server = await api.fetchHiddenCardIds();
     } catch (_) {
       server = null;
     }
+    if (!stillCurrent()) return;
     if (server == null) {
       // Offline: the server truth is unknown, but queued hides are durable
       // and must still apply on top of the local set.
       final local = _applyPendingFlagOps(_hiddenCardIds, pending);
       if (!setEquals(local, _hiddenCardIds)) {
         _hiddenCardIds = local;
-        unawaited(_quietly(() => store.replaceHiddenCards(local)));
+        unawaited(
+          _quietly(
+            () => store.replaceHiddenCards(
+              local,
+              ownerScope: ownerScope,
+              canWrite: stillCurrent,
+            ),
+          ),
+        );
       }
       return;
     }
@@ -1983,7 +2098,15 @@ class ReviewController extends ChangeNotifier {
       ..removeAll(before.difference(_hiddenCardIds))
       ..addAll(_hidesInFlight);
     _hiddenCardIds = next;
-    unawaited(_quietly(() => store.replaceHiddenCards(next)));
+    unawaited(
+      _quietly(
+        () => store.replaceHiddenCards(
+          next,
+          ownerScope: ownerScope,
+          canWrite: stillCurrent,
+        ),
+      ),
+    );
   }
 
   Future<void> _quietly(Future<void> Function() write) async {
@@ -2045,6 +2168,20 @@ class ReviewController extends ChangeNotifier {
     if (hidden != null && !_undoInFlight) return _undoHide(hidden);
     final u = _undo;
     if (u == null || _undoInFlight) return;
+    final session = _state;
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final countsTowardsGlobalDue = _countsTowardsGlobalDue(u.card);
+    bool sessionOwned() =>
+        loadToken == _loadSequence &&
+        ownerScope == store.activeOwnerScope &&
+        ownerId == api.currentUser?.id &&
+        (!store.ownerAware ||
+            (ownerId != null && store.isActiveOwner(ownerId))) &&
+        identical(session.queue, _state.queue);
+    bool undoCurrent() => sessionOwned() && session.index == _state.index;
+
     _undoInFlight = true;
     notifyListeners(); // hide the undo affordance for the duration
     try {
@@ -2054,48 +2191,59 @@ class ReviewController extends ChangeNotifier {
         try {
           await _flushTask;
         } catch (_) {}
+        if (!undoCurrent()) return;
       }
-      if (!identical(_undo, u)) return;
+      if (!undoCurrent() || !identical(_undo, u)) return;
       _undo = null;
       _interactionGeneration++;
-      final result = await store.removeEntry(u.clientId);
+      // The user's local removal remains valid in its original namespace even
+      // if a load or account change supersedes its presentation while waiting.
+      final result = await store.removeEntry(
+        u.clientId,
+        ownerScope: ownerScope,
+      );
+      if (!undoCurrent()) return;
       if (!result.removed) {
         _showFlagNotice('Synced reviews cannot be undone');
         return;
       }
-      final pendingAfterRemove = result.remaining;
-      final reviewed = _state.reviewedThisSession;
-      final globalDueCount = _state.globalDueCount;
-      await _restoreCatchUpState(u.catchUp);
+      await _restoreCatchUpState(
+        u.catchUp,
+        ownerScope: ownerScope,
+        canWrite: undoCurrent,
+      );
+      if (!undoCurrent()) return;
+      final reviewed = session.reviewedThisSession;
+      final globalDueCount = session.globalDueCount;
       _catchUpSourceQueue = u.catchUpSourceQueue;
       _set(
         _state.copyWith(
           index: u.index,
           showBack: false,
           reviewedThisSession: reviewed > 0 ? reviewed - 1 : 0,
-          globalDueCount:
-              !_countsTowardsGlobalDue(u.card) || globalDueCount == null
+          globalDueCount: !countsTowardsGlobalDue || globalDueCount == null
               ? globalDueCount
               : globalDueCount + 1,
           lastReviewedAt: u.previousLastReviewedAt,
           reviewActivityKnown: u.previousReviewActivityKnown,
-          // Read after every await above, so the badge can't be restored to
-          // a count captured before a concurrent flush updated it.
-          pendingSync: pendingAfterRemove,
+          pendingSync: result.remaining,
           catchUp: u.catchUp,
         ),
       );
+      // Listeners can synchronously replace the session during notification.
+      if (!sessionOwned()) return;
       if (u.card.contentRevalidationPending) {
         unawaited(
           _saveSnapshotQuietly(
-            loadToken: _loadSequence,
+            loadToken: loadToken,
             decks: _state.decks,
-            queue: _catchUpSourceQueue,
+            queue: u.catchUpSourceQueue,
             globalDueCount: _state.globalDueCount,
             globalDueUpdatedAt: _state.globalDueUpdatedAt,
           ),
         );
       }
+      if (!sessionOwned()) return;
       haptics.undo();
     } finally {
       _undoInFlight = false;
@@ -2137,9 +2285,9 @@ class ReviewController extends ChangeNotifier {
   }
 
   /// Send queued reviews oldest-first. Stops at the first failure (keeps the
-  /// rest queued) so a flaky network never drops a review. Only the delivered
-  /// prefix is removed from the outbox, so ratings enqueued while this ran
-  /// are never clobbered.
+  /// rest queued) so a flaky network never drops a review. Drain captured,
+  /// server-acknowledged identities, even when another tab already removed one;
+  /// a stale delivered count must never remove a later queued action.
   Future<void> _flushOnce() async {
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
@@ -2147,9 +2295,16 @@ class ReviewController extends ChangeNotifier {
     final pending = await store.outbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
-    var sent = 0;
+    final acknowledged = <Map<String, dynamic>>[];
+    final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
+      pending,
+      legacyReviews: true,
+    );
     for (final entry in pending) {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
+      // Older reviews retain their original (card, rating time, device) server
+      // deduplication path. Malformed or ambiguous identities stay queued.
+      if (!uniqueIds.contains(LocalReviewStore.reviewDeliveryId(entry))) break;
       try {
         final eventId = entry['client_id'];
         // Persist before transport. If Undo already removed it, skip this
@@ -2165,15 +2320,18 @@ class ReviewController extends ChangeNotifier {
           _showFlagNotice('Synced reviews cannot be undone');
         }
         await api.applyReview(entry);
-        sent++;
+        acknowledged.add(entry);
       } catch (_) {
         debugPrint('Recall: review sync deferred (offline?)');
         break;
       }
     }
     // Delivered reviews changed the server's log and due dates.
-    if (sent > 0) RecallReadCache.of(api).reviewsChanged();
-    final remaining = await store.removeFirst(sent, ownerScope: ownerScope);
+    if (acknowledged.isNotEmpty) RecallReadCache.of(api).reviewsChanged();
+    final remaining = await store.removeAcknowledgedReviews(
+      acknowledged,
+      ownerScope: ownerScope,
+    );
     if (_flushStillOwnsSession(ownerId, ownerScope) &&
         _state.pendingSync != remaining) {
       _set(_state.copyWith(pendingSync: remaining));
@@ -2219,8 +2377,8 @@ class ReviewController extends ChangeNotifier {
 
   /// Send queued flags oldest-first. Stops at the first failure (keeps the
   /// rest queued) so a missing note_flags table or a flaky network never drops
-  /// a flag; only the delivered prefix is removed. Flags carry no UI badge, so
-  /// this makes no state change — it stays silent and out of the review path.
+  /// a flag; only captured, server-acknowledged identities can be removed.
+  /// Flags carry no UI badge, so this stays silent and out of the review path.
   Future<void> _flushFlagsOnce() async {
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
@@ -2228,9 +2386,13 @@ class ReviewController extends ChangeNotifier {
     final pending = await store.flagOutbox(ownerScope: ownerScope);
     if (pending.isEmpty) return;
 
-    var sent = 0;
+    final acknowledged = <Map<String, dynamic>>[];
+    final uniqueIds = LocalReviewStore.uniqueDeliveryIds(pending);
     for (final entry in pending) {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
+      // A legacy or ambiguous identity cannot be safely removed after ACK.
+      // Keep it visible for recovery without reapplying it on every flush.
+      if (!uniqueIds.contains(entry['client_id'])) break;
       try {
         if (entry['op'] == dismissOp) {
           await api.dismissFlag(
@@ -2240,13 +2402,13 @@ class ReviewController extends ChangeNotifier {
         } else {
           await api.applyFlag(entry);
         }
-        sent++;
+        acknowledged.add(entry);
       } catch (_) {
         debugPrint('Recall: flag sync deferred (table missing?)');
         break;
       }
     }
-    await store.removeFirstFlag(sent, ownerScope: ownerScope);
+    await store.removeAcknowledgedFlags(acknowledged, ownerScope: ownerScope);
   }
 
   /// Background work (queue loads, outbox flushes) can finish after the

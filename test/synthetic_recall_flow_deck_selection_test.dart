@@ -16,10 +16,16 @@ void main() {
     SyntheticRecallFlow? flow;
     addTearDown(() async {
       try {
-        await flow?.close();
+        // Rating returns after its local ACK; join the background drain before
+        // replacing the platform used by its final native snapshot read.
+        await flow?.controller.syncPending();
       } finally {
-        SharedPreferencesStorePlatform.instance = previousPlatform;
-        SharedPreferences.resetStatic();
+        try {
+          await flow?.close();
+        } finally {
+          SharedPreferencesStorePlatform.instance = previousPlatform;
+          SharedPreferences.resetStatic();
+        }
       }
     });
     final session = await SyntheticRecallFlow.create(
