@@ -58,6 +58,11 @@ jobs:
       - name: flutter test
         run: ./tool/flutterw test --reporter=failures-only --exclude-tags apple-mobile
 
+      - name: Test browser quota classification
+        run: >-
+          ./tool/flutterw test --no-pub --platform chrome --concurrency=1
+          test/local_review_quota_classifier_web_test.dart
+
       - name: Test pinned Flutter tooling
         run: python3 -m unittest discover -s tool/tests -p 'test_*.py'
 

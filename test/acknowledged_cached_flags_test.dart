@@ -134,6 +134,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   for (final failure in [_WriteFailure.refused, _WriteFailure.thrownBefore]) {
+    // Contract B (unsaved actions cannot sync): a refused append is hidden and
+    // unsent; a later positive ACK for the same action still clears it.
     test(
       'SERVER_ACK_CACHE_FLAG_CLEAR: $failure append clears on server ACK and permits guarded clear',
       () async {
@@ -141,7 +143,7 @@ void main() {
         final native = _install();
         final store = LocalReviewStore();
         await _refusedFlag(store, native, a, failure: failure);
-        expect(await store.flagOutbox(), [a]);
+        expect(await store.flagOutbox(), isEmpty);
         expect(await _persisted(native), isEmpty);
 
         // The caller has received the positive server response for this exact A.
@@ -159,6 +161,8 @@ void main() {
   }
 
   for (final refusedB in [false, true]) {
+    // Contract B (unsaved actions cannot sync): a refused B is hidden and
+    // unsent, while a committed B survives A's ACK until its own ACK.
     test(
       'SERVER_ACK_CACHE_FLAG_KEEP_B: unacknowledged B survives A ACK with refused append=$refusedB',
       () async {
@@ -174,26 +178,34 @@ void main() {
 
         expect(
           await store.removeAcknowledgedFlags([a]),
-          1,
+          refusedB ? 0 : 1,
           reason: 'SERVER_ACK_CACHE_FLAG_KEEP_B',
         );
-        expect(await store.flagOutbox(), [b]);
-        expect(await _persisted(native), [b]);
-        await expectLater(
-          store.clear(requireEmptyOutboxes: true),
-          throwsA(
-            isA<LocalOutboxNotEmptyException>().having(
-              (error) => error.pendingFlags,
-              'pending flags',
-              1,
+        final visible = refusedB ? const <Map<String, dynamic>>[] : [b];
+        expect(await store.flagOutbox(), visible);
+        expect(await _persisted(native), visible);
+        if (refusedB) {
+          // Nothing unsaved is pending, so it cannot block sign-out either.
+          await store.clear(requireEmptyOutboxes: true);
+        } else {
+          await expectLater(
+            store.clear(requireEmptyOutboxes: true),
+            throwsA(
+              isA<LocalOutboxNotEmptyException>().having(
+                (error) => error.pendingFlags,
+                'pending flags',
+                1,
+              ),
             ),
-          ),
-        );
-        expect(await store.flagOutbox(), [b]);
+          );
+        }
+        expect(await store.flagOutbox(), visible);
       },
     );
   }
 
+  // Contract B (unsaved actions cannot sync): a refused B never comes back from
+  // the stale shared cache during another action's ACK merge.
   test(
     'SERVER_ACK_CACHE_FLAG_UNION: native C precedes retained cached B',
     () async {
@@ -207,14 +219,16 @@ void main() {
 
       expect(
         await store.removeAcknowledgedFlags([a]),
-        2,
+        1,
         reason: 'SERVER_ACK_CACHE_FLAG_UNION',
       );
-      expect(await store.flagOutbox(), [c, b]);
-      expect(await _persisted(native), [c, b]);
+      expect(await store.flagOutbox(), [c]);
+      expect(await _persisted(native), [c]);
     },
   );
 
+  // Contract B (unsaved actions cannot sync): a refused B stays hidden, even
+  // when a stale duplicate ACK arrives in the same owner.
   test(
     'stale duplicate server ACK cannot discard refused B in the same owner',
     () async {
@@ -228,8 +242,8 @@ void main() {
       await _refusedFlag(store, native, b);
       final writes = native.outboxWrites;
 
-      expect(await store.removeAcknowledgedFlags([a], ownerScope: owner), 1);
-      expect(await store.flagOutbox(ownerScope: owner), [b]);
+      expect(await store.removeAcknowledgedFlags([a], ownerScope: owner), 0);
+      expect(await store.flagOutbox(ownerScope: owner), isEmpty);
       expect(await _persisted(native, owner: owner), isEmpty);
       expect(native.outboxWrites, writes);
       // Only a separately confirmed server ACK for B may remove this cached B.
@@ -318,6 +332,8 @@ void main() {
     },
   );
 
+  // Contract B (unsaved actions cannot sync): the refused review is hidden,
+  // unsent and not pending, so it never blocks sign-out.
   test(
     'flag server ACK leaves unrelated refused review cache intact',
     () async {
@@ -330,21 +346,20 @@ void main() {
         store.enqueueReview(b),
         throwsA(isA<LocalOutboxWriteException>()),
       );
-      expect(await store.outbox(), [b]);
+      expect(await store.outbox(), isEmpty);
       expect(await _persisted(native, review: true), isEmpty);
 
       expect(await store.removeAcknowledgedFlags([a]), 0);
       expect(await store.flagOutbox(), isEmpty);
-      expect(await store.outbox(), [b]);
+      expect(await store.outbox(), isEmpty);
       expect(await _persisted(native, review: true), isEmpty);
-      await expectLater(
-        store.clear(requireEmptyOutboxes: true),
-        throwsA(isA<LocalOutboxNotEmptyException>()),
-      );
-      expect(await store.outbox(), [b]);
+      await store.clear(requireEmptyOutboxes: true);
+      expect(await store.outbox(), isEmpty);
     },
   );
 
+  // Contract B (unsaved actions cannot sync): the refused B is never merged
+  // back from the stale cache, even after a failed read is retried.
   test(
     'failed native read does not overwrite cached unacknowledged flags',
     () async {
@@ -359,16 +374,18 @@ void main() {
       native.failReads = false;
 
       expect(native.outboxWrites, writes);
-      expect(await store.flagOutbox(), [a, b]);
+      expect(await store.flagOutbox(), [a]);
       expect(await _persisted(native), [a]);
-      expect(await store.removeAcknowledgedFlags([a]), 1);
-      expect(await store.flagOutbox(), [b]);
-      expect(await _persisted(native), [b]);
+      expect(await store.removeAcknowledgedFlags([a]), 0);
+      expect(await store.flagOutbox(), isEmpty);
+      expect(await _persisted(native), isEmpty);
     },
   );
 
+  // Contract B (unsaved actions cannot sync): the refused B stays hidden and
+  // unsent through every failed ACK write and its retry. Only A's ACK applies.
   test(
-    'failed native ACK write retains B for the same confirmed server ACK retry',
+    'failed native ACK write keeps A for the same server ACK retry and never revives refused B',
     () async {
       for (final failure in [
         _WriteFailure.refused,
@@ -388,14 +405,13 @@ void main() {
               ? throwsA(isA<LocalOutboxWriteException>())
               : throwsStateError,
         );
-        expect(await store.flagOutbox(), [b]);
-        expect(
-          await _persisted(native),
-          failure == _WriteFailure.thrownAfter ? [b] : [a],
-        );
-        expect(await store.removeAcknowledgedFlags([a]), 1);
-        expect(await store.flagOutbox(), [b]);
-        expect(await _persisted(native), [b]);
+        // A thrown-after write committed A's removal before its ACK failed.
+        final visible = failure == _WriteFailure.thrownAfter ? const [] : [a];
+        expect(await store.flagOutbox(), visible);
+        expect(await _persisted(native), visible);
+        expect(await store.removeAcknowledgedFlags([a]), 0);
+        expect(await store.flagOutbox(), isEmpty);
+        expect(await _persisted(native), isEmpty);
       }
     },
   );

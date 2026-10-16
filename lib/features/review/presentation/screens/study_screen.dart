@@ -10,6 +10,7 @@ import '../../../../core/platform/recall_platform.dart';
 import '../../../../core/widgets/recall_motion.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
 import '../../application/review_controller.dart';
+import '../../data/local_review_preferences.dart';
 import '../../data/local_review_store.dart';
 import '../../data/models.dart';
 import '../../data/recall_api.dart';
@@ -43,13 +44,13 @@ class StudyScreen extends StatelessWidget {
       if (!node.hasPrimaryFocus) return KeyEventResult.ignored;
       controller.flip();
     } else if (event.logicalKey == LogicalKeyboardKey.digit1) {
-      unawaited(controller.rate(Rating.again));
+      unawaited(_absorbRefusedSave(controller.rate(Rating.again)));
     } else if (event.logicalKey == LogicalKeyboardKey.digit2) {
-      unawaited(controller.rate(Rating.hard));
+      unawaited(_absorbRefusedSave(controller.rate(Rating.hard)));
     } else if (event.logicalKey == LogicalKeyboardKey.digit3) {
-      unawaited(controller.rate(Rating.good));
+      unawaited(_absorbRefusedSave(controller.rate(Rating.good)));
     } else if (event.logicalKey == LogicalKeyboardKey.digit4) {
-      unawaited(controller.rate(Rating.easy));
+      unawaited(_absorbRefusedSave(controller.rate(Rating.easy)));
     } else {
       return KeyEventResult.ignored;
     }
@@ -203,10 +204,14 @@ class StudyScreen extends StatelessWidget {
           notice: controller.flagNotice,
           onDislike: controller.rateInFlight
               ? null
-              : () => unawaited(controller.hideCurrent('dislike')),
+              : () => unawaited(
+                  _absorbRefusedSave(controller.hideCurrent('dislike')),
+                ),
           onDelete: controller.rateInFlight
               ? null
-              : () => unawaited(controller.hideCurrent('delete')),
+              : () => unawaited(
+                  _absorbRefusedSave(controller.hideCurrent('delete')),
+                ),
           onMore: () => _showStudyOptions(
             context,
             controller,
@@ -230,7 +235,9 @@ class StudyScreen extends StatelessWidget {
           child: s.showBack
               ? RatingBar(
                   key: const ValueKey('study_rating_bar'),
-                  onRate: controller.rate,
+                  onRate: (rating) => unawaited(
+                    _absorbRefusedSave(controller.rate(rating)),
+                  ),
                   enabled: !controller.rateInFlight,
                 )
               : SizedBox(
@@ -681,6 +688,23 @@ const List<({String reason, String label})> _flagOptions = [
   (reason: 'duplicate', label: 'Duplicate'),
 ];
 
+/// The controller reports an unsaved action through the header notice and
+/// then rethrows it for its callers. A gesture only has to absorb it, so the
+/// card stays answerable and no unhandled error escapes.
+Future<void> _absorbRefusedSave(Future<void> action) async {
+  try {
+    await action;
+  } on LocalOutboxWriteException {
+    // Shown as the study header notice; nothing was saved.
+  } on LocalPreferenceWriteNotCommitted {
+    // Shown as the study header notice; nothing was saved.
+  } on StudyActionNotSavedException {
+    // Shown as the study header notice; native truth holds nothing.
+  } on StudyActionUnconfirmedException {
+    // Shown as the study header notice; a redo cannot save it twice.
+  }
+}
+
 /// A platform-appropriate sheet listing the flag reasons: Cupertino actions on
 /// native iOS, the existing Material bottom sheet on web. Selecting one
 /// enqueues the flag (durable, offline-safe), dismisses the sheet, and shows a
@@ -696,7 +720,7 @@ void _showFlagSheet(
     // trips use_build_context_synchronously. The confirmation is the header's
     // inline notice, shown once the flag is durably queued.
     final navigator = Navigator.of(sheetContext);
-    await controller.flag(reason);
+    await _absorbRefusedSave(controller.flag(reason));
     navigator.pop();
   }
 
