@@ -69,6 +69,97 @@ void main() {
       },
     );
 
+    // 2026 transitions: Berlin Mar 29 / Oct 25, New York Mar 8 / Nov 1. The
+    // fake zones map wall-clock dates to the instant of that local midnight,
+    // so these run identically whatever the test process's TZ is.
+    DateTime berlinMidnight(int year, int month, int day) {
+      final date = DateTime.utc(year, month, day);
+      final summer =
+          !date.isBefore(DateTime.utc(2026, 3, 30)) &&
+          !date.isAfter(DateTime.utc(2026, 10, 25));
+      return date.subtract(Duration(hours: summer ? 2 : 1));
+    }
+
+    DateTime newYorkMidnight(int year, int month, int day) {
+      final date = DateTime.utc(year, month, day);
+      final summer =
+          !date.isBefore(DateTime.utc(2026, 3, 9)) &&
+          !date.isAfter(DateTime.utc(2026, 11, 1));
+      return date.add(Duration(hours: summer ? 4 : 5));
+    }
+
+    for (final zone in [
+      (name: 'Europe/Berlin', midnight: berlinMidnight),
+      (name: 'America/New_York', midnight: newYorkMidnight),
+    ]) {
+      for (final today in [
+        // Day after each change, and the last day the old cutoff misread.
+        if (zone.name == 'Europe/Berlin') ...[
+          DateTime.utc(2026, 3, 30),
+          DateTime.utc(2026, 4, 11),
+          DateTime.utc(2026, 10, 26),
+          DateTime.utc(2026, 11, 7),
+        ] else ...[
+          DateTime.utc(2026, 3, 9),
+          DateTime.utc(2026, 3, 21),
+          DateTime.utc(2026, 11, 2),
+          DateTime.utc(2026, 11, 14),
+        ],
+      ]) {
+        test(
+          'recent window is 14 calendar days in ${zone.name} on '
+          '${today.toIso8601String().substring(0, 10)}',
+          () {
+            // One review per wall-clock day from 15 days back through today.
+            // UTC values carry the zone's wall-clock fields for the seam.
+            final reviews = [
+              for (var i = 0; i <= BacklogCatchUp.recentDays; i++)
+                ReviewLogEntry(
+                  at: DateTime.utc(today.year, today.month, today.day - i, 9),
+                  rating: 3,
+                ),
+            ];
+
+            expect(
+              BacklogCatchUp.recentDailyAverage(
+                reviews,
+                now: today.add(const Duration(hours: 12)),
+                localDate: zone.midnight,
+              ),
+              closeTo(1, 1e-9),
+            );
+          },
+        );
+      }
+    }
+
+    test('recent window uses process-local calendar days by default', () {
+      // Meaningful under TZ=Europe/Berlin or TZ=America/New_York; holds in
+      // every zone because the window is counted in local calendar days.
+      for (final today in [
+        DateTime(2026, 3, 9),
+        DateTime(2026, 3, 30),
+        DateTime(2026, 10, 26),
+        DateTime(2026, 11, 2),
+      ]) {
+        final reviews = [
+          for (var i = 0; i <= BacklogCatchUp.recentDays; i++)
+            ReviewLogEntry(
+              at: DateTime(today.year, today.month, today.day - i),
+              rating: 3,
+            ),
+        ];
+        expect(
+          BacklogCatchUp.recentDailyAverage(
+            reviews,
+            now: DateTime(today.year, today.month, today.day, 12),
+          ),
+          closeTo(1, 1e-9),
+          reason: 'today=$today',
+        );
+      }
+    });
+
     test('orders due cards by the package retrievability function', () {
       final now = DateTime.utc(2026, 8, 5, 12);
       final engine = FsrsEngine();
