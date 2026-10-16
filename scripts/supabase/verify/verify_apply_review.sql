@@ -2,7 +2,10 @@
 --
 -- Provenance: copied from Health's deployed
 -- scripts/supabase_verify_recall_review_rpc.sql. It pins the SQL conflict policy
--- to the same cases as lib/features/review/data/review_replay.dart.
+-- to the same cases as lib/features/review/data/review_replay.dart, plus the
+-- 008 contract that a review for a hard-deleted card is acknowledged (0, no
+-- log row) instead of failing forever. Case E uses an id that no card has; it
+-- never deletes a card.
 --
 -- Safe on production: every write occurs inside this DO statement, which always
 -- raises. PostgreSQL rolls the entire statement back. Read the final exception:
@@ -18,7 +21,8 @@ declare
   t_new timestamptz; t_old timestamptz;
   v_id1 bigint; v_id2 bigint; v_logs integer;
   v_due timestamptz; v_state smallint;
-  ev text; ev1 text; ev2 text; ev3 text;
+  v_missing_id bigint; v_ack bigint;
+  ev text; ev1 text; ev2 text; ev3 text; ev4 text;
   fails text := '';
 begin
   if to_regprocedure(
@@ -43,8 +47,30 @@ begin
   ev1 := ev || '-1';
   ev2 := ev || '-2';
   ev3 := ev || '-3';
+  ev4 := ev || '-4';
   t_new := coalesce(v_lr0, now()) + interval '1 hour';
   t_old := coalesce(v_lr0, now()) - interval '1 hour';
+
+  -- E. A review queued for a hard-deleted card is acknowledged without a log
+  -- row, idempotently, and does not stop the reviews below from applying.
+  select coalesce(max(id), 0) + 1 into v_missing_id from public.cards;
+  begin
+    v_ack := public.apply_review(v_missing_id, 'g', 3::smallint, now(),
+      1::real, 5::real, now() + interval '1 day', 2::smallint, false, 1000,
+      'phone', ev4);
+    if v_ack is distinct from 0 then fails := fails || 'E:ack '; end if;
+    v_ack := public.apply_review(v_missing_id, 'g', 3::smallint, now(),
+      1::real, 5::real, now() + interval '1 day', 2::smallint, false, 1000,
+      'phone', ev4);
+    if v_ack is distinct from 0 then fails := fails || 'E:replay '; end if;
+  exception when foreign_key_violation then
+    fails := fails || 'E:fk_blocks_outbox ';
+  end;
+  if exists (
+    select 1 from public.review_log where client_event_id = ev4
+  ) then
+    fails := fails || 'E:logged ';
+  end if;
 
   -- A. A newer review wins the schedule and counts its rep.
   v_id1 := public.apply_review(v_card_id, 'g', 3::smallint, t_new, 20::real,

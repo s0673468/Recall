@@ -200,6 +200,7 @@ class StudyScreen extends StatelessWidget {
           session: s.reviewedThisSession,
           offline: s.offline,
           pendingSync: s.pendingSync,
+          syncErrors: s.syncErrors,
           onUndo: undoable ? controller.undo : null,
           notice: controller.flagNotice,
           onDislike: controller.rateInFlight
@@ -310,6 +311,7 @@ class _Header extends StatelessWidget {
   final int session;
   final bool offline;
   final int pendingSync;
+  final int syncErrors;
   final VoidCallback? onUndo;
   final VoidCallback? onDislike;
   final VoidCallback? onDelete;
@@ -324,12 +326,23 @@ class _Header extends StatelessWidget {
     required this.offline,
     required this.pendingSync,
     required this.onMore,
+    this.syncErrors = 0,
     required this.onSession,
     this.onUndo,
     this.onDislike,
     this.onDelete,
     this.notice,
   });
+
+  /// Permanently refused reviews stay queued, so they are split out instead of
+  /// claiming to sync forever.
+  String get _onlineSyncLine {
+    final syncing = pendingSync - syncErrors;
+    return [
+      if (syncing > 0) '$syncing syncing',
+      if (syncErrors > 0) '$syncErrors couldn’t sync',
+    ].join(' · ');
+  }
 
   @override
   Widget build(BuildContext context) => Column(
@@ -441,7 +454,7 @@ class _Header extends StatelessWidget {
                   ? (pendingSync > 0
                         ? 'Offline · $pendingSync waiting to sync'
                         : 'Offline')
-                  : '$pendingSync syncing',
+                  : _onlineSyncLine,
               style: const TextStyle(
                 color: UiColors.textSecondary,
                 fontSize: 12,

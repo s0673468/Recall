@@ -769,6 +769,17 @@ class RecallApi implements ReviewReplayGateway {
     return _applyReviewClientSide(e);
   }
 
+  /// True when the server definitely refused this exact review and a retry of
+  /// the same payload can only fail the same way: an integrity-constraint
+  /// violation (SQLSTATE class 23), for example a review whose card was
+  /// hard-deleted before a pre-008 `apply_review` logged it. Transport, auth,
+  /// RLS and ambiguous-ACK failures are not permanent and stay retryable.
+  static bool isPermanentReviewRejection(Object error) {
+    if (error is! PostgrestException) return false;
+    final code = error.code;
+    return code != null && RegExp(r'^23[0-9A-Z]{3}$').hasMatch(code);
+  }
+
   int _requireReviewLogId(Object? value) {
     if (value is int) return value;
     // A successful transport response is not an acknowledgement unless it

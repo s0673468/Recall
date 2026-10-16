@@ -1300,9 +1300,13 @@ class ReviewController extends ChangeNotifier {
 
     await _flushOutbox();
     if (loadToken != _loadSequence) return;
-    if ((await store.outbox()).isNotEmpty) {
+    final queued = await store.outbox();
+    final parked = _parkedReviews[store.activeOwnerScope] ?? const {};
+    if (queued.any(
+      (entry) => !parked.contains(LocalReviewStore.reviewDeliveryId(entry)),
+    )) {
       // Undelivered ratings — offline. Stay on the done screen; it explains
-      // that bonus cards need a connection.
+      // that bonus cards need a connection. Refused reviews cannot block it.
       if (loadToken != _loadSequence) return;
       _set(_state.copyWith(loading: false, offline: true));
       return;
@@ -1316,7 +1320,7 @@ class ReviewController extends ChangeNotifier {
           order: _activePrefs.newOrder,
           excludeCardIds: _hiddenCardIds,
         ),
-        const [],
+        queued,
       );
       if (loadToken != _loadSequence) return;
       _set(
@@ -2489,8 +2493,14 @@ class ReviewController extends ChangeNotifier {
     } while (_flushFollowUp);
   }
 
+  /// Reviews the server permanently refused, by owner scope and delivery id.
+  /// They stay in the durable outbox (and in [ReviewState.pendingSync]) but
+  /// are skipped until the app restarts, so one can never hold the rest.
+  final Map<String?, Set<Object>> _parkedReviews = {};
+
   /// Send queued reviews oldest-first. Stops at the first failure (keeps the
-  /// rest queued) so a flaky network never drops a review. Drain captured,
+  /// rest queued) so a flaky network never drops a review. A permanent server
+  /// refusal parks only that review and continues. Drain captured,
   /// server-acknowledged identities, even when another tab already removed one;
   /// a stale delivered count must never remove a later queued action.
   Future<void> _flushOnce() async {
@@ -2498,7 +2508,15 @@ class ReviewController extends ChangeNotifier {
     final ownerId = api.currentUser?.id;
     if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
     final pending = await store.outbox(ownerScope: ownerScope);
-    if (pending.isEmpty) return;
+    final parked = _parkedReviews.putIfAbsent(ownerScope, () => {});
+    if (pending.isEmpty) {
+      parked.clear();
+      if (_flushStillOwnsSession(ownerId, ownerScope) &&
+          _state.syncErrors != 0) {
+        _set(_state.copyWith(syncErrors: 0));
+      }
+      return;
+    }
 
     final acknowledged = <Map<String, dynamic>>[];
     final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
@@ -2509,7 +2527,9 @@ class ReviewController extends ChangeNotifier {
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       // Older reviews retain their original (card, rating time, device) server
       // deduplication path. Malformed or ambiguous identities stay queued.
-      if (!uniqueIds.contains(LocalReviewStore.reviewDeliveryId(entry))) break;
+      final deliveryId = LocalReviewStore.reviewDeliveryId(entry);
+      if (!uniqueIds.contains(deliveryId)) break;
+      if (parked.contains(deliveryId)) continue;
       try {
         final eventId = entry['client_id'];
         // Persist before transport. If Undo already removed it, skip this
@@ -2526,7 +2546,13 @@ class ReviewController extends ChangeNotifier {
         }
         await api.applyReview(entry);
         acknowledged.add(entry);
-      } catch (_) {
+      } catch (error) {
+        if (RecallApi.isPermanentReviewRejection(error)) {
+          // Kept, counted, and retried after a restart; never dropped here.
+          debugPrint('Recall: review parked after a permanent server refusal');
+          parked.add(deliveryId!);
+          continue;
+        }
         debugPrint('Recall: review sync deferred (offline?)');
         break;
       }
@@ -2537,9 +2563,17 @@ class ReviewController extends ChangeNotifier {
       acknowledged,
       ownerScope: ownerScope,
     );
+    // Forget ids no longer queued, e.g. delivered by another tab.
+    final queuedIds = {
+      for (final entry in pending) LocalReviewStore.reviewDeliveryId(entry),
+    };
+    parked.retainWhere(queuedIds.contains);
     if (_flushStillOwnsSession(ownerId, ownerScope) &&
-        _state.pendingSync != remaining) {
-      _set(_state.copyWith(pendingSync: remaining));
+        (_state.pendingSync != remaining ||
+            _state.syncErrors != parked.length)) {
+      _set(
+        _state.copyWith(pendingSync: remaining, syncErrors: parked.length),
+      );
     }
   }
 

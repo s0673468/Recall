@@ -24,7 +24,7 @@ same owner default as the deployed single-user project and importer.
 | `concept_nodes` | `node_id`, title, module, difficulty, update time | service-role concept sync |
 | `concept_pages` | title, HTML primer, optional SVG figure, update time | service-role primer authoring |
 | `deck_counts()` | due/new counts excluding deleted notes/cards and suspended cards | database RPC |
-| `apply_review(...)` | atomic newest-review-wins merge with accumulated counters | database RPC |
+| `apply_review(...)` | atomic newest-review-wins merge with accumulated counters; a review for a hard-deleted card is acknowledged with `0` and no log row | database RPC |
 
 User-owned tables have row-level security. `concept_nodes` and `concept_pages`
 are global read-only reference data for clients; only service-role tooling writes
@@ -42,6 +42,7 @@ Apply each file as one transaction, in this order:
 6. [`migrations/005_review_event_idempotency.sql`](migrations/005_review_event_idempotency.sql)
 7. [`migrations/006_apply_review_rpc.sql`](migrations/006_apply_review_rpc.sql)
 8. [`migrations/007_note_flags_hide_reasons.sql`](migrations/007_note_flags_hide_reasons.sql)
+9. [`migrations/008_apply_review_missing_card.sql`](migrations/008_apply_review_missing_card.sql)
 
 All migrations are idempotent. Re-running them preserves rows. `000` uses
 `CREATE TABLE IF NOT EXISTS`; it intentionally does not guess how to repair a
@@ -49,7 +50,7 @@ wrongly shaped existing table. The verification step reports drift instead.
 
 ### Fresh project
 
-Create the isolated Recall Supabase project and configure Auth. Apply all eight
+Create the isolated Recall Supabase project and configure Auth. Apply all nine
 migrations before running the importer or releasing a client. Then create the
 private runtime environment with only `SUPABASE_URL`,
 `SUPABASE_SERVICE_KEY`, and `SUPABASE_USER_ID`; do not commit it.
@@ -82,7 +83,9 @@ After an approved apply, run:
 1. [`verify/verify_schema.sql`](verify/verify_schema.sql). It reads PostgreSQL
    catalogs only and must return `VERIFY OK: Recall schema contract`.
 2. [`verify/verify_apply_review.sql`](verify/verify_apply_review.sql). It tests
-   new, duplicate, older, and timestamp-tie reviews. It deliberately ends with
+   new, duplicate, older, and timestamp-tie reviews, plus a review for a card
+   id that does not exist (008: acknowledged with `0`, no log row; no card is
+   deleted). It deliberately ends with
    an exception so PostgreSQL rolls back every test write. Success is the
    exception text `VERIFY OK (rolled back; card … untouched)`.
 3. The client smoke checks: authenticated deck/count reads, one review with
@@ -103,10 +106,27 @@ This static test proves that every Supabase table/RPC named by current Recall
 code has a checked-in migration and that documentation points to real files. It
 does not prove production state.
 
+To execute the migrations and both verification scripts against a disposable
+local PostgreSQL (16 or newer), run:
+
+```bash
+RECALL_REQUIRE_PG=1 RECALL_PG_BIN=/path/to/postgresql/bin \
+  python3 -B -m unittest discover -s scripts/supabase/tests -p 'test_*.py'
+```
+
+It creates a throwaway cluster on a private Unix socket with a minimal
+stand-in for Supabase's `auth` schema and roles, applies `000`–`008`, checks
+`apply_review` behaviour (including a card hard-deleted while its review was
+queued, and the pre-008 failure), and deletes the cluster. Without PostgreSQL
+binaries it skips unless `RECALL_REQUIRE_PG=1`. It never contacts Supabase.
+
 ## Rollback policy
 
 The safe rollback is intentionally asymmetric:
 
+- To undo only `008`, re-apply
+  [`migrations/006_apply_review_rpc.sql`](migrations/006_apply_review_rpc.sql);
+  it replaces the function body with the previous one and touches no rows.
 - Drop `apply_review` with
   [`rollback/006_drop_apply_review_rpc.sql`](rollback/006_drop_apply_review_rpc.sql).
   Current clients then use their documented client-side fallback.
@@ -134,6 +154,7 @@ or column removal is destructive data work and outside these scripts.
 | `004_concept_pages.sql` | archived primer migration plus the recorded deployed `figure_svg` field |
 | `005_review_event_idempotency.sql` | Health `supabase_migrate_recall_idempotency.sql` |
 | `006_apply_review_rpc.sql` | Health `supabase_migrate_recall_review_rpc.sql` |
+| `008_apply_review_missing_card.sql` | Recall-native: `006` with the card read before the log insert |
 | `verify_apply_review.sql` and RPC rollback | matching Health verification/rollback SQL |
 
 The canonical copies remove machine/project identifiers, add explicit grants,
