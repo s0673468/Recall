@@ -30,11 +30,11 @@ const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
 const _storeBlob = '677f35e331a048e5abcc9eee8e725a1a6593db91';
 const _baselineControllerSha =
-    '0b195cd8f51f0efa46317cc411b4d29018c893a5eac24f259fcc63983f30e8b4';
+    '36cc07b4bc83149673c2a1353a480e41137a0fa8102a525912351630d63ef081';
 const _checkpointControllerSha =
-    '92c4113297fd78187f9465264183e5992f7dfaba6379774a469a4dc02b4231e0';
+    '1de4edbf61cdf5f1c7cd854f1e846140b798f0193bd299ae29cf339492b9497d';
 const _checkpointPatchSha =
-    '4cae03c8bb8de4da8afeec2d7d102d55a9bfa4739f86f844bd2c5180e1192bb6';
+    'e164264887a97dbd2981ab938f22cc87cfd4550b7b2b1b8c2cccfc979f18d905';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');
@@ -134,22 +134,6 @@ class TimedOutboxCostStore extends LocalReviewStore {
     }
   }
 
-  @override
-  Future<int> removeFirst(int count, {String? ownerScope}) async {
-    final watch = Stopwatch()..start();
-    try {
-      return await super.removeFirst(count, ownerScope: ownerScope);
-    } finally {
-      watch.stop();
-      removeCalls++;
-      removeTotalUs += watch.elapsedMicroseconds;
-    }
-  }
-
-  /// Same timing probe for the acknowledged-identity drain. Only one of the
-  /// two removal shapes runs in a given experiment build; both share the
-  /// counters so the closed count contract holds whichever shape the pinned
-  /// Controller calls.
   @override
   Future<int> removeAcknowledgedReviews(
     Iterable<Map<String, dynamic>> acknowledged, {
@@ -343,7 +327,7 @@ Future<void> main() async {
   try {
     _require(_enabled && kDebugMode && Platform.isAndroid);
     _require(RegExp(r'^[0-9a-f]{40}$').hasMatch(_sourceCommit));
-    _require(_baseCommit == '1dc9ea4e15fc644dc843a7d2ca8eb07ded54fbe4');
+    _require(_baseCommit == '65ccdd07fa6f04d9f6172449dc9582a93c388f4a');
     _require(RegExp(r'^[0-9a-f]{64}$').hasMatch(_fixtureSha));
     _require(
       (_variant == 'baseline' &&

@@ -166,9 +166,9 @@ class PreparerTests(unittest.TestCase):
     def test_invented_exact_patch_scope_context_and_result_pins(self):
         # This independent check binds the tracked technical patch, without
         # loading production files into the invented unit fixture. The pinned
-        # checkpoint-drain experiment is independently source-bound before compilation.
+        # ACK-batch experiment is independently source-bound before compilation.
         real=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
-        self.assertEqual(H(real),'4cae03c8bb8de4da8afeec2d7d102d55a9bfa4739f86f844bd2c5180e1192bb6')
+        self.assertEqual(H(real),'e164264887a97dbd2981ab938f22cc87cfd4550b7b2b1b8c2cccfc979f18d905')
         self.assertEqual(prepare.apply_checkpoint(self.BASE,self.PATCH),self.RESULT)
         for data,payload in [(self.BASE+b'\n',self.PATCH),(self.BASE,self.PATCH+b'\n')]:
             with self.assertRaises(contract.Refused):prepare.apply_checkpoint(data,payload)
