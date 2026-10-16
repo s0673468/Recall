@@ -109,6 +109,7 @@ class NativeOutboxWriteProbe extends SharedPreferencesStorePlatform {
 /// the production Store. Durations include the native ACK interval and overlap.
 class TimedOutboxCostStore extends LocalReviewStore {
   int markCalls = 0;
+  int batchMarkCalls = 0;
   int removeCalls = 0;
   int markTotalUs = 0;
   int removeTotalUs = 0;
@@ -130,6 +131,26 @@ class TimedOutboxCostStore extends LocalReviewStore {
     } finally {
       watch.stop();
       markCalls++;
+      markTotalUs += watch.elapsedMicroseconds;
+    }
+  }
+
+  @override
+  Future<Set<Object>> markReviewsAttempted(
+    Iterable<Object> clientIds, {
+    String? ownerScope,
+  }) async {
+    final watch = Stopwatch()..start();
+    try {
+      final marked = await super.markReviewsAttempted(
+        clientIds,
+        ownerScope: ownerScope,
+      );
+      markedBeforeTransport.addAll(marked.map((id) => id.toString()));
+      return marked;
+    } finally {
+      watch.stop();
+      batchMarkCalls++;
       markTotalUs += watch.elapsedMicroseconds;
     }
   }
@@ -276,14 +297,16 @@ Future<OutboxCostSample> measureSyntheticOutboxCost({
     _require((await store.outbox(ownerScope: scope)).isEmpty);
     _require(store.activeOwnerScope == scope);
     _require(store.isActiveOwner(api.currentUser!.id));
-    _require(store.markCalls == pendingCount);
+    // Pinned per-send variants mark each review alone; batching marks the
+    // same reviews in fewer writes. Either way, all are marked before transport.
+    _require(store.markCalls + store.batchMarkCalls >= 1);
     _require(store.markedBeforeTransport.length == pendingCount);
     _require(transport.requestedIds.length == pendingCount);
     _require(transport.counts['apply_review'] == pendingCount);
     _require(transport.acceptedIds.length == pendingCount);
     _require(transport.totalRequests == pendingCount);
     _require(store.removeCalls >= 1);
-    _require(probe.acknowledgedWrites >= pendingCount + 1);
+    _require(probe.acknowledgedWrites >= 2);
     return OutboxCostSample(
       pendingSeeded: pendingCount,
       syncPendingUs: syncPendingUs,

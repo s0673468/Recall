@@ -90,9 +90,11 @@ void main() {
         final counts = metrics['counts'] as Map<String, dynamic>;
         expect(sample.pendingSeeded, 3);
         expect(sample.store.markedBeforeTransport.length, 3);
-        expect(counts['mark_calls'], 3);
+        // The first send is marked alone; the other two in one batch write.
+        expect(counts['mark_calls'], 1);
+        expect(sample.store.batchMarkCalls, 1);
         expect(counts['remove_calls'], 1);
-        expect(counts['native_ack_writes'], 4);
+        expect(counts['native_ack_writes'], 3);
         expect(counts['apply_review_requests'], 3);
         expect(counts['accepted_unique'], 3);
         expect(counts['pending_after'], 0);
