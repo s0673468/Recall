@@ -29,6 +29,17 @@ typedef _RecentReviews = ({
   ReviewActivitySnapshot activity,
 });
 
+/// A rating or flag whose native write threw with unknown commit status and
+/// that native truth then showed absent. Like a refused save, nothing was
+/// stored or sent, and the user has been told.
+class StudyActionNotSavedException implements Exception {
+  final Object cause;
+  const StudyActionNotSavedException(this.cause);
+
+  @override
+  String toString() => 'Recall could not save the study action ($cause).';
+}
+
 class _SignOutAttempt {
   final int sessionGeneration;
   late final Future<void> task;
@@ -55,8 +66,9 @@ class _SignOutAttempt {
 ///  - single-level undo: the most recent rating can be reverted until the
 ///    next rating lands or the queue is reloaded (see [undo]).
 class ReviewController extends ChangeNotifier {
-  /// Shown in the study header when the device refused to store a rating or
-  /// flag. Nothing was saved, so the card stays on screen for a redo.
+  /// Shown in the study header when device storage refused a rating or flag,
+  /// or a thrown write left nothing in native truth. Nothing was saved, so
+  /// the card stays on screen for a redo.
   static const saveRefusedNotice = "Couldn't save that — try again.";
 
   final RecallApi api;
@@ -1440,7 +1452,7 @@ class ReviewController extends ChangeNotifier {
     // card so the review can never be lost); it also returns the new pending
     // count so advancing doesn't re-read + re-decode the whole outbox.
     var appendAdmitted = false;
-    final int pending;
+    int pending;
     try {
       pending = await store.enqueueReview(
         entry,
@@ -1450,15 +1462,20 @@ class ReviewController extends ChangeNotifier {
           return appendAdmitted;
         },
       );
-    } catch (error) {
-      if (!_isRefusedSave(error)) rethrow;
-      // The card stays on its answer so the user can redo the rating, and the
-      // redo gets a fresh id. Discard the refused copy before that redo.
-      await _discardRefused(
-        () => store.removeEntry(clientId, ownerScope: ownerScope),
+    } catch (error, stackTrace) {
+      final saved = await _savedDespite(
+        error,
+        stackTrace,
+        () => store.settleUnknownReview(clientId, ownerScope: ownerScope),
       );
-      if (sessionCurrent()) _showFlagNotice(saveRefusedNotice);
-      rethrow;
+      if (saved == null) {
+        // Nothing was stored, so the card stays on its answer for a redo,
+        // which gets a fresh id and is the only copy that can persist.
+        if (sessionCurrent()) _showFlagNotice(saveRefusedNotice);
+        _throwNotSaved(error, stackTrace);
+      }
+      // A thrown write that native truth holds was saved: advance normally.
+      pending = saved;
     }
     // A cancelled producer returns the existing pending count without an
     // append. Once admitted and acknowledged, a same-deck reload must still
@@ -1832,11 +1849,16 @@ class ReviewController extends ChangeNotifier {
     };
     try {
       await store.enqueueFlag(entry);
-    } catch (error) {
-      if (!_isRefusedSave(error)) rethrow;
-      await _discardRefused(() => store.removeFlagEntry(clientId));
-      _showFlagNotice(saveRefusedNotice);
-      rethrow;
+    } catch (error, stackTrace) {
+      final saved = await _savedDespite(
+        error,
+        stackTrace,
+        () => store.settleUnknownFlag(clientId),
+      );
+      if (saved == null) {
+        _showFlagNotice(saveRefusedNotice);
+        _throwNotSaved(error, stackTrace);
+      }
     }
     _showFlagNotice('Flagged for the weekly review');
     // Send behind the UI; a failure (e.g. table not created yet) just leaves
@@ -1892,12 +1914,23 @@ class ReviewController extends ChangeNotifier {
           'device': api.device,
           'client_id': clientId,
         });
-      } catch (error) {
-        restoreVisibility();
-        if (!_isRefusedSave(error)) rethrow;
-        await _discardRefused(() => store.removeFlagEntry(clientId));
-        _showFlagNotice(saveRefusedNotice);
-        rethrow;
+      } catch (error, stackTrace) {
+        final int? saved;
+        try {
+          saved = await _savedDespite(
+            error,
+            stackTrace,
+            () => store.settleUnknownFlag(clientId),
+          );
+        } catch (_) {
+          restoreVisibility();
+          rethrow;
+        }
+        if (saved == null) {
+          restoreVisibility();
+          _showFlagNotice(saveRefusedNotice);
+          _throwNotSaved(error, stackTrace);
+        }
       }
       _hidesInFlight.remove(card.id);
       unawaited(_quietly(() => store.addHiddenCard(card.id)));
@@ -2164,22 +2197,36 @@ class ReviewController extends ChangeNotifier {
   String? get flagNotice => _flagNotice;
 
   /// A save the device storage refused before commit. Nothing was stored, so
-  /// the action is neither shown nor sent. An unknown-commit failure is not
-  /// included: it has no proof either way and keeps its existing handling.
+  /// the action is neither shown nor sent.
   static bool _isRefusedSave(Object error) =>
       error is LocalOutboxWriteException ||
       error is LocalPreferenceWriteNotCommitted;
 
-  /// Drop any copy the store retained for a later write of a refused action,
-  /// so the user's redo cannot land beside it as a second event. Best-effort:
-  /// a failed read leaves that copy, and the refusal still surfaces.
-  Future<void> _discardRefused(Future<Object?> Function() discard) async {
+  /// The pending count when a failed save is in fact stored, or null when it
+  /// is not. A refused save never is. A thrown save has unknown commit status,
+  /// so native truth decides. A failed read of it proves nothing either way:
+  /// the original failure then propagates unchanged.
+  Future<int?> _savedDespite(
+    Object error,
+    StackTrace stackTrace,
+    Future<int?> Function() settle,
+  ) async {
+    if (_isRefusedSave(error)) return null;
     try {
-      await discard();
+      return await settle();
     } catch (_) {
-      debugPrint('Recall: refused save discard skipped (non-fatal)');
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
+
+  /// Report an unsaved action to the caller. A refusal keeps its own type; an
+  /// unknown-commit failure that native truth showed absent is wrapped, so
+  /// every gesture can absorb both once the notice is shown.
+  static Never _throwNotSaved(Object error, StackTrace stackTrace) =>
+      Error.throwWithStackTrace(
+        _isRefusedSave(error) ? error : StudyActionNotSavedException(error),
+        stackTrace,
+      );
 
   void _showFlagNotice(String text) {
     _flagNoticeTimer?.cancel();

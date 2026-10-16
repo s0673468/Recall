@@ -688,9 +688,9 @@ const List<({String reason, String label})> _flagOptions = [
   (reason: 'duplicate', label: 'Duplicate'),
 ];
 
-/// The controller reports a refused save through the header notice and then
-/// rethrows it for its callers. A gesture only has to absorb the refusal, so
-/// the card stays answerable and no unhandled error escapes.
+/// The controller reports an unsaved action through the header notice and
+/// then rethrows it for its callers. A gesture only has to absorb it, so the
+/// card stays answerable and no unhandled error escapes.
 Future<void> _absorbRefusedSave(Future<void> action) async {
   try {
     await action;
@@ -698,6 +698,8 @@ Future<void> _absorbRefusedSave(Future<void> action) async {
     // Shown as the study header notice; nothing was saved.
   } on LocalPreferenceWriteNotCommitted {
     // Shown as the study header notice; nothing was saved.
+  } on StudyActionNotSavedException {
+    // Shown as the study header notice; native truth holds nothing.
   }
 }
 

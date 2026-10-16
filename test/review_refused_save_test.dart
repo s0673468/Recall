@@ -24,16 +24,39 @@ final _day = DateTime.utc(2031, 1, 2, 12);
 /// refusal that surfaces as [LocalPreferenceWriteNotCommitted].
 enum _Refusal { plainFalse, quota }
 
+/// A native write that throws with unknown commit status, before or after it
+/// actually stored the value. Only native truth can tell the two apart.
+enum _Thrown { beforeCommit, afterCommit }
+
 class _Native extends InMemorySharedPreferencesStore {
   _Native() : super.empty();
 
   String? refusedKey;
   _Refusal refusal = _Refusal.plainFalse;
+  _Thrown? thrown;
+  bool failReads = false;
+  bool failReadsAfterThrow = false;
+
+  @override
+  Future<Map<String, Object>> getAll() {
+    if (failReads) throw StateError('Invented native read failure');
+    return super.getAll();
+  }
 
   @override
   Future<bool> setValue(String valueType, String key, Object value) async {
     final pattern = refusedKey;
     if (pattern != null && key.contains(pattern)) {
+      switch (thrown) {
+        case _Thrown.beforeCommit:
+          failReads = failReadsAfterThrow;
+          throw StateError('Invented write failure before commit');
+        case _Thrown.afterCommit:
+          await super.setValue(valueType, key, value);
+          failReads = failReadsAfterThrow;
+          throw StateError('Invented write failure after commit');
+        case null:
+      }
       if (refusal == _Refusal.quota) {
         throw const LocalPreferenceWriteNotCommitted();
       }
@@ -186,6 +209,188 @@ void main() {
     expect(c.rateInFlight, isFalse);
     expect(await f.store.flagOutbox(), isEmpty);
     await _settle(f.store);
+  });
+
+  test(
+    'a thrown rating absent from native truth says so and stays answerable',
+    () async {
+      final f = await _fixture();
+      final c = f.controller;
+      final cardId = c.state.current!.id;
+      c.flip();
+      f.native
+        ..refusedKey = 'recall_outbox_v1'
+        ..thrown = _Thrown.beforeCommit;
+
+      await expectLater(
+        c.rate(Rating.good),
+        throwsA(isA<StudyActionNotSavedException>()),
+      );
+
+      expect(c.state.current?.id, cardId, reason: 'must not advance');
+      expect(c.state.showBack, isTrue);
+      expect(c.state.reviewedThisSession, 0);
+      expect(c.rateInFlight, isFalse);
+      expect(c.flagNotice, ReviewController.saveRefusedNotice);
+      expect(await f.store.outbox(), isEmpty);
+      expect(await f.native.rows('recall_outbox_v1'), isEmpty);
+
+      // The unknown write stays quarantined in the store, so a redo cannot
+      // land beside a copy another tab might have delivered. It is refused
+      // and reported the same way; nothing is saved twice.
+      f.native
+        ..refusedKey = null
+        ..thrown = null;
+      await expectLater(
+        c.rate(Rating.good),
+        throwsA(isA<LocalOutboxWriteException>()),
+      );
+      expect(c.state.current?.id, cardId);
+      expect(c.flagNotice, ReviewController.saveRefusedNotice);
+      expect(await f.native.rows('recall_outbox_v1'), isEmpty);
+      await _settle(f.store);
+    },
+  );
+
+  test(
+    'a thrown rating that native truth holds advances with no notice',
+    () async {
+      final f = await _fixture();
+      final c = f.controller;
+      final cardId = c.state.current!.id;
+      c.flip();
+      f.native
+        ..refusedKey = 'recall_outbox_v1'
+        ..thrown = _Thrown.afterCommit;
+
+      await c.rate(Rating.good);
+
+      expect(c.state.current?.id, isNot(cardId));
+      expect(c.state.reviewedThisSession, 1);
+      expect(c.state.pendingSync, 1);
+      expect(c.flagNotice, isNull);
+      expect(c.canUndo, isTrue);
+      final rows = await f.native.rows('recall_outbox_v1');
+      expect(rows.map((row) => row['card_id']), [cardId]);
+
+      // The committed rating releases the quarantine for the next card.
+      f.native
+        ..refusedKey = null
+        ..thrown = null;
+      c.flip();
+      await c.rate(Rating.good);
+      expect(c.state.reviewedThisSession, 2);
+      expect(await f.native.rows('recall_outbox_v1'), hasLength(2));
+      await _settle(f.store);
+    },
+  );
+
+  test(
+    'a thrown rating whose native truth cannot be read stays unknown',
+    () async {
+      final f = await _fixture();
+      final c = f.controller;
+      final cardId = c.state.current!.id;
+      c.flip();
+      // Every read after the thrown write fails too, so nothing is proven:
+      // the original failure propagates and no notice claims either outcome.
+      f.native
+        ..refusedKey = 'recall_outbox_v1'
+        ..thrown = _Thrown.afterCommit
+        ..failReadsAfterThrow = true;
+
+      await expectLater(c.rate(Rating.good), throwsStateError);
+      expect(c.state.current?.id, cardId);
+      expect(c.state.reviewedThisSession, 0);
+      expect(c.flagNotice, isNull);
+      f.native
+        ..failReads = false
+        ..refusedKey = null
+        ..thrown = null;
+      await _settle(f.store);
+    },
+  );
+
+  for (final hide in [false, true]) {
+    final action = hide ? 'hide' : 'flag';
+    Future<void> act(ReviewController c) =>
+        hide ? c.hideCurrent('dislike') : c.flag('wrong');
+
+    test('a thrown $action absent from native truth says so', () async {
+      final f = await _fixture();
+      final c = f.controller;
+      final cardId = c.state.current!.id;
+      f.native
+        ..refusedKey = 'flag_outbox_v1'
+        ..thrown = _Thrown.beforeCommit;
+
+      await expectLater(
+        act(c),
+        throwsA(isA<StudyActionNotSavedException>()),
+      );
+
+      expect(c.flagNotice, ReviewController.saveRefusedNotice);
+      expect(c.state.current?.id, cardId);
+      expect(c.state.index, 0);
+      expect(c.rateInFlight, isFalse);
+      expect(await f.store.flagOutbox(), isEmpty);
+      expect(await f.native.rows('flag_outbox_v1'), isEmpty);
+      f.native
+        ..refusedKey = null
+        ..thrown = null;
+      await _settle(f.store);
+    });
+
+    test('a thrown $action that native truth holds is confirmed', () async {
+      final f = await _fixture();
+      final c = f.controller;
+      final cardId = c.state.current!.id;
+      f.native
+        ..refusedKey = 'flag_outbox_v1'
+        ..thrown = _Thrown.afterCommit;
+
+      await act(c);
+
+      expect(
+        c.flagNotice,
+        hide ? 'Hidden until Sunday review' : 'Flagged for the weekly review',
+      );
+      expect(c.state.current?.id, hide ? isNot(cardId) : cardId);
+      final rows = await f.native.rows('flag_outbox_v1');
+      expect(rows.map((row) => row['card_id']), [cardId]);
+      f.native
+        ..refusedKey = null
+        ..thrown = null;
+      await _settle(f.store);
+    });
+  }
+
+  testWidgets('a thrown rating absent from native truth is absorbed by the tap', (
+    tester,
+  ) async {
+    final f = await _fixture();
+    final c = f.controller;
+    f.native
+      ..refusedKey = 'recall_outbox_v1'
+      ..thrown = _Thrown.beforeCommit;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
+        home: Scaffold(body: StudyScreen(controller: c)),
+      ),
+    );
+    await tester.tap(find.text('Show answer'));
+    await tester.pump();
+    await tester.tap(find.text('Good'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text(ReviewController.saveRefusedNotice), findsOneWidget);
+    expect(find.byKey(const ValueKey('study_rating_bar')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('the study header shows the refused-save notice on the answer', (
