@@ -1,5 +1,12 @@
 # Recall website
 
+> **Retired built-in PWA.** Web review now uses Recall Hub; see the
+> [web client pointer](web/README.md) and the
+> [Recall Hub source and setup guide](https://github.com/s0673468/recall-hub).
+> This guide describes the legacy Flutter PWA. Its source is preserved, but it
+> is no longer built or published: the Pages workflow is disabled, so the
+> deployment notes below are historical.
+
 Open [Recall](https://s0673468.github.io/Recall/) and sign in with the same
 Recall account used on Android. The website is the same Flutter application,
 with the same Supabase backend, FSRS scheduler, card renderer, and account-scoped
