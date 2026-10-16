@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 
 import 'local_review_write_failure_stub.dart'
     if (dart.library.js_interop) 'local_review_write_failure_web.dart'
@@ -16,46 +17,85 @@ class LocalPreferenceWriteNotCommitted implements Exception {
 
 /// A native-backed view of legacy preferences, independent of the global cache.
 class LocalReviewPreferences {
-  LocalReviewPreferences._(this._writer, this._values);
+  LocalReviewPreferences._(this._writer, this._values, this._readable);
 
   static const _prefix = 'flutter.';
   final SharedPreferences _writer;
   final Map<String, Object> _values;
+  // Null when every key was read. Otherwise only these keys have known values.
+  final Set<String>? _readable;
 
   /// Read persisted values without reloading or replacing SharedPreferences.
+  ///
+  /// [keys] limits the native read to exactly those preferences, so a hot path
+  /// never ships unrelated values (such as study-queue snapshots with card
+  /// HTML) across the platform channel. Reading any other key from the view is
+  /// a programming error and throws. Omit [keys] only when every key is needed.
   static Future<LocalReviewPreferences> readSnapshot(
-    SharedPreferences writer,
-  ) async {
-    final native = await SharedPreferencesStorePlatform.instance.getAll();
-    return LocalReviewPreferences._(writer, {
+    SharedPreferences writer, {
+    Iterable<String>? keys,
+  }) async {
+    final readable = keys?.toSet();
+    final store = SharedPreferencesStorePlatform.instance;
+    final native = readable == null
+        ? await store.getAll()
+        : await store.getAllWithParameters(
+            GetAllParameters(
+              filter: PreferencesFilter(
+                prefix: _prefix,
+                allowList: {for (final key in readable) '$_prefix$key'},
+              ),
+            ),
+          );
+    final values = <String, Object>{
       for (final entry in native.entries)
         if (entry.key.startsWith(_prefix))
           entry.key.substring(_prefix.length): entry.value,
-    });
+    };
+    return LocalReviewPreferences._(writer, values, readable);
   }
 
   /// A write-only view for blind writes. It never reads native truth, so a
   /// failed snapshot read cannot block an independent write. Do not use it for
   /// read-modify-write: its reads are empty.
   static LocalReviewPreferences writeOnly(SharedPreferences writer) =>
-      LocalReviewPreferences._(writer, {});
+      LocalReviewPreferences._(writer, {}, null);
 
-  String? getString(String key) => _values[key] as String?;
+  String? getString(String key) => _read(key) as String?;
 
-  bool? getBool(String key) => _values[key] as bool?;
+  bool? getBool(String key) => _read(key) as bool?;
 
-  Set<String> getKeys() => Set<String>.from(_values.keys);
+  Set<String> getKeys() {
+    if (_readable != null) {
+      throw StateError('A keyed preference view cannot list every key.');
+    }
+    return Set<String>.from(_values.keys);
+  }
+
+  Object? _read(String key) {
+    // An unrequested key would read as absent, which a caller could mistake
+    // for a missing outbox or claim.
+    if (_readable != null && !_readable.contains(key)) {
+      throw StateError('Preference "$key" was not read from native storage.');
+    }
+    return _values[key];
+  }
 
   Future<bool> setString(String key, String value) async {
     final stored = await _write(() => _writer.setString(key, value));
-    if (stored) _values[key] = value;
+    if (stored) _remember(key, value);
     return stored;
   }
 
   Future<bool> setBool(String key, bool value) async {
     final stored = await _write(() => _writer.setBool(key, value));
-    if (stored) _values[key] = value;
+    if (stored) _remember(key, value);
     return stored;
+  }
+
+  void _remember(String key, Object value) {
+    _values[key] = value;
+    _readable?.add(key);
   }
 
   Future<bool> _write(Future<bool> Function() action) async {
@@ -91,7 +131,10 @@ class LocalReviewPreferences {
 
   Future<bool> remove(String key) async {
     final stored = await _writer.remove(key);
-    if (stored) _values.remove(key);
+    if (stored) {
+      _values.remove(key);
+      _readable?.add(key);
+    }
     return stored;
   }
 }
