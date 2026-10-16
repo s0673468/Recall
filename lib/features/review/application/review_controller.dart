@@ -1571,12 +1571,19 @@ class ReviewController extends ChangeNotifier {
       }
     }
     if (!canWrite()) return null;
+    // A binding is consulted only in the published view's construction
+    // context. A view retained across a failed or offline load outlives the
+    // loads that kept it, so match the published binding rather than the live
+    // load sequence; a rebuilt view supersedes older bindings on its own.
+    final publishedToken = _catchUpViewDays[_state.catchUp]?.loadToken;
     int publishedProgress(CatchUpView view) {
       final context = _catchUpViewDays[view];
       return view.isActive &&
-              context?.loadToken == _loadSequence &&
-              context?.ownerScope == ownerScope &&
-              context?.dayKey == today
+              context != null &&
+              publishedToken != null &&
+              context.loadToken == publishedToken &&
+              context.ownerScope == ownerScope &&
+              context.dayKey == today
           ? view.completedToday
           : 0;
     }
