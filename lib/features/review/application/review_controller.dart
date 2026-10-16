@@ -2714,9 +2714,18 @@ class ReviewController extends ChangeNotifier {
       acknowledged,
       ownerScope: ownerScope,
     );
-    if (_flushStillOwnsSession(ownerId, ownerScope) &&
-        _state.pendingSync != remaining) {
-      _set(_state.copyWith(pendingSync: remaining));
+    if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
+    // A delivered review proves the server is reachable again. Without this,
+    // a session that went offline mid-way stays offline until its next load,
+    // and the rating path keeps every later review off the network.
+    final reconnected = _state.offline && acknowledged.isNotEmpty;
+    if (_state.pendingSync != remaining || reconnected) {
+      _set(
+        _state.copyWith(
+          pendingSync: remaining,
+          offline: reconnected ? false : null,
+        ),
+      );
     }
   }
 
