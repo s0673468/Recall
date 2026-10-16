@@ -700,6 +700,8 @@ Future<void> _absorbRefusedSave(Future<void> action) async {
     // Shown as the study header notice; nothing was saved.
   } on StudyActionNotSavedException {
     // Shown as the study header notice; native truth holds nothing.
+  } on StudyActionUnconfirmedException {
+    // Shown as the study header notice; a redo cannot save it twice.
   }
 }
 

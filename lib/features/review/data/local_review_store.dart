@@ -656,7 +656,9 @@ class LocalReviewStore {
   /// Settle a review append that threw with unknown commit status against
   /// native truth, read in the outbox lock. Returns the pending count when
   /// native storage holds the review, which also lifts its quarantine; null
-  /// when it is absent. A failed read throws and proves nothing.
+  /// when it is absent. Absent is not saved (contract B): its quarantined copy
+  /// is dropped and tombstoned like a refusal, so the redo can be saved. A
+  /// failed read throws and proves nothing.
   Future<int?> settleUnknownReview(Object clientId, {String? ownerScope}) =>
       _settleUnknown(_storageKey(_outboxKey, ownerScope: ownerScope), clientId);
 
@@ -668,8 +670,14 @@ class LocalReviewStore {
     return _withOutboxLock(() async {
       final durable = _readList(await _prefs, key);
       _settleVisiblePending(key, durable);
-      if (!durable.any((e) => e['client_id'] == clientId)) return null;
-      return _pendingCount(key, durable);
+      if (durable.any((e) => e['client_id'] == clientId)) {
+        return _pendingCount(key, durable);
+      }
+      // The caller reports this action as not saved. Its copy must neither
+      // block the redo nor ever persist or sync beside it.
+      _dropPendingId(key, clientId);
+      _tombstoneRefused(key, clientId);
+      return null;
     });
   }
 
@@ -991,13 +999,17 @@ class LocalReviewStore {
     Map<String, dynamic> entry,
   ) async {
     _settleVisiblePending(key, durable);
+    final incomingId = entry['client_id'];
+    // A retry under a still-unknown action's own id replaces its quarantined
+    // copy: one delivery identity can never apply twice. Durable copies are
+    // returned unchanged below.
+    if (incomingId != null) _dropPendingId(key, incomingId);
     if (_uncertainAppends[key]?.isNotEmpty ?? false) {
       // An absent action from a thrown native call might already have been
       // delivered and drained elsewhere. Retrying it would double-apply it.
       throw LocalOutboxWriteException(key);
     }
 
-    final incomingId = entry['client_id'];
     if (incomingId != null &&
         durable.any((item) => item['client_id'] == incomingId)) {
       // A caller retrying a previously committed action must not duplicate it

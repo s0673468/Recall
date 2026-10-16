@@ -403,7 +403,7 @@ void main() {
   );
 
   test(
-    'unknown settle reports an absent review and keeps it quarantined',
+    'unknown settle reports an absent review and releases its quarantine',
     () async {
       final native = _install();
       final store = LocalReviewStore();
@@ -415,12 +415,31 @@ void main() {
       );
       native.outcome = _Outcome.succeed;
 
+      // Absent is reported as not saved, so it must not block the redo or
+      // sign-out, and it never persists beside the redo.
       expect(await store.settleUnknownReview('unknown-a'), isNull);
+      expect(await store.enqueueReview(_review('later-b')), 1);
+      expect(await _reviewIds(store), ['later-b']);
+    },
+  );
+
+  test(
+    'a retry under an unknown review id replaces its quarantined copy once',
+    () async {
+      final native = _install();
+      final store = LocalReviewStore();
+      native.affectedKey = 'recall_outbox_v1';
+      native.outcome = _Outcome.throwBeforeCommit;
       await expectLater(
-        store.enqueueReview(_review('later-b')),
-        throwsA(isA<LocalOutboxWriteException>()),
+        store.enqueueReview(_review('unknown-a')),
+        throwsA(isA<StateError>()),
       );
-      expect(await _reviewIds(store), isEmpty);
+      native.outcome = _Outcome.succeed;
+
+      // The same delivery id cannot apply twice, so it may retry unsettled.
+      expect(await store.enqueueReview(_review('unknown-a')), 1);
+      expect(await store.enqueueReview(_review('unknown-a')), 1);
+      expect(await _reviewIds(store), ['unknown-a']);
     },
   );
 

@@ -235,20 +235,52 @@ void main() {
       expect(await f.store.outbox(), isEmpty);
       expect(await f.native.rows('recall_outbox_v1'), isEmpty);
 
-      // The unknown write stays quarantined in the store, so a redo cannot
-      // land beside a copy another tab might have delivered. It is refused
-      // and reported the same way; nothing is saved twice.
+      // Native truth showed nothing stored, so the redo really can be saved:
+      // once, on this card, and later cards are not blocked either.
       f.native
         ..refusedKey = null
         ..thrown = null;
+      await c.rate(Rating.good);
+      expect(c.state.current?.id, isNot(cardId));
+      expect(c.state.reviewedThisSession, 1);
+      expect(c.state.pendingSync, 1);
+      expect(c.flagNotice, isNull);
+      var rows = await f.native.rows('recall_outbox_v1');
+      expect(rows.map((row) => row['card_id']), [cardId]);
+
+      c.flip();
+      await c.rate(Rating.good);
+      expect(c.state.reviewedThisSession, 2);
+      rows = await f.native.rows('recall_outbox_v1');
+      expect(rows, hasLength(2));
+      await _settle(f.store);
+    },
+  );
+
+  test(
+    'a thrown rating absent from native truth never blocks sign-out',
+    () async {
+      final f = await _fixture();
+      final c = f.controller;
+      c.flip();
+      f.native
+        ..refusedKey = 'recall_outbox_v1'
+        ..thrown = _Thrown.beforeCommit;
+
       await expectLater(
         c.rate(Rating.good),
-        throwsA(isA<LocalOutboxWriteException>()),
+        throwsA(isA<StudyActionNotSavedException>()),
       );
-      expect(c.state.current?.id, cardId);
-      expect(c.flagNotice, ReviewController.saveRefusedNotice);
+      f.native
+        ..refusedKey = null
+        ..thrown = null;
+
+      // The user was told nothing was saved, so nothing is left to sync.
+      await f.store.clear(
+        ownerScope: f.store.activeOwnerScope,
+        requireEmptyOutboxes: true,
+      );
       expect(await f.native.rows('recall_outbox_v1'), isEmpty);
-      await _settle(f.store);
     },
   );
 
@@ -285,28 +317,87 @@ void main() {
     },
   );
 
+  for (final thrown in _Thrown.values) {
+    test(
+      'an unconfirmed thrown rating ($thrown) says so and its redo is saved once',
+      () async {
+        final f = await _fixture();
+        final c = f.controller;
+        final cardId = c.state.current!.id;
+        c.flip();
+        // Every read after the thrown write fails too, so nothing is proven.
+        f.native
+          ..refusedKey = 'recall_outbox_v1'
+          ..thrown = thrown
+          ..failReadsAfterThrow = true;
+
+        await expectLater(
+          c.rate(Rating.good),
+          throwsA(isA<StudyActionUnconfirmedException>()),
+        );
+        expect(c.state.current?.id, cardId);
+        expect(c.state.showBack, isTrue);
+        expect(c.state.reviewedThisSession, 0);
+        expect(c.rateInFlight, isFalse);
+        expect(c.flagNotice, ReviewController.saveUnconfirmedNotice);
+
+        // The redo reuses the unconfirmed id: a copy already stored stays the
+        // only one, and an absent one is saved now. Either way, exactly once.
+        f.native
+          ..failReads = false
+          ..failReadsAfterThrow = false
+          ..refusedKey = null
+          ..thrown = null;
+        await c.rate(Rating.good);
+        expect(c.state.current?.id, isNot(cardId));
+        expect(c.state.reviewedThisSession, 1);
+        expect(c.state.pendingSync, 1);
+        expect(c.canUndo, isTrue);
+        final rows = await f.native.rows('recall_outbox_v1');
+        expect(rows.map((row) => row['card_id']), [cardId]);
+
+        // Nothing is left quarantined for the next card.
+        c.flip();
+        await c.rate(Rating.good);
+        expect(c.state.reviewedThisSession, 2);
+        expect(await f.native.rows('recall_outbox_v1'), hasLength(2));
+        await _settle(f.store);
+      },
+    );
+  }
+
   test(
-    'a thrown rating whose native truth cannot be read stays unknown',
+    'an unconfirmed absent rating does not block a rating of another card',
     () async {
       final f = await _fixture();
       final c = f.controller;
-      final cardId = c.state.current!.id;
+      final firstId = c.state.current!.id;
       c.flip();
-      // Every read after the thrown write fails too, so nothing is proven:
-      // the original failure propagates and no notice claims either outcome.
       f.native
         ..refusedKey = 'recall_outbox_v1'
-        ..thrown = _Thrown.afterCommit
+        ..thrown = _Thrown.beforeCommit
         ..failReadsAfterThrow = true;
-
-      await expectLater(c.rate(Rating.good), throwsStateError);
-      expect(c.state.current?.id, cardId);
-      expect(c.state.reviewedThisSession, 0);
-      expect(c.flagNotice, isNull);
+      await expectLater(
+        c.rate(Rating.good),
+        throwsA(isA<StudyActionUnconfirmedException>()),
+      );
       f.native
         ..failReads = false
+        ..failReadsAfterThrow = false
         ..refusedKey = null
         ..thrown = null;
+
+      // Hiding moves on without a rating; the next card's rating first
+      // settles the unconfirmed one (absent, so not saved) and then saves.
+      await c.hideCurrent('dislike');
+      final secondId = c.state.current!.id;
+      expect(secondId, isNot(firstId));
+      c.flip();
+      await c.rate(Rating.good);
+
+      expect(c.state.reviewedThisSession, 1);
+      final rows = await f.native.rows('recall_outbox_v1');
+      expect(rows.map((row) => row['card_id']), [secondId]);
       await _settle(f.store);
     },
   );
@@ -338,6 +429,48 @@ void main() {
       f.native
         ..refusedKey = null
         ..thrown = null;
+
+      // Nothing was stored, so the redo is saved, exactly once.
+      await act(c);
+      expect(
+        c.flagNotice,
+        hide ? 'Hidden until Sunday review' : 'Flagged for the weekly review',
+      );
+      final rows = await f.native.rows('flag_outbox_v1');
+      expect(rows.map((row) => row['card_id']), [cardId]);
+      await _settle(f.store);
+    });
+
+    test('an unconfirmed thrown $action says so and a redo is saved', () async {
+      final f = await _fixture();
+      final c = f.controller;
+      final cardId = c.state.current!.id;
+      f.native
+        ..refusedKey = 'flag_outbox_v1'
+        ..thrown = _Thrown.beforeCommit
+        ..failReadsAfterThrow = true;
+
+      await expectLater(
+        act(c),
+        throwsA(isA<StudyActionUnconfirmedException>()),
+      );
+      expect(c.flagNotice, ReviewController.saveUnconfirmedNotice);
+      expect(c.state.current?.id, cardId);
+      expect(c.state.index, 0);
+      expect(c.rateInFlight, isFalse);
+
+      f.native
+        ..failReads = false
+        ..failReadsAfterThrow = false
+        ..refusedKey = null
+        ..thrown = null;
+      await act(c);
+      expect(
+        c.flagNotice,
+        hide ? 'Hidden until Sunday review' : 'Flagged for the weekly review',
+      );
+      final rows = await f.native.rows('flag_outbox_v1');
+      expect(rows.map((row) => row['card_id']), [cardId]);
       await _settle(f.store);
     });
 
@@ -389,6 +522,40 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text(ReviewController.saveRefusedNotice), findsOneWidget);
     expect(find.byKey(const ValueKey('study_rating_bar')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('an unconfirmed thrown rating is absorbed by the tap', (
+    tester,
+  ) async {
+    final f = await _fixture();
+    final c = f.controller;
+    f.native
+      ..refusedKey = 'recall_outbox_v1'
+      ..thrown = _Thrown.afterCommit
+      ..failReadsAfterThrow = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(splashFactory: InkRipple.splashFactory),
+        home: Scaffold(body: StudyScreen(controller: c)),
+      ),
+    );
+    await tester.tap(find.text('Show answer'));
+    await tester.pump();
+    await tester.tap(find.text('Good'));
+    await tester.pump();
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text(ReviewController.saveUnconfirmedNotice), findsOneWidget);
+    expect(find.byKey(const ValueKey('study_rating_bar')), findsOneWidget);
+    f.native
+      ..failReads = false
+      ..failReadsAfterThrow = false
+      ..refusedKey = null
+      ..thrown = null;
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
   });

@@ -40,6 +40,16 @@ class StudyActionNotSavedException implements Exception {
   String toString() => 'Recall could not save the study action ($cause).';
 }
 
+/// A rating or flag whose native write threw and whose follow-up native read
+/// failed too, so it may or may not be stored. The user has been told.
+class StudyActionUnconfirmedException implements Exception {
+  final Object cause;
+  const StudyActionUnconfirmedException(this.cause);
+
+  @override
+  String toString() => 'Recall could not confirm the study action ($cause).';
+}
+
 class _SignOutAttempt {
   final int sessionGeneration;
   late final Future<void> task;
@@ -70,6 +80,11 @@ class ReviewController extends ChangeNotifier {
   /// or a thrown write left nothing in native truth. Nothing was saved, so
   /// the card stays on screen for a redo.
   static const saveRefusedNotice = "Couldn't save that — try again.";
+
+  /// Shown when a thrown write could not be checked against native truth.
+  /// It may be stored, so a redo of the same rating reuses its id.
+  static const saveUnconfirmedNotice =
+      "Couldn't confirm that save — try again.";
 
   final RecallApi api;
   final FsrsEngine engine;
@@ -1439,7 +1454,7 @@ class ReviewController extends ChangeNotifier {
     // The queue's card remains the pre-rating scheduling snapshot. Catch-up
     // Undo metadata is captured after enqueue, when a concurrent refresh may
     // have expanded the remaining source.
-    final clientId = await store.newEventId();
+    final clientId = await _reviewClientId(card.id, ownerScope);
     // A deck/account change before commit cancels this producer. Recheck in
     // the store lock too, since enqueue can wait behind another local write.
     if (!canAppend()) return;
@@ -1463,11 +1478,25 @@ class ReviewController extends ChangeNotifier {
         },
       );
     } catch (error, stackTrace) {
-      final saved = await _savedDespite(
-        error,
-        stackTrace,
-        () => store.settleUnknownReview(clientId, ownerScope: ownerScope),
-      );
+      final int? saved;
+      try {
+        saved = await _savedDespite(
+          error,
+          stackTrace,
+          () => store.settleUnknownReview(clientId, ownerScope: ownerScope),
+        );
+      } on StudyActionUnconfirmedException {
+        // It may be stored, so the card stays on its answer and a redo of it
+        // reuses this id: the store and server keep at most one copy.
+        _unconfirmedReview = (
+          cardId: card.id,
+          clientId: clientId,
+          ownerScope: ownerScope,
+        );
+        if (sessionCurrent()) _showFlagNotice(saveUnconfirmedNotice);
+        rethrow;
+      }
+      _confirmedReview(clientId);
       if (saved == null) {
         // Nothing was stored, so the card stays on its answer for a redo,
         // which gets a fresh id and is the only copy that can persist.
@@ -1477,6 +1506,8 @@ class ReviewController extends ChangeNotifier {
       // A thrown write that native truth holds was saved: advance normally.
       pending = saved;
     }
+    // A cancelled producer wrote nothing, so a reused id stays unconfirmed.
+    if (appendAdmitted) _confirmedReview(clientId);
     // A cancelled producer returns the existing pending count without an
     // append. Once admitted and acknowledged, a same-deck reload must still
     // consume this visible card, even if its fetch fails and retains it.
@@ -1838,7 +1869,7 @@ class ReviewController extends ChangeNotifier {
         hideReasons.contains(reason)) {
       return;
     }
-    final clientId = await store.newEventId();
+    final clientId = await _flagClientId();
     final entry = <String, dynamic>{
       'card_id': card.id,
       'guid': card.guid,
@@ -1850,11 +1881,18 @@ class ReviewController extends ChangeNotifier {
     try {
       await store.enqueueFlag(entry);
     } catch (error, stackTrace) {
-      final saved = await _savedDespite(
-        error,
-        stackTrace,
-        () => store.settleUnknownFlag(clientId),
-      );
+      final int? saved;
+      try {
+        saved = await _savedDespite(
+          error,
+          stackTrace,
+          () => store.settleUnknownFlag(clientId),
+        );
+      } on StudyActionUnconfirmedException {
+        _unconfirmedFlagId = clientId;
+        _showFlagNotice(saveUnconfirmedNotice);
+        rethrow;
+      }
       if (saved == null) {
         _showFlagNotice(saveRefusedNotice);
         _throwNotSaved(error, stackTrace);
@@ -1900,7 +1938,7 @@ class ReviewController extends ChangeNotifier {
     try {
       final String clientId;
       try {
-        clientId = await store.newEventId();
+        clientId = await _flagClientId();
       } catch (_) {
         restoreVisibility();
         rethrow;
@@ -1922,8 +1960,10 @@ class ReviewController extends ChangeNotifier {
             stackTrace,
             () => store.settleUnknownFlag(clientId),
           );
-        } catch (_) {
+        } on StudyActionUnconfirmedException {
           restoreVisibility();
+          _unconfirmedFlagId = clientId;
+          _showFlagNotice(saveUnconfirmedNotice);
           rethrow;
         }
         if (saved == null) {
@@ -2205,7 +2245,7 @@ class ReviewController extends ChangeNotifier {
   /// The pending count when a failed save is in fact stored, or null when it
   /// is not. A refused save never is. A thrown save has unknown commit status,
   /// so native truth decides. A failed read of it proves nothing either way:
-  /// the original failure then propagates unchanged.
+  /// the original failure then propagates as [StudyActionUnconfirmedException].
   Future<int?> _savedDespite(
     Object error,
     StackTrace stackTrace,
@@ -2215,8 +2255,62 @@ class ReviewController extends ChangeNotifier {
     try {
       return await settle();
     } catch (_) {
-      Error.throwWithStackTrace(error, stackTrace);
+      Error.throwWithStackTrace(
+        StudyActionUnconfirmedException(error),
+        stackTrace,
+      );
     }
+  }
+
+  /// A rating whose thrown write could not be checked against native truth.
+  ({int cardId, String clientId, String? ownerScope})? _unconfirmedReview;
+
+  /// The flag counterpart of [_unconfirmedReview].
+  String? _unconfirmedFlagId;
+
+  /// The id for a rating of [cardId]. The redo of an unconfirmed rating reuses
+  /// its id, so a copy already stored stays the only one and the server can
+  /// never apply both. Any other unconfirmed rating is settled against native
+  /// truth first, so its quarantine cannot block this one.
+  Future<String> _reviewClientId(int cardId, String? ownerScope) async {
+    final unconfirmed = _unconfirmedReview;
+    if (unconfirmed != null) {
+      if (unconfirmed.cardId == cardId &&
+          unconfirmed.ownerScope == ownerScope) {
+        return unconfirmed.clientId;
+      }
+      try {
+        await store.settleUnknownReview(
+          unconfirmed.clientId,
+          ownerScope: unconfirmed.ownerScope,
+        );
+        _confirmedReview(unconfirmed.clientId);
+      } catch (_) {
+        // Still unreadable: keep it, so a later rating can settle it.
+      }
+    }
+    return store.newEventId();
+  }
+
+  /// Forget [clientId] once native truth or a definite refusal settled it.
+  void _confirmedReview(String clientId) {
+    if (_unconfirmedReview?.clientId == clientId) _unconfirmedReview = null;
+  }
+
+  /// A fresh flag id, after settling an unconfirmed flag against native truth
+  /// so its quarantine cannot block this one. A stored copy simply stays; a
+  /// repeated report of a card is harmless, unlike a repeated rating.
+  Future<String> _flagClientId() async {
+    final unconfirmed = _unconfirmedFlagId;
+    if (unconfirmed != null) {
+      try {
+        await store.settleUnknownFlag(unconfirmed);
+        if (_unconfirmedFlagId == unconfirmed) _unconfirmedFlagId = null;
+      } catch (_) {
+        // Still unreadable: keep it, so a later flag can settle it.
+      }
+    }
+    return store.newEventId();
   }
 
   /// Report an unsaved action to the caller. A refusal keeps its own type; an
