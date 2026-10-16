@@ -1,5 +1,11 @@
 # Recall native iOS setup
 
+> **Not maintained (Android + web only).** Recall's application platforms are
+> Android and web. This guide and the `ios/` source are preserved as history
+> until a separately scoped removal; do not build, test, sign or deliver from
+> them. For current instructions see [ANDROID_SETUP.md](ANDROID_SETUP.md) and
+> the [README](README.md#platforms).
+
 Recall's PWA and native iPhone app use the same Flutter screens, Supabase
 contracts, FSRS scheduler, cache, review/flag outboxes, undo, settings, and
 stats. The checked-in iOS target is delivery plumbing only; scheduling and data

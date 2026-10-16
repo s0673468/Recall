@@ -1,6 +1,9 @@
 """Behavioral checks for conservative, offline test selection."""
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
+import io
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -137,6 +140,21 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(pointer["full"])
         self.assertEqual(selector.commands(pointer, "all", 1), [])
         self.assertTrue(selector.plan(self.root, ["assets/runtime.md"])["full"])
+
+
+class DocumentedLaneTests(unittest.TestCase):
+    def test_documented_lanes_are_accepted_and_ios_is_not(self):
+        repo = SCRIPT.parents[1]
+        documented = set()
+        for doc in ["README.md", "docs/testing.md"]:
+            documented.update(re.findall(r"--lane (\w+)", (repo / doc).read_text()))
+        self.assertIn("android", documented)
+        self.assertNotIn("ios", documented)
+        for lane in sorted(documented | {"ios"}):
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as exit_:
+                    selector.main(["--lane", lane, "--help"])
+            self.assertEqual(exit_.exception.code, 2 if lane == "ios" else 0, lane)
 
 
 class GitChangesTests(unittest.TestCase):

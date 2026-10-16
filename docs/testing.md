@@ -21,10 +21,13 @@ python3 tool/affected_tests.py --base origin/main --run --concurrency 2
 # Include an extra dependency when a change has a relationship beyond imports.
 python3 tool/affected_tests.py --base origin/main --path lib/features/review/data/recall_api.dart
 
-# Run selected native checks on the matching host, after pub get.
+# Run selected native Android checks, after pub get.
 python3 tool/affected_tests.py --base origin/main --lane android --run
-python3 tool/affected_tests.py --base origin/main --lane ios --run
 ```
+
+Recall's application platforms are Android and web. There is no iOS lane:
+iOS is not maintained, and its preserved tests are tagged `apple-mobile` and
+skipped.
 
 Dart selection follows transitive imports, exports and parts, including
 conditional platform imports. File-based Dart contract tests run alongside each
@@ -49,8 +52,10 @@ already executed by Dart wrapper tests.
   documented local/production authority in `scripts/supabase/README.md`.
 - Android unit/lint and `assembleDebugAndroidTest` check code and compilation.
   Building the instrumentation APK does **not** execute its device tests.
-- iOS XCTest uses the disposable simulator helper. Keep native behavior checks
-  when changing Swift/Kotlin bridges, entitlements, widgets or persistence.
+- Keep Android native behavior checks when changing Kotlin bridges, widgets or
+  persistence. iOS XCTest and the simulator helper are not maintained
+  (Android + web only); the CI `ios-native` context is retired and kept only as
+  a check name.
 - Python tools have direct suites in `tools/*/tests`, `tool/tests`, `scripts/tests`
   and `web/tool/tests`. The broad Flutter suite alone is not the whole CI gate.
 
