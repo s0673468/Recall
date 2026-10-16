@@ -652,24 +652,40 @@ class ReviewController extends ChangeNotifier {
       // Independent round-trips — run them together instead of serially.
       // _refreshFsrsSettings never throws (it falls back to defaults).
       final active = _activePrefs;
+      final deckFilter = _state.deckFilter;
       final decksFuture = api.fetchDecks();
       final hiddenFuture = _refreshHiddenCards();
+      // A selected deck is queried directly; only the all-decks stream needs
+      // the deck read to know which decks are automatic.
+      Future<List<ReviewCard>> fetchQueueExcluding(Set<int> hidden) async {
+        final includedDeckIds = deckFilter == null
+            ? automaticReviewDeckIds(await decksFuture)
+            : null;
+        return api.fetchQueue(
+          deckId: deckFilter,
+          includedDeckIds: includedDeckIds,
+          newLimit: active.newLimitForDeck(deckFilter),
+          order: active.newOrder,
+          excludeCardIds: hidden,
+        );
+      }
+
       // Exclude the hidden set already known on this device so the queue
       // fetch never waits on the hidden-card read; the fresh server set still
       // filters the result below.
       final knownHidden = _hiddenCardIds;
-      final queueFuture = () async {
-        final decks = await decksFuture;
-        final includedDeckIds = _state.deckFilter == null
-            ? automaticReviewDeckIds(decks)
-            : null;
-        return api.fetchQueue(
-          deckId: _state.deckFilter,
-          includedDeckIds: includedDeckIds,
-          newLimit: active.newLimitForDeck(_state.deckFilter),
-          order: active.newOrder,
-          excludeCardIds: knownHidden,
-        );
+      final queueFuture = fetchQueueExcluding(knownHidden);
+      // The fresh hide set may differ from the cached one the query excluded
+      // (flags from another device, or ones the review resolved). Refetch as
+      // soon as it is known so hidden cards never use up the limits and
+      // resolved ones return now rather than on the next load.
+      var refetchExcluded = knownHidden;
+      final refetchFuture = () async {
+        await hiddenFuture;
+        if (loadToken != _loadSequence) return null;
+        if (setEquals(knownHidden, _hiddenCardIds)) return null;
+        refetchExcluded = _hiddenCardIds;
+        return fetchQueueExcluding(refetchExcluded);
       }();
       final globalDueFuture = () async {
         final decks = await decksFuture;
@@ -682,24 +698,17 @@ class ReviewController extends ChangeNotifier {
         globalDueFuture,
         _fetchRecentReviews(),
         hiddenFuture,
+        refetchFuture,
       ]);
+      if (loadToken != _loadSequence) return; // superseded by a newer load
       final decks = results[1] as List<DeckRow>;
       _automaticDeckIds = automaticReviewDeckIds(decks);
-      var fetchedQueue = results[2] as List<ReviewCard>;
-      if (!setEquals(knownHidden, _hiddenCardIds)) {
-        // The fresh hide set differs from the cached one the query excluded
-        // (flags from another device, or ones the review resolved). Refetch
-        // once so hidden cards never use up the limits and resolved ones
-        // return now rather than on the next load.
-        fetchedQueue = await api.fetchQueue(
-          deckId: _state.deckFilter,
-          includedDeckIds: _state.deckFilter == null
-              ? automaticReviewDeckIds(decks)
-              : null,
-          newLimit: active.newLimitForDeck(_state.deckFilter),
-          order: active.newOrder,
-          excludeCardIds: _hiddenCardIds,
-        );
+      var fetchedQueue =
+          results[6] as List<ReviewCard>? ?? results[2] as List<ReviewCard>;
+      if (!setEquals(refetchExcluded, _hiddenCardIds)) {
+        // Hides or undos landed after the early refetch started; query once
+        // more with the current set, as the serial path always did.
+        fetchedQueue = await fetchQueueExcluding(_hiddenCardIds);
       }
       final fetchedDue = results[3] as ({int count, DateTime updatedAt})?;
       final recent = results[4] as _RecentReviews;
