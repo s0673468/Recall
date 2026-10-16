@@ -371,41 +371,63 @@ class _OptionalDecksState extends State<_OptionalDecks> {
   }
 
   @override
-  Widget build(BuildContext context) => SliverMainAxisGroup(
-    slivers: [
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(
-          UiSpacing.md,
-          UiSpacing.lg,
-          UiSpacing.md,
-          0,
-        ),
-        sliver: SliverToBoxAdapter(
-          child: ExpansionTile(
-            key: ValueKey('recall_optional_decks_${widget.searching}'),
-            initiallyExpanded: _expanded,
-            onExpansionChanged: (expanded) {
-              setState(() => _expanded = expanded);
-              widget.onExpansionChanged(expanded);
-            },
-            tilePadding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs),
-            childrenPadding: EdgeInsets.zero,
-            title: Row(
-              children: [
-                const Expanded(child: Text('Optional curricula')),
-                const SizedBox(width: UiSpacing.sm),
-                Text(
-                  '${widget.count}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
+  Widget build(BuildContext context) {
+    // The tile only holds the header now, so its expanded bottom border is
+    // drawn after the rows, where the original tile's border sat.
+    final tileTheme = ExpansionTileTheme.of(context);
+    final expandedShape = tileTheme.shape;
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(
+            UiSpacing.md,
+            UiSpacing.lg,
+            UiSpacing.md,
+            0,
+          ),
+          sliver: SliverToBoxAdapter(
+            child: ExpansionTile(
+              key: ValueKey('recall_optional_decks_${widget.searching}'),
+              initiallyExpanded: _expanded,
+              shape: tileTheme.collapsedShape,
+              onExpansionChanged: (expanded) {
+                setState(() => _expanded = expanded);
+                widget.onExpansionChanged(expanded);
+              },
+              tilePadding: const EdgeInsets.symmetric(
+                horizontal: UiSpacing.xs,
+              ),
+              childrenPadding: EdgeInsets.zero,
+              title: Row(
+                children: [
+                  const Expanded(child: Text('Optional curricula')),
+                  const SizedBox(width: UiSpacing.sm),
+                  Text(
+                    '${widget.count}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-      if (_expanded) widget.sliver,
-    ],
-  );
+        if (_expanded) ...[
+          widget.sliver,
+          if (expandedShape is Border)
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: UiSpacing.md),
+              sliver: SliverToBoxAdapter(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border(bottom: expandedShape.bottom),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
 }
 
 class _CountError extends StatelessWidget {

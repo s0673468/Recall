@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:health_anki_flutter/core/widgets/recall_surfaces.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/application/review_state.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
@@ -216,6 +217,50 @@ void main() {
     await tester.pumpAndSettle();
     expect(_row(decks.first), findsOneWidget); // Restore the saved open choice.
     expect(_mountedRows(), lessThan(40));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('expanded optional borders sit above and below the rows', (
+    tester,
+  ) async {
+    final decks = _decks(optional: true).take(30).toList();
+    await _pumpDecks(tester, decks);
+    await tester.tap(find.text('Optional curricula'));
+    await tester.pumpAndSettle();
+
+    // The tile's top border and the group's top border frame the header, so
+    // exactly one rule separates it from the first row.
+    final header = find.descendant(
+      of: find.byType(ExpansionTile),
+      matching: find.byType(ListTile),
+    );
+    final firstRow = find.descendant(
+      of: _row(decks.first),
+      matching: find.byType(RecallListRow),
+    );
+    expect(
+      tester.getTopLeft(firstRow).dy - tester.getBottomLeft(header).dy,
+      1,
+    );
+
+    // The group's and tile's bottom borders both follow the final row.
+    final scrollable = find.byType(Scrollable).first;
+    await tester.scrollUntilVisible(
+      _row(decks.last),
+      600,
+      scrollable: scrollable,
+    );
+    final position = tester.state<ScrollableState>(scrollable).position;
+    position.jumpTo(position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    final lastRow = find.descendant(
+      of: _row(decks.last),
+      matching: find.byType(RecallListRow),
+    );
+    expect(
+      tester.getRect(scrollable).bottom - tester.getBottomLeft(lastRow).dy,
+      2 + UiSpacing.xl,
+    );
     expect(tester.takeException(), isNull);
   });
 
