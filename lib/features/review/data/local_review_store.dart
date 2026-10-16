@@ -39,6 +39,7 @@ class LocalReviewStore {
   static const maxDailyRemediations = 3;
 
   Future<void> _outboxTail = Future.value();
+  static Future<void>? _ownerMigrationTail;
   Future<SharedPreferences>? _prefsFuture;
   String? _installId;
   int _eventSequence = 0;
@@ -126,6 +127,30 @@ class LocalReviewStore {
     return run;
   }
 
+  static Future<T> _withOwnerMigrationLock<T>(Future<T> Function() action) {
+    // Create the idle starting point in this caller's Zone. A completed static
+    // Future can otherwise retain a drained Zone between Flutter tests.
+    final predecessor = _ownerMigrationTail ?? Future<void>.value();
+    final run = predecessor.then((_) => action());
+    late final Future<void> tail;
+    // Settle the caller's Future only after releasing the idle static tail.
+    // A queued successor replaces it, so this run cannot clear that successor.
+    final completed = run.then<T>(
+      (value) {
+        if (identical(_ownerMigrationTail, tail)) _ownerMigrationTail = null;
+        return value;
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (identical(_ownerMigrationTail, tail)) _ownerMigrationTail = null;
+        Error.throwWithStackTrace(error, stackTrace);
+      },
+    );
+    // Keep the queue live past failures without retaining its settled Future.
+    tail = completed.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _ownerMigrationTail = tail;
+    return completed;
+  }
+
   /// Select the account namespace used by every cache and durable outbox.
   ///
   /// The first upgraded account claims the legacy unscoped values. They are
@@ -136,39 +161,43 @@ class LocalReviewStore {
       return Future.error(ArgumentError.value(ownerId, 'ownerId'));
     }
     final scope = _scopeForOwner(ownerId);
-    return _withOutboxLock(() async {
-      final prefs = await _prefs;
-      final claimed = prefs.getString(_legacyOwnerClaimKey);
-      if (claimed == null) {
-        if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
-          throw LocalOutboxWriteException(_legacyOwnerClaimKey);
-        }
-      }
-      final ownerClaim = claimed ?? scope;
-      final migrationKey = '$_ownerMigrationKey:$scope';
-      if (ownerClaim == scope && prefs.getBool(migrationKey) != true) {
-        for (final base in [
-          _snapshotKey,
-          _outboxKey,
-          _flagOutboxKey,
-          catchUpKey,
-          remediationKey,
-        ]) {
-          final legacy = prefs.getString(base);
-          final scoped = _scopedKey(base, scope);
-          if (legacy != null && prefs.getString(scoped) == null) {
-            if (!await prefs.setString(scoped, legacy)) {
-              throw LocalOutboxWriteException(scoped);
-            }
+    return _withOutboxLock(
+      () => _withOwnerMigrationLock(() async {
+        final prefs = await LocalReviewPreferences.readSnapshot(await _prefs);
+        // The isolated view reads persisted values without reloading the
+        // shared settings cache. It includes only acknowledged writes here.
+        final claimed = prefs.getString(_legacyOwnerClaimKey);
+        if (claimed == null) {
+          if (!await prefs.setString(_legacyOwnerClaimKey, scope)) {
+            throw LocalOutboxWriteException(_legacyOwnerClaimKey);
           }
         }
-        if (!await prefs.setBool(migrationKey, true)) {
-          throw LocalOutboxWriteException(migrationKey);
+        final ownerClaim = claimed ?? scope;
+        final migrationKey = '$_ownerMigrationKey:$scope';
+        if (ownerClaim == scope && prefs.getBool(migrationKey) != true) {
+          for (final base in [
+            _snapshotKey,
+            _outboxKey,
+            _flagOutboxKey,
+            catchUpKey,
+            remediationKey,
+          ]) {
+            final legacy = prefs.getString(base);
+            final scoped = _scopedKey(base, scope);
+            if (legacy != null && prefs.getString(scoped) == null) {
+              if (!await prefs.setString(scoped, legacy)) {
+                throw LocalOutboxWriteException(scoped);
+              }
+            }
+          }
+          if (!await prefs.setBool(migrationKey, true)) {
+            throw LocalOutboxWriteException(migrationKey);
+          }
         }
-      }
-      _ownerAware = true;
-      _activeOwnerScope = scope;
-    });
+        _ownerAware = true;
+        _activeOwnerScope = scope;
+      }),
+    );
   }
 
   Future<void> releaseOwner() => _withOutboxLock(() async {
@@ -560,8 +589,11 @@ class LocalReviewStore {
   /// Remove only a positively never-attempted queued review. Legacy entries
   /// without this marker are uncertain and remain deliverable. Returns the
   /// removal result and pending count; never drops an ambiguous server commit.
-  Future<({bool removed, int remaining})> removeEntry(Object clientId) {
-    final key = _storageKey(_outboxKey);
+  Future<({bool removed, int remaining})> removeEntry(
+    Object clientId, {
+    String? ownerScope,
+  }) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
       final list = _readOutbox(prefs, key);
@@ -581,6 +613,16 @@ class LocalReviewStore {
   /// than affecting the review outbox or queue load.
   Future<CatchUpLocalState> loadCatchUpState() {
     final key = _storageKey(catchUpKey);
+    return _readCatchUpState(key);
+  }
+
+  /// Read the account captured by a delayed Undo, even after an owner change.
+  Future<CatchUpLocalState> loadCatchUpStateForOwner(String? ownerScope) {
+    final key = _storageKey(catchUpKey, ownerScope: ownerScope);
+    return _readCatchUpState(key);
+  }
+
+  Future<CatchUpLocalState> _readCatchUpState(String key) {
     return _withOutboxLock(() async {
       // A settled writer may have refused its eager cache update. Read native
       // progress without replacing unrelated pending producer values in cache.
@@ -693,13 +735,26 @@ class LocalReviewStore {
   Future<void> removeHiddenCard(int cardId) =>
       _updateHidden((ids) => ids..remove(cardId));
 
-  Future<void> replaceHiddenCards(Set<int> cardIds) =>
-      _updateHidden((_) => {...cardIds});
+  /// Bind a delayed refresh to its namespace and recheck cancellation in-lock.
+  Future<void> replaceHiddenCards(
+    Set<int> cardIds, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) => _updateHidden(
+    (_) => {...cardIds},
+    ownerScope: ownerScope,
+    canWrite: canWrite,
+  );
 
-  Future<void> _updateHidden(Set<int> Function(Set<int>) change) {
-    final key = _storageKey(_hiddenCardsKey);
+  Future<void> _updateHidden(
+    Set<int> Function(Set<int>) change, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) {
+    final key = _storageKey(_hiddenCardsKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefs;
+      if (canWrite != null && !canWrite()) return;
       final next = change(_readHidden(prefs, key));
       final ids = next.toList()..sort();
       final written = await prefs.setString(key, jsonEncode(ids));
