@@ -4,7 +4,6 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:health_anki_flutter/core/widgets/listenable_selector.dart';
-import 'package:health_anki_flutter/core/widgets/recall_surfaces.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/application/review_state.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
@@ -264,13 +263,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final groupBefore = tester.widget(find.byType(RecallListGroup));
+      final row = find.byKey(const ValueKey('recall_deck_row_ML'));
+      final rowBefore = tester.widget(row);
 
       controller.emit(controller.state.copyWith(pendingSync: 3, index: 1));
       controller.notice = 'Marked for deletion';
       await tester.pump();
       expect(
-        identical(tester.widget(find.byType(RecallListGroup)), groupBefore),
+        identical(tester.widget(row), rowBefore),
         isTrue,
       );
 
