@@ -41,14 +41,14 @@ class LocalReviewStore {
   Future<void> _outboxTail = Future.value();
   static Future<void>? _ownerMigrationTail;
   Future<SharedPreferences>? _prefsFuture;
-  // A false native result is a definite refusal; a thrown call has unknown
-  // commit status. Keep both only in this Store and under the exact scoped key.
-  // Every definite refusal is tombstoned here: its optimistic cache value would
-  // otherwise survive in the shared cache, and an acknowledgement merge could
-  // persist a refused action that native truth never stored. A proven quota
-  // refusal also admits no pending action, and its cache value is resynced in
-  // LocalReviewPreferences.
-  final Map<String, List<Map<String, dynamic>>> _retryableAppends = {};
+  // A false native result or a proven quota refusal is a definite refusal; a
+  // thrown call has unknown commit status. Contract B: a definite refusal is
+  // never retained, replayed or sent, so the caller's fresh-ID redo is the
+  // only copy that can ever persist. Its id is tombstoned here because its
+  // optimistic cache value can survive in the shared cache, and an
+  // acknowledgement merge must never persist it from there. A quota refusal's
+  // cache value is also resynced in LocalReviewPreferences. Unknown appends
+  // stay quarantined only in this Store and under the exact scoped key.
   final Map<String, List<Map<String, dynamic>>> _uncertainAppends = {};
   final Map<String, Set<Object>> _refusedIds = {};
   String? _installId;
@@ -434,8 +434,8 @@ class LocalReviewStore {
           cachedAcknowledged.length != cached.length) {
         await _writeList(nativeView, key, remaining);
       }
-      // The server accepted these exact actions, so no retained or uncertain
-      // copy of them may remain pending. A failed write above keeps them.
+      // The server accepted these exact actions, so no uncertain copy of them
+      // may remain pending. A failed write above keeps them.
       _settleAcknowledgedPending(key, byId, legacyReviews);
       return remaining.length;
     });
@@ -446,15 +446,13 @@ class LocalReviewStore {
     Map<Object, Map<String, dynamic>> acknowledged,
     bool legacyReviews,
   ) {
-    for (final pending in [_retryableAppends, _uncertainAppends]) {
-      final entries = pending[key];
-      entries?.removeWhere((e) {
-        final id = _deliveryId(e, legacyReviews);
-        final ack = id == null ? null : acknowledged[id];
-        return ack != null && _sameAcknowledgedPayload(e, ack);
-      });
-      if (entries?.isEmpty ?? false) pending.remove(key);
-    }
+    final entries = _uncertainAppends[key];
+    entries?.removeWhere((e) {
+      final id = _deliveryId(e, legacyReviews);
+      final ack = id == null ? null : acknowledged[id];
+      return ack != null && _sameAcknowledgedPayload(e, ack);
+    });
+    if (entries?.isEmpty ?? false) _uncertainAppends.remove(key);
   }
 
   static List<Map<String, dynamic>> _mergeUnacknowledged(
@@ -644,9 +642,6 @@ class LocalReviewStore {
       final prefs = await _prefs;
       final list = _readOutbox(prefs, key);
       final before = list.length;
-      final attemptedDurable = list.any(
-        (e) => e['client_id'] == clientId && e['delivery_attempted'] != false,
-      );
       list.removeWhere(
         (e) => e['client_id'] == clientId && e['delivery_attempted'] == false,
       );
@@ -654,16 +649,27 @@ class LocalReviewStore {
         await _writeList(prefs, key, list);
         _dropPendingId(key, clientId);
       }
-      var removedRetryable = false;
-      if (!attemptedDurable &&
-          list.length == before &&
-          !_hasPendingId(_uncertainAppends, key, clientId)) {
-        removedRetryable = _removePendingId(_retryableAppends, key, clientId);
-      }
-      return (
-        removed: list.length != before || removedRetryable,
-        remaining: list.length,
-      );
+      return (removed: list.length != before, remaining: list.length);
+    });
+  }
+
+  /// Settle a review append that threw with unknown commit status against
+  /// native truth, read in the outbox lock. Returns the pending count when
+  /// native storage holds the review, which also lifts its quarantine; null
+  /// when it is absent. A failed read throws and proves nothing.
+  Future<int?> settleUnknownReview(Object clientId, {String? ownerScope}) =>
+      _settleUnknown(_storageKey(_outboxKey, ownerScope: ownerScope), clientId);
+
+  /// The flag counterpart of [settleUnknownReview].
+  Future<int?> settleUnknownFlag(Object clientId) =>
+      _settleUnknown(_storageKey(_flagOutboxKey), clientId);
+
+  Future<int?> _settleUnknown(String key, Object clientId) {
+    return _withOutboxLock(() async {
+      final durable = _readList(await _prefs, key);
+      _settleVisiblePending(key, durable);
+      if (!durable.any((e) => e['client_id'] == clientId)) return null;
+      return _pendingCount(key, durable);
     });
   }
 
@@ -750,8 +756,7 @@ class LocalReviewStore {
         _dropPendingId(key, clientId);
         return true;
       }
-      if (_hasPendingId(_uncertainAppends, key, clientId)) return false;
-      return _removePendingId(_retryableAppends, key, clientId);
+      return false;
     });
   }
 
@@ -973,20 +978,8 @@ class LocalReviewStore {
     LocalReviewPreferences prefs,
     String key,
   ) async {
-    bool removed;
-    try {
-      removed = await prefs.remove(key);
-    } catch (error, stackTrace) {
-      // An unacknowledged clear cannot license a later producer to replay
-      // definite failed appends into a namespace that may have been cleared.
-      final retryable = _retryableAppends.remove(key);
-      if (retryable != null) {
-        _uncertainAppends.putIfAbsent(key, () => []).addAll(retryable);
-      }
-      Error.throwWithStackTrace(error, stackTrace);
-    }
-    if (!removed) throw LocalOutboxWriteException(key);
-    _retryableAppends.remove(key);
+    // An unacknowledged clear keeps every unknown append quarantined.
+    if (!await prefs.remove(key)) throw LocalOutboxWriteException(key);
     _uncertainAppends.remove(key);
     _refusedIds.remove(key);
   }
@@ -1004,24 +997,15 @@ class LocalReviewStore {
       throw LocalOutboxWriteException(key);
     }
 
-    final ids = <Object?>{
-      for (final item in durable)
-        if (item['client_id'] != null) item['client_id'],
-    };
-    for (final item
-        in _retryableAppends[key] ?? const <Map<String, dynamic>>[]) {
-      final id = item['client_id'];
-      if (id == null || ids.add(id)) durable.add(item);
-    }
     final incomingId = entry['client_id'];
-    final appendNew = incomingId == null || !ids.contains(incomingId);
-    if (!appendNew && (_retryableAppends[key]?.isEmpty ?? true)) {
+    if (incomingId != null &&
+        durable.any((item) => item['client_id'] == incomingId)) {
       // A caller retrying a previously committed action must not duplicate it
       // or replace a durable delivery_attempted marker.
       return durable.length;
     }
-    final appended = appendNew ? Map<String, dynamic>.from(entry) : null;
-    if (appended != null) durable.add(appended);
+    final appended = Map<String, dynamic>.from(entry);
+    durable.add(appended);
     final encoded = jsonEncode(durable);
     bool written;
     try {
@@ -1030,15 +1014,11 @@ class LocalReviewStore {
       if (error is LocalPreferenceWriteNotCommitted) {
         // The incoming action was rejected, so the controller stays on this
         // card. Retaining it would replay it alongside a fresh-ID retry click.
-        // Earlier retryable or unknown actions keep their original status.
-        _tombstoneRefused(key, appended?['client_id'] ?? entry['client_id']);
+        // Earlier unknown actions keep their original status.
+        _tombstoneRefused(key, incomingId);
         rethrow;
       }
-      // Every retryable item included in this unknown write becomes unknown
-      // too, even if its earlier attempt was a definite refusal.
-      final uncertain = _uncertainAppends.putIfAbsent(key, () => []);
-      uncertain.addAll(_retryableAppends.remove(key) ?? []);
-      if (appended != null) uncertain.add(appended);
+      _uncertainAppends.putIfAbsent(key, () => []).add(appended);
       try {
         _settleVisiblePending(key, _readList(await _prefs, key));
       } catch (_) {
@@ -1047,13 +1027,12 @@ class LocalReviewStore {
       Error.throwWithStackTrace(error, stackTrace);
     }
     if (!written) {
-      if (appended != null) {
-        _retryableAppends.putIfAbsent(key, () => []).add(appended);
-        _tombstoneRefused(key, appended['client_id']);
-      }
+      // A definite refusal is dropped like a quota refusal: the next write
+      // never persists it beside the caller's fresh-ID redo.
+      _tombstoneRefused(key, incomingId);
       throw LocalOutboxWriteException(key);
     }
-    _retryableAppends.remove(key);
+    _settleVisiblePending(key, durable);
     return durable.length;
   }
 
@@ -1062,13 +1041,11 @@ class LocalReviewStore {
       for (final item in durable)
         if (item['client_id'] != null) item['client_id'],
     };
-    for (final pending in [_retryableAppends, _uncertainAppends]) {
-      final entries = pending[key];
-      entries?.removeWhere(
-        (e) => e['client_id'] != null && ids.contains(e['client_id']),
-      );
-      if (entries?.isEmpty ?? false) pending.remove(key);
-    }
+    final entries = _uncertainAppends[key];
+    entries?.removeWhere(
+      (e) => e['client_id'] != null && ids.contains(e['client_id']),
+    );
+    if (entries?.isEmpty ?? false) _uncertainAppends.remove(key);
     // A refused id that later appears durable actually committed (or was
     // re-minted and accepted): it must rejoin acknowledgement merges.
     final refused = _refusedIds[key];
@@ -1086,37 +1063,17 @@ class LocalReviewStore {
         if (item['client_id'] != null) item['client_id'],
     };
     var count = durable.length;
-    for (final pending in [_retryableAppends, _uncertainAppends]) {
-      for (final item in pending[key] ?? const <Map<String, dynamic>>[]) {
-        final id = item['client_id'];
-        if (id == null || ids.add(id)) count++;
-      }
+    for (final item in _uncertainAppends[key] ?? const []) {
+      final id = item['client_id'];
+      if (id == null || ids.add(id)) count++;
     }
     return count;
   }
 
-  bool _hasPendingId(
-    Map<String, List<Map<String, dynamic>>> pending,
-    String key,
-    Object id,
-  ) => pending[key]?.any((e) => e['client_id'] == id) ?? false;
-
-  bool _removePendingId(
-    Map<String, List<Map<String, dynamic>>> pending,
-    String key,
-    Object id,
-  ) {
-    final entries = pending[key];
-    if (entries == null) return false;
-    final before = entries.length;
-    entries.removeWhere((e) => e['client_id'] == id);
-    if (entries.isEmpty) pending.remove(key);
-    return entries.length != before;
-  }
-
   void _dropPendingId(String key, Object id) {
-    _removePendingId(_retryableAppends, key, id);
-    _removePendingId(_uncertainAppends, key, id);
+    final entries = _uncertainAppends[key];
+    entries?.removeWhere((e) => e['client_id'] == id);
+    if (entries?.isEmpty ?? false) _uncertainAppends.remove(key);
   }
 
   void _dropDrainedIds(String key, Iterable<Map<String, dynamic>> drained) {

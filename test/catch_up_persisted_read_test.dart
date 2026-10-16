@@ -168,7 +168,7 @@ void main() {
     },
   );
 
-  test('catch-up read preserves an unrelated refused review append', () async {
+  test('catch-up read never revives an unrelated refused review', () async {
     final native = _install();
     final store = LocalReviewStore();
     native.failedKey = _nativeReviewKey;
@@ -179,14 +179,12 @@ void main() {
     expect((await native.getAll()).containsKey(_nativeReviewKey), isFalse);
     expect(await store.loadCatchUpState(), _progress(2));
     native.failedKey = null;
-    expect(await store.enqueueReview(_review('invented-b')), 2);
+    // Contract B: the refused append never persists on the next write.
+    expect(await store.enqueueReview(_review('invented-b')), 1);
 
     SharedPreferences.resetStatic();
     final durable = await LocalReviewStore().outbox();
-    expect(durable.map((entry) => entry['client_id']), [
-      'invented-a',
-      'invented-b',
-    ]);
+    expect(durable.map((entry) => entry['client_id']), ['invented-b']);
     expect(
       durable.every((entry) => entry['delivery_attempted'] == false),
       isTrue,
@@ -212,12 +210,13 @@ void main() {
       native.failRead = false;
       expect(await store.loadCatchUpState(), _progress(2));
       native.failedKey = null;
-      expect(await store.enqueueReview(_review('invented-b')), 2);
+      // Contract B: the refused append never persists on the next write.
+      expect(await store.enqueueReview(_review('invented-b')), 1);
 
       SharedPreferences.resetStatic();
       expect(
         (await LocalReviewStore().outbox()).map((entry) => entry['client_id']),
-        ['invented-a', 'invented-b'],
+        ['invented-b'],
       );
     },
   );

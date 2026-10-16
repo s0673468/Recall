@@ -51,7 +51,7 @@ Map<String, dynamic> _review(String id) => {
 
 void main() {
   test(
-    'a refused review append surfaces and the next write persists both',
+    'a refused review append surfaces and the next write persists only its own',
     () async {
       final native = _install();
       final store = LocalReviewStore();
@@ -64,14 +64,12 @@ void main() {
       expect(native.refused, isNotEmpty);
 
       // The lock chain survives the failure; a later write is not wedged.
+      // Contract B: the refused copy never persists on that next write.
       native.refuse = null;
-      expect(await store.enqueueReview(_review('invented-b')), 2);
+      expect(await store.enqueueReview(_review('invented-b')), 1);
 
       final durable = await _restart().outbox();
-      expect(durable.map((entry) => entry['client_id']), [
-        'invented-a',
-        'invented-b',
-      ]);
+      expect(durable.map((entry) => entry['client_id']), ['invented-b']);
       expect(durable.every((e) => e['delivery_attempted'] == false), isTrue);
     },
   );

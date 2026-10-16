@@ -184,16 +184,21 @@ void main() {
         final visible = refusedB ? const <Map<String, dynamic>>[] : [b];
         expect(await store.flagOutbox(), visible);
         expect(await _persisted(native), visible);
-        await expectLater(
-          store.clear(requireEmptyOutboxes: true),
-          throwsA(
-            isA<LocalOutboxNotEmptyException>().having(
-              (error) => error.pendingFlags,
-              'pending flags',
-              1,
+        if (refusedB) {
+          // Nothing unsaved is pending, so it cannot block sign-out either.
+          await store.clear(requireEmptyOutboxes: true);
+        } else {
+          await expectLater(
+            store.clear(requireEmptyOutboxes: true),
+            throwsA(
+              isA<LocalOutboxNotEmptyException>().having(
+                (error) => error.pendingFlags,
+                'pending flags',
+                1,
+              ),
             ),
-          ),
-        );
+          );
+        }
         expect(await store.flagOutbox(), visible);
       },
     );
@@ -327,8 +332,8 @@ void main() {
     },
   );
 
-  // Contract B (unsaved actions cannot sync): the refused review is hidden and
-  // unsent, but stays counted so sign-out cannot silently discard it.
+  // Contract B (unsaved actions cannot sync): the refused review is hidden,
+  // unsent and not pending, so it never blocks sign-out.
   test(
     'flag server ACK leaves unrelated refused review cache intact',
     () async {
@@ -348,10 +353,7 @@ void main() {
       expect(await store.flagOutbox(), isEmpty);
       expect(await store.outbox(), isEmpty);
       expect(await _persisted(native, review: true), isEmpty);
-      await expectLater(
-        store.clear(requireEmptyOutboxes: true),
-        throwsA(isA<LocalOutboxNotEmptyException>()),
-      );
+      await store.clear(requireEmptyOutboxes: true);
       expect(await store.outbox(), isEmpty);
     },
   );
@@ -383,7 +385,7 @@ void main() {
   // Contract B (unsaved actions cannot sync): the refused B stays hidden and
   // unsent through every failed ACK write and its retry. Only A's ACK applies.
   test(
-    'failed native ACK write retains B for the same confirmed server ACK retry',
+    'failed native ACK write keeps A for the same server ACK retry and never revives refused B',
     () async {
       for (final failure in [
         _WriteFailure.refused,

@@ -127,27 +127,27 @@ Future<List<Object?>> _flagIds(LocalReviewStore store) async =>
     (await store.flagOutbox()).map((e) => e['client_id']).toList();
 
 void main() {
-  test('definitely refused review merges with another tab append', () async {
-    final native = _install();
-    final store = LocalReviewStore();
-    native.affectedKey = 'recall_outbox_v1';
-    native.outcome = _Outcome.refuse;
-    await expectLater(
-      store.enqueueReview(_review('refused-a')),
-      throwsA(isA<LocalOutboxWriteException>()),
-    );
-    expect(await _reviewIds(store), isEmpty); // Unsaved actions cannot sync.
+  test(
+    'definitely refused review is dropped beside another tab append',
+    () async {
+      final native = _install();
+      final store = LocalReviewStore();
+      native.affectedKey = 'recall_outbox_v1';
+      native.outcome = _Outcome.refuse;
+      await expectLater(
+        store.enqueueReview(_review('refused-a')),
+        throwsA(isA<LocalOutboxWriteException>()),
+      );
+      expect(await _reviewIds(store), isEmpty); // Unsaved actions cannot sync.
 
-    native.outcome = _Outcome.succeed;
-    await _appendNative(native, 'recall_outbox_v1', _review('other-tab'));
-    expect(await store.enqueueReview(_review('later-b')), 3);
-    SharedPreferences.resetStatic();
-    expect(await _reviewIds(LocalReviewStore()), [
-      'other-tab',
-      'refused-a',
-      'later-b',
-    ]);
-  });
+      native.outcome = _Outcome.succeed;
+      await _appendNative(native, 'recall_outbox_v1', _review('other-tab'));
+      // Contract B: the next write never persists the refused copy.
+      expect(await store.enqueueReview(_review('later-b')), 2);
+      SharedPreferences.resetStatic();
+      expect(await _reviewIds(LocalReviewStore()), ['other-tab', 'later-b']);
+    },
+  );
 
   for (final flag in [false, true]) {
     test(
@@ -221,14 +221,11 @@ void main() {
             .then<Object?>((_) => null, onError: (Object error) => error);
         expect(pending, isA<LocalOutboxNotEmptyException>());
         final error = pending as LocalOutboxNotEmptyException;
-        expect(flag ? error.pendingFlags : error.pendingReviews, 2);
+        // Contract B: neither refused append is retained or counted.
+        expect(flag ? error.pendingFlags : error.pendingReviews, 1);
         native.outcome = _Outcome.succeed;
-        expect(await append('later-accepted'), 3);
-        expect(await ids(), [
-          'durable-first',
-          'earlier-retryable',
-          'later-accepted',
-        ]);
+        expect(await append('later-accepted'), 2);
+        expect(await ids(), ['durable-first', 'later-accepted']);
       },
     );
   }
@@ -255,27 +252,27 @@ void main() {
     },
   );
 
-  test('definitely refused flag merges with another tab append', () async {
-    final native = _install();
-    final store = LocalReviewStore();
-    native.affectedKey = 'flag_outbox_v1';
-    native.outcome = _Outcome.refuse;
-    await expectLater(
-      store.enqueueFlag(_flag('refused-a')),
-      throwsA(isA<LocalOutboxWriteException>()),
-    );
-    expect(await _flagIds(store), isEmpty);
+  test(
+    'definitely refused flag is dropped beside another tab append',
+    () async {
+      final native = _install();
+      final store = LocalReviewStore();
+      native.affectedKey = 'flag_outbox_v1';
+      native.outcome = _Outcome.refuse;
+      await expectLater(
+        store.enqueueFlag(_flag('refused-a')),
+        throwsA(isA<LocalOutboxWriteException>()),
+      );
+      expect(await _flagIds(store), isEmpty);
 
-    native.outcome = _Outcome.succeed;
-    await _appendNative(native, 'flag_outbox_v1', _flag('other-tab'));
-    expect(await store.enqueueFlag(_flag('later-b')), 3);
-    SharedPreferences.resetStatic();
-    expect(await _flagIds(LocalReviewStore()), [
-      'other-tab',
-      'refused-a',
-      'later-b',
-    ]);
-  });
+      native.outcome = _Outcome.succeed;
+      await _appendNative(native, 'flag_outbox_v1', _flag('other-tab'));
+      // Contract B: the next write never persists the refused copy.
+      expect(await store.enqueueFlag(_flag('later-b')), 2);
+      SharedPreferences.resetStatic();
+      expect(await _flagIds(LocalReviewStore()), ['other-tab', 'later-b']);
+    },
+  );
 
   test(
     'unclassified throw stays uncertain and blocks later producer',
@@ -357,7 +354,7 @@ void main() {
   );
 
   test(
-    'prior false append enters quarantine with a later unknown write',
+    'prior false append stays dropped while a later unknown write quarantines',
     () async {
       final native = _install();
       final store = LocalReviewStore();
@@ -383,7 +380,8 @@ void main() {
           .clear(requireEmptyOutboxes: true)
           .then<Object?>((_) => null, onError: (Object e) => e);
       expect(error, isA<LocalOutboxNotEmptyException>());
-      expect((error as LocalOutboxNotEmptyException).pendingReviews, 2);
+      // Contract B: only the unknown write is pending; the refusal is gone.
+      expect((error as LocalOutboxNotEmptyException).pendingReviews, 1);
     },
   );
 
@@ -403,6 +401,60 @@ void main() {
       expect(await _reviewIds(store), ['committed-a', 'later-b']);
     },
   );
+
+  test(
+    'unknown settle reports an absent review and keeps it quarantined',
+    () async {
+      final native = _install();
+      final store = LocalReviewStore();
+      native.affectedKey = 'recall_outbox_v1';
+      native.outcome = _Outcome.throwBeforeCommit;
+      await expectLater(
+        store.enqueueReview(_review('unknown-a')),
+        throwsA(isA<StateError>()),
+      );
+      native.outcome = _Outcome.succeed;
+
+      expect(await store.settleUnknownReview('unknown-a'), isNull);
+      await expectLater(
+        store.enqueueReview(_review('later-b')),
+        throwsA(isA<LocalOutboxWriteException>()),
+      );
+      expect(await _reviewIds(store), isEmpty);
+    },
+  );
+
+  for (final flag in [false, true]) {
+    test(
+      'unknown settle finds a committed action after a failed reconciliation read: flag=$flag',
+      () async {
+        final native = _install();
+        final store = LocalReviewStore();
+        Future<int> append(String id) => flag
+            ? store.enqueueFlag(_flag(id))
+            : store.enqueueReview(_review(id));
+        native
+          ..affectedKey = flag ? 'flag_outbox_v1' : 'recall_outbox_v1'
+          ..outcome = _Outcome.commitThenThrow
+          ..failReconciliationRead = true;
+        await expectLater(append('committed-a'), throwsA(isA<StateError>()));
+        native.outcome = _Outcome.succeed;
+
+        expect(
+          flag
+              ? await store.settleUnknownFlag('committed-a')
+              : await store.settleUnknownReview('committed-a'),
+          1,
+        );
+        // Native truth lifted the quarantine, so a later action proceeds.
+        expect(await append('later-b'), 2);
+        expect(flag ? await _flagIds(store) : await _reviewIds(store), [
+          'committed-a',
+          'later-b',
+        ]);
+      },
+    );
+  }
 
   test(
     'post-commit throw then review attempt and drain stays drained',
@@ -484,10 +536,12 @@ void main() {
       0,
     );
     expect(await _reviewIds(store), isEmpty);
-    expect(await store.enqueueReview(_review('later-b')), 2);
+    // Contract B: the refused append is never flushed by any later write.
+    expect(await store.enqueueReview(_review('later-b')), 1);
+    expect(await _reviewIds(store), ['later-b']);
   });
 
-  test('refused clear cannot discard a definite failed append', () async {
+  test('refused clear never revives a definite failed append', () async {
     final native = _install();
     final store = LocalReviewStore();
     native.affectedKey = 'recall_outbox_v1';
@@ -501,11 +555,12 @@ void main() {
     await expectLater(store.clear(), throwsA(isA<LocalOutboxWriteException>()));
     native.refuseRemoveKey = null;
 
-    expect(await store.enqueueReview(_review('later-b')), 2);
-    expect(await _reviewIds(store), ['refused-a', 'later-b']);
+    // Contract B: the refused append was never retained for a later write.
+    expect(await store.enqueueReview(_review('later-b')), 1);
+    expect(await _reviewIds(store), ['later-b']);
   });
 
-  test('thrown clear quarantines an earlier definite failed append', () async {
+  test('thrown clear never revives a definite failed append', () async {
     final native = _install();
     final store = LocalReviewStore();
     native.affectedKey = 'recall_outbox_v1';
@@ -513,6 +568,29 @@ void main() {
     await expectLater(
       store.enqueueReview(_review('refused-a')),
       throwsA(isA<LocalOutboxWriteException>()),
+    );
+    native.outcome = _Outcome.succeed;
+    native.throwRemoveAfterCommitKey = 'recall_outbox_v1';
+    await expectLater(store.clear(), throwsA(isA<StateError>()));
+    native.throwRemoveAfterCommitKey = null;
+
+    // Contract B: nothing refused is left to quarantine or replay.
+    expect(await store.enqueueReview(_review('later-b')), 1);
+    expect(await _reviewIds(store), ['later-b']);
+    await expectLater(
+      store.clear(requireEmptyOutboxes: true),
+      throwsA(isA<LocalOutboxNotEmptyException>()),
+    );
+  });
+
+  test('thrown clear keeps an earlier unknown append quarantined', () async {
+    final native = _install();
+    final store = LocalReviewStore();
+    native.affectedKey = 'recall_outbox_v1';
+    native.outcome = _Outcome.throwBeforeCommit;
+    await expectLater(
+      store.enqueueReview(_review('unknown-a')),
+      throwsA(isA<StateError>()),
     );
     native.outcome = _Outcome.succeed;
     native.throwRemoveAfterCommitKey = 'recall_outbox_v1';
@@ -553,27 +631,35 @@ void main() {
   });
 
   test(
-    'undo removes only its definite failed append and preserves the rest',
+    'undo finds no definite failed append to remove and keeps the rest',
     () async {
       final native = _install();
       final store = LocalReviewStore();
       native.affectedKey = 'recall_outbox_v1';
+      expect(await store.enqueueReview(_review('durable-k')), 1);
       native.outcome = _Outcome.refuse;
-      for (final id in ['undo-a', 'keep-b']) {
+      for (final id in ['undo-a', 'refused-b']) {
         await expectLater(
           store.enqueueReview(_review(id)),
           throwsA(isA<LocalOutboxWriteException>()),
         );
       }
       native.outcome = _Outcome.succeed;
-      expect((await store.removeEntry('undo-a')).removed, isTrue);
+      // Contract B: a refused append was never retained, so nothing is undone.
+      expect(await store.removeEntry('undo-a'), (removed: false, remaining: 1));
       await expectLater(
         store.clear(requireEmptyOutboxes: true),
-        throwsA(isA<LocalOutboxNotEmptyException>()),
+        throwsA(
+          isA<LocalOutboxNotEmptyException>().having(
+            (error) => error.pendingReviews,
+            'pending reviews',
+            1,
+          ),
+        ),
       );
       expect(await store.enqueueReview(_review('later-c')), 2);
       SharedPreferences.resetStatic();
-      expect(await _reviewIds(LocalReviewStore()), ['keep-b', 'later-c']);
+      expect(await _reviewIds(LocalReviewStore()), ['durable-k', 'later-c']);
     },
   );
 }
