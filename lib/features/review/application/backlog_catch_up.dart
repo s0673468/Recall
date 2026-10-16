@@ -102,7 +102,11 @@ class BacklogCatchUp {
   ) {
     final today = dayKey(now);
     if (state.dayKey == today) return state;
-    return CatchUpLocalState(mode: state.mode, dayKey: today);
+    return CatchUpLocalState(
+      mode: state.mode,
+      dayKey: today,
+      deckStream: state.deckStream,
+    );
   }
 
   static DateTime dayOnly(DateTime value) =>
