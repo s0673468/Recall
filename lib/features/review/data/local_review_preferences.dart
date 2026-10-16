@@ -34,6 +34,12 @@ class LocalReviewPreferences {
     });
   }
 
+  /// A write-only view for blind writes. It never reads native truth, so a
+  /// failed snapshot read cannot block an independent write. Do not use it for
+  /// read-modify-write: its reads are empty.
+  static LocalReviewPreferences writeOnly(SharedPreferences writer) =>
+      LocalReviewPreferences._(writer, {});
+
   String? getString(String key) => _values[key] as String?;
 
   bool? getBool(String key) => _values[key] as bool?;

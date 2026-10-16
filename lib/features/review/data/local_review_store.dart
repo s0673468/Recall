@@ -43,12 +43,14 @@ class LocalReviewStore {
   Future<SharedPreferences>? _prefsFuture;
   // A false native result is a definite refusal; a thrown call has unknown
   // commit status. Keep both only in this Store and under the exact scoped key.
-  // A proven quota refusal admits no pending action: its optimistic cache
-  // value is resynced in LocalReviewPreferences, and its id is tombstoned
-  // here so an acknowledgement merge can never persist it from a stale cache.
+  // Every definite refusal is tombstoned here: its optimistic cache value would
+  // otherwise survive in the shared cache, and an acknowledgement merge could
+  // persist a refused action that native truth never stored. A proven quota
+  // refusal also admits no pending action, and its cache value is resynced in
+  // LocalReviewPreferences.
   final Map<String, List<Map<String, dynamic>>> _retryableAppends = {};
   final Map<String, List<Map<String, dynamic>>> _uncertainAppends = {};
-  final Map<String, Set<Object>> _quotaRefusedIds = {};
+  final Map<String, Set<Object>> _refusedIds = {};
   String? _installId;
   int _eventSequence = 0;
   String? _activeOwnerScope;
@@ -407,12 +409,13 @@ class LocalReviewStore {
             entry,
       ];
       final nativeRemaining = retained(native);
+      final cachedAcknowledged = retained(cached);
       final cachedRemaining = [
-        for (final entry in retained(cached))
-          // A proven quota refusal never committed: even a stale shared-cache
-          // copy must not be merged into native truth, or a fresh-ID retry
-          // would later submit both ratings for the same card.
-          if (_quotaRefusedIds[key]?.contains(
+        for (final entry in cachedAcknowledged)
+          // A definite refusal never committed: even a stale shared-cache copy
+          // must not be merged into native truth, or a fresh-ID retry would
+          // later submit both ratings for the same card.
+          if (_refusedIds[key]?.contains(
                 _deliveryId(entry, legacyReviews),
               ) !=
               true)
@@ -425,13 +428,33 @@ class LocalReviewStore {
       );
       // Even an already-empty native view needs an acknowledged cache write
       // when its exact server-accepted action survived a refused eager setter.
-      // No matching positive server ACK grants no new write authority.
+      // No matching positive server ACK grants no new write authority, and a
+      // refusal tombstone alone never writes.
       if (nativeRemaining.length != native.length ||
-          cachedRemaining.length != cached.length) {
+          cachedAcknowledged.length != cached.length) {
         await _writeList(nativeView, key, remaining);
       }
+      // The server accepted these exact actions, so no retained or uncertain
+      // copy of them may remain pending. A failed write above keeps them.
+      _settleAcknowledgedPending(key, byId, legacyReviews);
       return remaining.length;
     });
+  }
+
+  void _settleAcknowledgedPending(
+    String key,
+    Map<Object, Map<String, dynamic>> acknowledged,
+    bool legacyReviews,
+  ) {
+    for (final pending in [_retryableAppends, _uncertainAppends]) {
+      final entries = pending[key];
+      entries?.removeWhere((e) {
+        final id = _deliveryId(e, legacyReviews);
+        final ack = id == null ? null : acknowledged[id];
+        return ack != null && _sameAcknowledgedPayload(e, ack);
+      });
+      if (entries?.isEmpty ?? false) pending.remove(key);
+    }
   }
 
   static List<Map<String, dynamic>> _mergeUnacknowledged(
@@ -680,7 +703,9 @@ class LocalReviewStore {
   }) {
     final key = _storageKey(catchUpKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      // A blind progress write needs no native snapshot. Reading one first let
+      // a failed optional read drop progress for a rating that already committed.
+      final prefs = LocalReviewPreferences.writeOnly(await _writerPrefs);
       if (canWrite != null && !canWrite()) return;
       final written = await prefs.setString(key, jsonEncode(state.toJson()));
       if (!written) throw LocalOutboxWriteException(key);
@@ -963,7 +988,7 @@ class LocalReviewStore {
     if (!removed) throw LocalOutboxWriteException(key);
     _retryableAppends.remove(key);
     _uncertainAppends.remove(key);
-    _quotaRefusedIds.remove(key);
+    _refusedIds.remove(key);
   }
 
   Future<int> _appendProducer(
@@ -1006,12 +1031,7 @@ class LocalReviewStore {
         // The incoming action was rejected, so the controller stays on this
         // card. Retaining it would replay it alongside a fresh-ID retry click.
         // Earlier retryable or unknown actions keep their original status.
-        // Tombstone the refused id so a stale shared-cache copy can never be
-        // merged into native truth by a later acknowledgement.
-        final refusedId = appended?['client_id'] ?? entry['client_id'];
-        if (refusedId != null) {
-          _quotaRefusedIds.putIfAbsent(key, () => {}).add(refusedId);
-        }
+        _tombstoneRefused(key, appended?['client_id'] ?? entry['client_id']);
         rethrow;
       }
       // Every retryable item included in this unknown write becomes unknown
@@ -1029,6 +1049,7 @@ class LocalReviewStore {
     if (!written) {
       if (appended != null) {
         _retryableAppends.putIfAbsent(key, () => []).add(appended);
+        _tombstoneRefused(key, appended['client_id']);
       }
       throw LocalOutboxWriteException(key);
     }
@@ -1050,9 +1071,13 @@ class LocalReviewStore {
     }
     // A refused id that later appears durable actually committed (or was
     // re-minted and accepted): it must rejoin acknowledgement merges.
-    final refused = _quotaRefusedIds[key];
+    final refused = _refusedIds[key];
     refused?.removeWhere(ids.contains);
-    if (refused?.isEmpty ?? false) _quotaRefusedIds.remove(key);
+    if (refused?.isEmpty ?? false) _refusedIds.remove(key);
+  }
+
+  void _tombstoneRefused(String key, Object? id) {
+    if (id != null) _refusedIds.putIfAbsent(key, () => {}).add(id);
   }
 
   int _pendingCount(String key, List<Map<String, dynamic>> durable) {
