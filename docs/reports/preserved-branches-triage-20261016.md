@@ -5,9 +5,9 @@ Each lane was squash-merged, so commit ids do not match.
 Each verdict compares the CHANGE itself against `origin/main`:
 test-file identity, line counts, and the matching squash commit on main.
 
-Method note: this clone had no local preserve refs, so the 33 refs
-were fetched read-only (`git fetch origin <ref>:<ref>`, no push,
-no remote changes) before comparing.
+Method note: no fetch was done. The 33 remote refs already
+in this clone are current, and each was compared
+directly against `origin/main`.
 
 ## Verdicts
 
