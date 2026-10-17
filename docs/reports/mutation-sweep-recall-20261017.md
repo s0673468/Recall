@@ -233,23 +233,6 @@ export CI=true FLUTTER_SUPPRESS_ANALYTICS=true DART_SUPPRESS_ANALYTICS=true
 Full-suite output is in
 `.dart_tool/mutation-sweep/review-validation/full-suite.log`. The task-created
 SDK copy and temporary config/cache directories remain after the cleanup command
-was rejected (see status below). No servers or test workers were left running.
+was rejected in the sandbox. No servers or test workers were left running.
 Native Android builds, browser-only
-checks, and hosted CI were not run. No push, PR, remote change, or direct commit
-was attempted: the runner owns the commit because `.git` is read-only. Suggested
-commit message: `Prevent concurrent Recall mutation sweeps`.
-
-### STATUS: Ready for German
-
-Automatic command approval rejected the following exact cleanup/check command
-before execution:
-
-```sh
-rm -rf -- .dart_tool/mutation-sweep/review-validation/flutter .dart_tool/mutation-sweep/review-validation/tmp .dart_tool/mutation-sweep/review-validation/config .dart_tool/mutation-sweep/review-validation/cache
- git diff --check && git diff --exit-code -- lib test tool/tests pubspec.lock && git status --short && git diff --stat
-```
-
-Stated reason: `rm -f style commands are not permitted. Use a safer approach`.
-The rejected cleanup action was not retried or bypassed. Ignored SDK/cache
-artifacts remain under `.dart_tool/mutation-sweep/review-validation/`.
-The read-only Git checks were run separately.
+checks, and hosted CI were not run. 
