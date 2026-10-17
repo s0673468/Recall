@@ -169,3 +169,87 @@ after verification; ordinary ignored dependency/build caches and receipts remain
 available for inspection. No servers or watchers were left running.
 No push, PR, remote change, or direct commit was attempted;
 the runner owns the commit because `.git` is read-only.
+
+## Review fix: exclusive sweep ownership
+
+Confirmed the P2 concurrency finding. Previously, another sweep could run its
+baseline against a planted mutant, capture mutated source as its restoration
+copy, and overwrite the first sweep's logs. Added a nonblocking POSIX repository
+lock at `.dart_tool/mutation-sweep/repository.lock`. Ownership starts before
+baseline/output initialization and covers every source capture, mutation,
+restoration, and final results write. A competing sweep exits with a clear error
+before running tests or modifying sources/results, including across different
+phases and batches. The lock file stays in place to preserve one shared inode;
+closing/unlocking its descriptor releases ownership without stale PID handling.
+
+Added `tool/tests/test_mutation_sweep_lock.py`; existing tests remain unchanged.
+Its four process-level tests use synthetic CRLF source bytes, real CLI parsing,
+the real mutation context manager, and simulated test commands. They cover
+exclusion during baseline and planted mutation, unchanged sources/logs on
+rejection, cross-phase/batch exclusion, exact restoration, and successful
+reacquisition after completion, baseline failure, mutant failure, runner
+exceptions, and SIGTERM. The two exclusion tests failed against the old runner
+because the competing process incorrectly exited successfully. No application
+source or mutation manifest was changed. Maximum concurrent synthetic sweep
+processes was two.
+
+### Review-fix validation
+
+The installed SDK still could not initialize its read-only cache. Copied the
+pinned SDK into the repository with:
+
+```sh
+mkdir -p .dart_tool/mutation-sweep/review-validation/tmp .dart_tool/mutation-sweep/review-validation/config .dart_tool/mutation-sweep/review-validation/cache
+cp -a --reflink=auto /home/ger/.cache/recall/flutter-3.47.1 .dart_tool/mutation-sweep/review-validation/flutter
+```
+
+SDK-backed commands below used these environment values; no home-directory
+override or installed SDK changes were needed:
+
+```sh
+export RECALL_FLUTTER_ROOT="$PWD/.dart_tool/mutation-sweep/review-validation/flutter"
+export DART="$RECALL_FLUTTER_ROOT/bin/dart"
+export PUB_CACHE="$PWD/.pub-cache"
+export TMPDIR="$PWD/.dart_tool/mutation-sweep/review-validation/tmp"
+export XDG_CONFIG_HOME="$PWD/.dart_tool/mutation-sweep/review-validation/config"
+export XDG_CACHE_HOME="$PWD/.dart_tool/mutation-sweep/review-validation/cache"
+export CI=true FLUTTER_SUPPRESS_ANALYTICS=true DART_SUPPRESS_ANALYTICS=true
+```
+
+| Command | Result |
+| --- | --- |
+| `python3 -m unittest discover -s tool/tests -p 'test_mutation_sweep_lock.py'` (before fix) | Exit 1; 4 tests, 2 concurrency failures reproduced |
+| `python3 -m unittest discover -s tool/tests -p 'test_mutation_sweep*.py'` (after fix) | Exit 0; 9 tests passed, including all 32 manifest source-match checks |
+| `python3 -m unittest discover -s tool/tests -p 'test_*.py'` (default SDK) | Exit 1; 149 tests, 1 failure, 1 skipped; scheduler build could not write installed SDK cache |
+| `./tool/flutterw test --no-pub --concurrency=1 --reporter=expanded --exclude-tags apple-mobile test/mutation_sweep_regressions_test.dart` (default SDK) | Exit 1; SDK metadata initialization failed |
+| Same targeted Flutter command (local SDK, before dependency refresh) | Exit 1; cached package paths referenced the previously removed disposable SDK |
+| `./tool/flutterw pub get --offline` (local SDK) | Exit 0; package paths refreshed without dependency changes |
+| `python3 -m unittest discover -s tool/tests -p 'test_*.py'` (local SDK and explicit `DART`) | Exit 0; 149 tests, 1 skipped, including 34,623-vector scheduler parity check |
+| `./tool/flutterw test --no-pub --concurrency=1 --reporter=expanded --exclude-tags apple-mobile test/mutation_sweep_regressions_test.dart` (local SDK, refreshed dependencies) | Exit 0; 11 tests passed |
+| `./tool/flutterw test --no-pub --reporter=failures-only --exclude-tags apple-mobile --concurrency=2` (local SDK) | Exit 0; full suite ran once: 1,119 passed, 2 skipped |
+| `git diff --exit-code -- lib test tool/tests pubspec.lock` | Exit 0; application source, existing tests, and dependency versions unchanged; new Python tests are a separate file |
+| `git diff --check` | Exit 0 |
+
+Full-suite output is in
+`.dart_tool/mutation-sweep/review-validation/full-suite.log`. The task-created
+SDK copy and temporary config/cache directories remain after the cleanup command
+was rejected (see status below). No servers or test workers were left running.
+Native Android builds, browser-only
+checks, and hosted CI were not run. No push, PR, remote change, or direct commit
+was attempted: the runner owns the commit because `.git` is read-only. Suggested
+commit message: `Prevent concurrent Recall mutation sweeps`.
+
+### STATUS: Ready for German
+
+Automatic command approval rejected the following exact cleanup/check command
+before execution:
+
+```sh
+rm -rf -- .dart_tool/mutation-sweep/review-validation/flutter .dart_tool/mutation-sweep/review-validation/tmp .dart_tool/mutation-sweep/review-validation/config .dart_tool/mutation-sweep/review-validation/cache
+ git diff --check && git diff --exit-code -- lib test tool/tests pubspec.lock && git status --short && git diff --stat
+```
+
+Stated reason: `rm -f style commands are not permitted. Use a safer approach`.
+The rejected cleanup action was not retried or bypassed. Ignored SDK/cache
+artifacts remain under `.dart_tool/mutation-sweep/review-validation/`.
+The read-only Git checks were run separately.

@@ -3,6 +3,7 @@
 
 Run from the repository root. Each test run has one mutant, one Flutter worker,
 and a timeout. Production files are restored in finally, including on interrupt.
+An exclusive repository lock rejects overlapping sweeps before the baseline.
 Logs and JSON results live in the ignored .dart_tool/mutation-sweep directory.
 This is a bounded probe set, not an exhaustive mutation score.
 """
@@ -10,6 +11,7 @@ This is a bounded probe set, not an exhaustive mutation score.
 import argparse
 from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -82,7 +84,25 @@ MUTATIONS = [
 
 
 @contextmanager
+def repository_lock(root):
+    directory = root / '.dart_tool/mutation-sweep'
+    directory.mkdir(parents=True, exist_ok=True)
+    # Keep this inode: unlinking it could give concurrent owners different locks.
+    with (directory / 'repository.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit('Another mutation sweep owns this repository; '
+                             'no tests or mutations started.') from None
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+@contextmanager
 def planted(root, mutation):
+    """Plant one mutant while the caller owns the repository sweep lock."""
     path = root / mutation.path
     original = path.read_bytes()
     source = original.decode('utf-8')
@@ -134,6 +154,12 @@ def main():
     parser.add_argument('--timeout', type=int, default=180)
     parser.add_argument('--batch', choices=['replay'])
     args = parser.parse_args()
+    with repository_lock(ROOT):
+        run_sweep(args)
+
+
+def run_sweep(args):
+    """Run the baseline and all probes under main's repository ownership."""
     output = ROOT / '.dart_tool/mutation-sweep' / args.phase
     if args.batch:
         output /= args.batch
