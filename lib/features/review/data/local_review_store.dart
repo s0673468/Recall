@@ -51,6 +51,9 @@ class LocalReviewStore {
   // stay quarantined only in this Store and under the exact scoped key.
   final Map<String, List<Map<String, dynamic>>> _uncertainAppends = {};
   final Map<String, Set<Object>> _refusedIds = {};
+  // A refused withdrawal shares its id with a still-durable hide. Exclude
+  // only the rejected payload from ACK cache merges, never that hide's id.
+  final Map<String, List<Map<String, dynamic>>> _refusedFlagWithdrawals = {};
   String? _installId;
   int _eventSequence = 0;
   String? _activeOwnerScope;
@@ -443,7 +446,17 @@ class LocalReviewStore {
         keys: [key],
       );
       final native = _decodeList(nativeView.getString(key), key);
-      final cached = _decodeList(writer.getString(key), key);
+      final refusedWithdrawals = _refusedFlagWithdrawals[key] ?? const [];
+      // Native truth can prove that another session later committed the same
+      // withdrawal. That durable payload must retain its normal ACK protection.
+      final cached = [
+        for (final entry in _decodeList(writer.getString(key), key))
+          if (!refusedWithdrawals.any(
+                (refused) => _sameAcknowledgedPayload(entry, refused),
+              ) ||
+              native.any((durable) => _sameAcknowledgedPayload(entry, durable)))
+            entry,
+      ];
       // A conflicting payload in either view removes deletion authority for
       // that identity. Identical copies still denote one idempotent event.
       final uniqueIds = uniqueDeliveryIds([
@@ -485,6 +498,7 @@ class LocalReviewStore {
       if (nativeRemaining.length != native.length ||
           cachedAcknowledged.length != cached.length) {
         await _writeList(nativeView, key, remaining);
+        _refusedFlagWithdrawals.remove(key);
       }
       // The server accepted these exact actions, so no uncertain copy of them
       // may remain pending. A failed write above keeps them.
@@ -796,7 +810,26 @@ class LocalReviewStore {
         list
           ..removeWhere((e) => e['client_id'] == entry['client_id'])
           ..add(Map<String, dynamic>.from(entry));
-        await _writeList(prefs, key, list);
+        // A previous refusal proves nothing about this retry's outcome.
+        _refusedFlagWithdrawals[key]?.removeWhere(
+          (refused) => _sameAcknowledgedPayload(entry, refused),
+        );
+        try {
+          await _writeList(prefs, key, list);
+        } catch (error) {
+          if (error is LocalOutboxWriteException ||
+              error is LocalPreferenceWriteNotCommitted) {
+            // The eager cache contains the refused replacement. Reloading it
+            // could erase another producer's pending writes; retain the exact
+            // refusal so an ACK can ignore it without losing deletion authority
+            // for the original hide. Unknown commits remain protected.
+            _refusedFlagWithdrawals
+                .putIfAbsent(key, () => [])
+                .add(Map<String, dynamic>.from(entry));
+          }
+          rethrow;
+        }
+        _refusedFlagWithdrawals.remove(key);
         _dropPendingId(key, entry['client_id'] as Object);
         return list.length;
       }
@@ -1053,6 +1086,7 @@ class LocalReviewStore {
     if (!await prefs.remove(key)) throw LocalOutboxWriteException(key);
     _uncertainAppends.remove(key);
     _refusedIds.remove(key);
+    _refusedFlagWithdrawals.remove(key);
   }
 
   Future<int> _appendProducer(

@@ -1,5 +1,73 @@
 # Recall reliability audit — 2026-10-17
 
+## Review follow-up on `4c6ef88`
+
+Verified the reviewer's P2 at
+`lib/features/review/data/local_review_store.dart:799` on that head. A refused
+withdrawal leaves the original hide on disk and its replacement in the eager
+SharedPreferences cache. `_removeAcknowledged` then sees conflicting payloads
+under the hide's ID and cannot drain the successful delivery. Retrying Undo
+before releasing the hide send, as the original regression does, conceals it.
+
+Added `test/refused_flag_withdrawal_drain_test.dart` before changing production
+code. Its first run exited 1: three tests passed and two failed. The controller
+regression found the delivered hide still queued; the storage regression found
+three entries remaining instead of one. The controller test never retries Undo:
+it releases the send, checks native truth through a fresh store, syncs again to
+check for repeat delivery, and verifies sign-out completes.
+
+The fix at `lib/features/review/data/local_review_store.dart:813` records only
+the exact withdrawal payload after a definite refusal. The acknowledgement
+merge at `:449` excludes that cache-only payload before checking identity
+ambiguity. It preserves the original hide's deletion authority and unrelated
+producer cache entries without reloading the shared cache. If native truth shows
+that another store later committed the withdrawal, normal acknowledgement
+protection applies. Unknown write outcomes remain protected. Refusal records
+for the same payload are invalidated before a retry, so an earlier refusal
+cannot suppress a later unknown write outcome. Records are also cleared after
+a successful replacement, acknowledgement write, or clear.
+
+Eight new tests cover:
+
+1. Refused Undo followed by successful hide delivery, repeated sync and sign-out,
+   without retrying Undo.
+2. Preservation of an unrelated producer's same-key cache entry.
+3. A definite thrown refusal whose best-effort cache reload also fails.
+4. A refused acknowledgement write followed by a successful retry.
+5. A committed withdrawal retried through the original store.
+6. A committed withdrawal written through another store.
+7. An unknown withdrawal commit retaining its conflicting cache protection.
+8. A definite refusal followed by an unknown retry of the same withdrawal.
+
+The eighth regression initially failed against the first fix (seven passed,
+one failed); invalidating the earlier refusal before the retry corrected it.
+
+All fixtures are synthetic. Existing tests and card/article content are unchanged.
+This follow-up changes only the store, the new test file and this report. Git's
+metadata is read-only; the runner owns the commit. Suggested message:
+`Fix flag drain after a refused hide withdrawal`.
+
+### Follow-up verification
+
+Used the existing repository-local Flutter 3.47.1 / Dart 3.13.1 runtime and the
+environment documented in the original verification section below, including
+the writable repository-local `TMPDIR`. No SDK or tooling source changed.
+
+| Exact command | Result |
+| --- | --- |
+| `./tool/flutterw test test/refused_flag_withdrawal_drain_test.dart --reporter expanded` | Before fix: exit 1, three passed and two failed. Final fix with all guards added: exit 0, eight passed. |
+| `./tool/flutterw test test/refused_flag_withdrawal_drain_test.dart test/audit_hide_undo_recovery_test.dart test/acknowledged_cached_flags_test.dart test/local_review_quota_ack_merge_test.dart test/local_server_ack_drain_test.dart test/cross_tab_server_ack_drain_test.dart test/flag_send_hang_test.dart test/signout_isolation_test.dart --reporter expanded` | Exit 0, 75 passed (with the initial five new tests). |
+| `./tool/flutterw analyze` | Exit 0, `No issues found!` |
+| `./tool/flutterw test --exclude-tags apple-mobile --concurrency=2 --reporter expanded` | Exit 0, 1,129 passed, two skipped. |
+| `python3 -m unittest discover -s tool/tests -p 'test_*.py'` | Exit 0, 145 run, one skipped. |
+| `git diff --check` | Exit 0. |
+
+An initial full-test launch exited 1 before executing tests because Flutter
+version metadata could not be read. It was started alongside the analyzer;
+the subsequent full-test run was started after analysis completed.
+
+## Original audit
+
 Audited `main` at `16a81ab` using `git log --since=2026-10-15` and the
 changes from `1b9142e^` through that head. This includes reliability passes
 2–5, #144–#147, the earlier owner/storage/catch-up fixes, and migration 008's
