@@ -1386,22 +1386,37 @@ class ReviewController extends ChangeNotifier {
         : _state.catchUp.shouldOffer || _state.catchUp.isActive;
     if (!allowed) return;
 
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final sessionGeneration = _sessionSetupGeneration;
+    bool stillCurrent() =>
+        loadToken == _loadSequence &&
+        sessionGeneration == _sessionSetupGeneration &&
+        _flushStillOwnsSession(ownerId, ownerScope);
     final now = clock();
     final current = BacklogCatchUp.normalizeLocalState(
       await store.loadCatchUpState(),
       now,
     );
+    if (!stillCurrent()) return;
     final nextLocal = current.copyWith(
       mode: mode,
       dayKey: BacklogCatchUp.dayKey(now),
       deckStream: CatchUpLocalState.streamFor(_state.deckFilter),
     );
-    await store.saveCatchUpState(nextLocal);
+    await store.saveCatchUpState(
+      nextLocal,
+      ownerScope: ownerScope,
+      canWrite: stillCurrent,
+    );
+    if (!stillCurrent()) return;
 
     // Re-read the pending set before rebuilding the display list. A rating may
     // have landed while the offer was visible; the outbox filter remains the
     // same safety boundary as every normal load.
-    final pending = await store.outbox();
+    final pending = await store.outbox(ownerScope: ownerScope);
+    if (!stillCurrent()) return;
     final source = _withoutPendingReviews(_catchUpSourceQueue, pending);
     _catchUpSourceQueue = source;
     final view = _bindCatchUpViewDay(
@@ -2254,6 +2269,12 @@ class ReviewController extends ChangeNotifier {
   _HideUndoRecord? _hideUndo;
 
   Future<void> _undoHide(_HideUndoRecord record) async {
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final sessionGeneration = _sessionSetupGeneration;
+    bool ownsSession() =>
+        sessionGeneration == _sessionSetupGeneration &&
+        _flushStillOwnsSession(ownerId, ownerScope);
     _undoInFlight = true;
     notifyListeners();
     try {
@@ -2261,18 +2282,30 @@ class ReviewController extends ChangeNotifier {
       // already delivered. A send on a dead connection can hang for minutes
       // while rating is blocked, so stop waiting after the bound.
       await _joinFlagFlush();
-      if (!identical(_hideUndo, record)) return;
+      if (!ownsSession() || !identical(_hideUndo, record)) return;
       final loadSequence = _loadSequence;
       // A queued entry is not proof the server never saw the flag: a commit
-      // whose reply was lost stays queued too. Drop the entry, then always
-      // withdraw on the server, queueing a durable withdrawal when offline.
-      await store.removeFlagEntry(record.clientId);
+      // whose reply was lost stays queued too. Record the withdrawal before
+      // transport, atomically replacing any queued hide so a refused write or
+      // process exit never leaves neither operation on disk.
+      final withdrawal = <String, dynamic>{
+        'op': dismissOp,
+        'card_id': record.card.id,
+        'client_id': record.clientId,
+      };
+      try {
+        // enqueueFlag captures this verified owner's namespace synchronously.
+        await store.enqueueFlag(withdrawal);
+      } catch (_) {
+        debugPrint('Recall: flag undo could not be recorded');
+        return;
+      }
       // A running pass may still be sending this flag. A direct withdrawal
       // could reach the server first and match nothing, leaving the flag
       // open. The queued one goes out in a later pass, after that send.
       final sending = _flagFlushTask != null;
       var withdrawn = false;
-      if (!sending) {
+      if (!sending && ownsSession()) {
         try {
           await api
               .dismissFlag(
@@ -2286,21 +2319,22 @@ class ReviewController extends ChangeNotifier {
           // late copy of this request and the queued replay are both safe.
         }
       }
-      if (!withdrawn) {
-        try {
-          await store.enqueueFlag(<String, dynamic>{
-            'op': dismissOp,
-            'card_id': record.card.id,
-            'client_id': record.clientId,
-          });
-        } catch (_) {
-          debugPrint('Recall: flag undo could not be recorded');
-          return;
-        }
-        if (sending) unawaited(_flushFlagOutbox()); // schedule that pass
+      if (withdrawn) {
+        await _quietly(() async {
+          await store.removeAcknowledgedFlags([
+            withdrawal,
+          ], ownerScope: ownerScope);
+        });
+      } else if (sending && ownsSession()) {
+        unawaited(_flushFlagOutbox()); // schedule that pass
       }
+      unawaited(
+        _quietly(
+          () => store.removeHiddenCard(record.card.id, ownerScope: ownerScope),
+        ),
+      );
+      if (!ownsSession()) return;
       _hiddenCardIds = {..._hiddenCardIds}..remove(record.card.id);
-      unawaited(_quietly(() => store.removeHiddenCard(record.card.id)));
       _clearFlagNotice();
       if (!identical(_hideUndo, record) || loadSequence != _loadSequence) {
         // A reload or deck switch replaced the queue while the withdrawal
