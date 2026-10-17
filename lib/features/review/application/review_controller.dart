@@ -1497,10 +1497,16 @@ class ReviewController extends ChangeNotifier {
       );
       _previewForCardId = null;
       _previewAt = null;
-    } catch (_) {
+    } catch (error) {
       debugPrint('Recall: keep-going fetch failed (offline?)');
       if (loadToken != _loadSequence) return;
-      _set(_state.copyWith(loading: false, offline: true));
+      _set(
+        _state.copyWith(
+          loading: false,
+          offline: true,
+          serverError: _isServerError(error),
+        ),
+      );
     }
   }
 
@@ -2741,6 +2747,9 @@ class ReviewController extends ChangeNotifier {
     }
 
     var timedOut = false;
+    // The error of a send that failed in transport or on the server, never a
+    // local storage error: only the network's answer says it is unreachable.
+    Object? sendFailure;
     final acknowledged = <Map<String, dynamic>>[];
     final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
       pending,
@@ -2757,6 +2766,7 @@ class ReviewController extends ChangeNotifier {
       final deliveryId = LocalReviewStore.reviewDeliveryId(entry);
       if (!uniqueIds.contains(deliveryId)) break;
       if (parked.contains(deliveryId)) continue;
+      var sending = false;
       try {
         final eventId = entry['client_id'];
         // Persist before transport. If Undo already removed it, skip this
@@ -2777,6 +2787,7 @@ class ReviewController extends ChangeNotifier {
         // bound: the review stays queued, and apply_review dedupes its replay
         // on client_event_id even if the abandoned request lands later. A
         // legacy review without that id keeps the unbounded wait.
+        sending = true;
         final send = api.applyReview(entry);
         await (eventId == null ? send : send.timeout(reviewSendTimeout));
         acknowledged.add(entry);
@@ -2796,6 +2807,7 @@ class ReviewController extends ChangeNotifier {
           continue;
         }
         timedOut = error is TimeoutException;
+        if (sending) sendFailure = error;
         debugPrint('Recall: review sync deferred (offline?)');
         break;
       }
@@ -2816,15 +2828,29 @@ class ReviewController extends ChangeNotifier {
     // a session that went offline mid-way stays offline until its next load,
     // and the rating path keeps every later review off the network. A parked
     // refusal alone does not clear it: only a delivery does.
+    //
+    // A send that failed before any delivery in this pass is the first
+    // evidence of a silent drop (a dead zone that still looks connected). Go
+    // offline so later ratings stay local and undoable, instead of each
+    // starting a send Undo must wait out. Android's resume and reconnect, the
+    // web timer, Keep going and a load retry. A pass that delivered first
+    // keeps the delivery's evidence; the next rating's pass decides.
+    final wentOffline = sendFailure != null && acknowledged.isEmpty;
     final reconnected = _state.offline && acknowledged.isNotEmpty;
+    final serverError = wentOffline
+        ? _isServerError(sendFailure)
+        : (reconnected ? false : _state.serverError);
     if (_state.pendingSync != remaining ||
         _state.syncErrors != parked.length ||
-        reconnected) {
+        reconnected ||
+        (wentOffline && !_state.offline) ||
+        serverError != _state.serverError) {
       _set(
         _state.copyWith(
           pendingSync: remaining,
           syncErrors: parked.length,
-          offline: reconnected ? false : null,
+          offline: wentOffline ? true : (reconnected ? false : null),
+          serverError: serverError,
         ),
       );
     }
