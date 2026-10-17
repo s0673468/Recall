@@ -363,6 +363,38 @@ class LocalReviewStore {
     });
   }
 
+  /// [markReviewAttempted] for many reviews in one read and one native write,
+  /// so a drain no longer rewrites the whole outbox once per review. Every
+  /// queued copy of a listed id is marked. Returns the ids still queued and
+  /// now durably attempted; an absent id (already removed) is left out, and a
+  /// failed write throws like the single mark.
+  Future<Set<Object>> markReviewsAttempted(
+    Iterable<Object> clientIds, {
+    String? ownerScope,
+  }) {
+    final key = _storageKey(_outboxKey, ownerScope: ownerScope);
+    final wanted = {...clientIds};
+    if (wanted.isEmpty) return Future.value(<Object>{});
+    return _withOutboxLock(() async {
+      final marked = <Object>{};
+      final prefs = await _prefsFor([key]);
+      final list = _readOutbox(prefs, key);
+      for (final entry in list) {
+        final id = entry['client_id'];
+        if (id != null && wanted.contains(id)) {
+          entry['delivery_attempted'] = true;
+          marked.add(id);
+        }
+      }
+      if (marked.isEmpty) return marked;
+      await _writeList(prefs, key, list);
+      for (final id in marked) {
+        _dropPendingId(key, id);
+      }
+      return marked;
+    });
+  }
+
   /// Drain only captured reviews whose server acknowledgement returned.
   /// Fresh native state may already have lost these ids in another tab; its
   /// next queued action must never be removed in their place. Unidentified or

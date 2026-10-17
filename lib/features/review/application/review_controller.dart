@@ -1568,9 +1568,15 @@ class ReviewController extends ChangeNotifier {
       await _rateVisibleCard(card, rating);
     } finally {
       _rateInFlight = false;
+      _ratingClientId = null;
       notifyListeners();
     }
   }
+
+  /// The event id of the rating being persisted, which may become [_undo]
+  /// once its local commit settles. A flush must not close its Undo window
+  /// early by marking it attempted in a batch.
+  Object? _ratingClientId;
 
   Future<void> _rateVisibleCard(ReviewCard card, Rating rating) async {
     var ratingGeneration = ++_interactionGeneration;
@@ -1606,6 +1612,7 @@ class ReviewController extends ChangeNotifier {
     // Undo metadata is captured after enqueue, when a concurrent refresh may
     // have expanded the remaining source.
     final clientId = await _reviewClientId(card.id, ownerScope);
+    _ratingClientId = clientId;
     // A deck/account change before commit cancels this producer. Recheck in
     // the store lock too, since enqueue can wait behind another local write.
     if (!canAppend()) return;
@@ -2682,7 +2689,11 @@ class ReviewController extends ChangeNotifier {
       pending,
       legacyReviews: true,
     );
-    for (final entry in pending) {
+    // Ids already marked attempted by the one batch write; null until the
+    // first delivery of this pass proves the transport.
+    Set<Object>? batchMarked;
+    for (var index = 0; index < pending.length; index++) {
+      final entry = pending[index];
       if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
       // Older reviews retain their original (card, rating time, device) server
       // deduplication path. Malformed or ambiguous identities stay queued.
@@ -2692,6 +2703,7 @@ class ReviewController extends ChangeNotifier {
         // Persist before transport. If Undo already removed it, skip this
         // stale read; otherwise this event remains replayable after any loss.
         if (eventId != null &&
+            batchMarked?.contains(eventId) != true &&
             !await store.markReviewAttempted(eventId, ownerScope: ownerScope)) {
           break;
         }
@@ -2703,6 +2715,14 @@ class ReviewController extends ChangeNotifier {
         }
         await api.applyReview(entry);
         acknowledged.add(entry);
+        if (batchMarked == null && index + 1 < pending.length) {
+          if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
+          batchMarked = await _markRemainingAttempted(
+            pending.skip(index + 1),
+            uniqueIds,
+            ownerScope,
+          );
+        }
       } catch (_) {
         debugPrint('Recall: review sync deferred (offline?)');
         break;
@@ -2727,6 +2747,32 @@ class ReviewController extends ChangeNotifier {
         ),
       );
     }
+  }
+
+  /// Mark the rest of this pass's sendable prefix attempted in one native
+  /// write, instead of one whole-outbox rewrite per review. Only an id still
+  /// queued comes back; any other id keeps the per-send mark, whose false
+  /// result stops the pass. A review this controller can still undo (or that
+  /// a rating in flight or a redo of an unconfirmed save can make undoable) is
+  /// left out too, so it stays undoable until its own send exactly as before.
+  /// A marked review that a later failure leaves unsent is replayed next pass.
+  Future<Set<Object>> _markRemainingAttempted(
+    Iterable<Map<String, dynamic>> rest,
+    Set<Object> uniqueIds,
+    String? ownerScope,
+  ) {
+    final undoable = {
+      _undo?.clientId,
+      _ratingClientId,
+      _unconfirmedReview?.clientId,
+    };
+    final ids = <Object>[];
+    for (final entry in rest) {
+      if (!uniqueIds.contains(LocalReviewStore.reviewDeliveryId(entry))) break;
+      final id = entry['client_id'];
+      if (id != null && !undoable.contains(id)) ids.add(id);
+    }
+    return store.markReviewsAttempted(ids, ownerScope: ownerScope);
   }
 
   /// Production local state is owner-aware, so both the API session and the

@@ -90,12 +90,49 @@ void main() {
         final counts = metrics['counts'] as Map<String, dynamic>;
         expect(sample.pendingSeeded, 3);
         expect(sample.store.markedBeforeTransport.length, 3);
-        expect(counts['mark_calls'], 3);
+        // The first send is marked alone; the other two in one batch write.
+        expect(counts['mark_calls'], 1);
+        expect(sample.store.batchMarkCalls, 1);
         expect(counts['remove_calls'], 1);
-        expect(counts['native_ack_writes'], 4);
+        expect(counts['native_ack_writes'], 3);
         expect(counts['apply_review_requests'], 3);
         expect(counts['accepted_unique'], 3);
         expect(counts['pending_after'], 0);
+      } finally {
+        SharedPreferencesStorePlatform.instance = previous;
+        SharedPreferences.resetStatic();
+      }
+    },
+  );
+
+  test(
+    'a baseline drain of 128 meets the exact batched count contract',
+    () async {
+      final previous = SharedPreferencesStorePlatform.instance;
+      final delegate = InMemorySharedPreferencesStore.empty();
+      SharedPreferences.resetStatic();
+      SharedPreferencesStorePlatform.instance = delegate;
+      try {
+        final sample = await measureSyntheticOutboxCost(
+          pendingCount: 128,
+          delegate: delegate,
+        );
+        final counts = sample.metrics()['counts'] as Map<String, dynamic>;
+        // One single mark, one batch mark and one drain: 3 writes, not 129.
+        expect(counts['mark_calls'], 1);
+        expect(sample.store.batchMarkCalls, 1);
+        expect(counts['remove_calls'], 1);
+        expect(counts['native_ack_writes'], 3);
+        expect(
+          () => requireExpectedOutboxCostCounts(sample, 'baseline'),
+          returnsNormally,
+        );
+        // The unpatched Controller never checkpoints, so the checkpoint
+        // variant's removal counts refuse it.
+        expect(
+          () => requireExpectedOutboxCostCounts(sample, 'checkpoint'),
+          throwsStateError,
+        );
       } finally {
         SharedPreferencesStorePlatform.instance = previous;
         SharedPreferences.resetStatic();
