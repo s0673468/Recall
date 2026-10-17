@@ -784,12 +784,23 @@ class LocalReviewStore {
   // (append-only, oldest-first drain, shared lock) but is a wholly separate
   // list so its flush is isolated from the review flush.
 
-  /// Append one flag; returns the new pending flag count.
+  /// Append one flag; returns the new pending flag count. A withdrawal replaces
+  /// its queued hide in one write, so a refused write or process exit cannot
+  /// leave neither operation recorded. Capture the owner before any await.
   Future<int> enqueueFlag(Map<String, dynamic> entry) {
     final key = _storageKey(_flagOutboxKey);
     return _withOutboxLock(() async {
       final prefs = await _prefsFor([key]);
-      return _appendProducer(prefs, key, _readList(prefs, key), entry);
+      final list = _readList(prefs, key);
+      if (entry['op'] == 'dismiss') {
+        list
+          ..removeWhere((e) => e['client_id'] == entry['client_id'])
+          ..add(Map<String, dynamic>.from(entry));
+        await _writeList(prefs, key, list);
+        _dropPendingId(key, entry['client_id'] as Object);
+        return list.length;
+      }
+      return _appendProducer(prefs, key, list, entry);
     });
   }
 
@@ -861,8 +872,8 @@ class LocalReviewStore {
   Future<void> addHiddenCard(int cardId) =>
       _updateHidden((ids) => ids..add(cardId));
 
-  Future<void> removeHiddenCard(int cardId) =>
-      _updateHidden((ids) => ids..remove(cardId));
+  Future<void> removeHiddenCard(int cardId, {String? ownerScope}) =>
+      _updateHidden((ids) => ids..remove(cardId), ownerScope: ownerScope);
 
   /// Bind a delayed refresh to its namespace and recheck cancellation in-lock.
   Future<void> replaceHiddenCards(

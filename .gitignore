@@ -52,3 +52,4 @@ config/supabase.local.json
 
 # Local tooling state (pr-shepherd audit ledger, etc.) — not repo content
 reports/
+!/docs/reports/
