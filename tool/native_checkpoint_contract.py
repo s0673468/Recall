@@ -6,13 +6,13 @@ from pathlib import PurePosixPath
 
 SCHEMA='recall-native-outbox-cost/v1'
 PACKAGE='com.german.recall.syntheticbenchmark'
-FIXTURE_SHA='ee4df9f2697c135f9f1aaa1595c1d15a455e8b5a07aa7af1a6041c8b25816745'
-SOURCE='8d6344a860968de68daa66b67a3d840bf03b32bd'
-BASE_CONTROLLER='99b304c9d58df1ec7b3087ee3965fbeeb33ff727d5dc17a3f59a81c6c9166bfa'
-CHECKPOINT_CONTROLLER='013859e2125af8bc3e10d9b6b52681f653a9ababe8f8867d20d74ed9676fe7fc'
-STORE_SHA='3517269009d5b1981f6d19b99e044394397ae17525d5389e9397b92583d61539'
-STORE_BLOB='18d4c9535d0a3866604fd93ea91cffa248911848'
-PATCH_SHA='aec1d26bf160df83cd4345d3227eacd70a03e59ac7122f9dbe2919f79911226b'
+FIXTURE_SHA='f8ba347389af363aa97e1aaea4c538af6241bd062728215db5f3010d686fca8f'
+SOURCE='7e4e396d06b028a2757198fb241c432bffa9d8ab'
+BASE_CONTROLLER='fe9ac9bea83d3afe4da6efd232e953b5964856b2a2f59585787021709cb83fca'
+CHECKPOINT_CONTROLLER='287d2a89733e5acee7ec1bed573728cbe8346582bda23b7dbdc01c7645d592a6'
+STORE_SHA='fd7920aff3a3363eacd807ec485e5aa15dfdfbaca02b612469c40b5e2c285f7f'
+STORE_BLOB='0dd4ef8be7f500f4ee75d09b6f3d2835d2e2b75a'
+PATCH_SHA='8c4a898149000014b2788bbfaf94a49b309fc2ab7895be2d3646f2c583e5c50e'
 TIMINGS={'sync_pending','mark_total','remove_total','native_ack_total','native_ack_max','api_apply_total'}
 COUNTS={'mark_calls','remove_calls','native_ack_writes','native_ack_chars','native_ack_utf8_bytes','apply_review_requests','accepted_unique','pending_after'}
 KEYS={'schema','phase','baseline_source_commit','source_commit','variant','controller_sha256','store_git_blob','fixture_sha256','patch_sha256','package','pid','pending_seeded','build_mode','environment','native_preferences','fake_http_only','power_loss_tested','physical_device_tested','real_provider_contacted','timing_us','counts'}
@@ -40,8 +40,10 @@ def validate(value, *, variant, count, pid, fixture_sha, source_commit=SOURCE):
     times=value['timing_us'];counts=value['counts']
     require(type(times) is dict and set(times)==TIMINGS and all(type(x) is int and 0<=x<=1_000_000_000 for x in times.values()),'fixture_timing_invalid')
     require(type(counts) is dict and set(counts)==COUNTS and all(type(x) is int and 0<=x<=1_000_000_000_000 for x in counts.values()),'fixture_counts_invalid')
+    # One single mark, then one batch mark for the rest of the drain; removal
+    # writes are one final drain, or one per full checkpoint.
     removals=1 if variant=='baseline' else count//32
-    require(counts['mark_calls']==count and counts['remove_calls']==(1 if variant=='baseline' else count//32+1) and counts['native_ack_writes']==count+removals and counts['apply_review_requests']==count and counts['accepted_unique']==count and counts['pending_after']==0,'fixture_completion_invalid')
+    require(counts['mark_calls']==1 and counts['remove_calls']==(1 if variant=='baseline' else count//32+1) and counts['native_ack_writes']==2+removals and counts['apply_review_requests']==count and counts['accepted_unique']==count and counts['pending_after']==0,'fixture_completion_invalid')
     require(counts['native_ack_chars']>0 and counts['native_ack_utf8_bytes']>=counts['native_ack_chars'] and times['native_ack_max']<=times['native_ack_total']<=times['sync_pending'] and times['mark_total']<=times['sync_pending'] and times['remove_total']<=times['sync_pending'] and times['api_apply_total']<=times['sync_pending'],'fixture_metric_consistency_invalid')
     return value
 

@@ -43,8 +43,8 @@ def receipt(variant='baseline',count=128,pid=101):
         'environment':'isolated_android_fixture','native_preferences':True,'fake_http_only':True,
         'power_loss_tested':False,'physical_device_tested':False,'real_provider_contacted':False,
         'timing_us':{'sync_pending':1000,'mark_total':600,'remove_total':100,'native_ack_total':500,'native_ack_max':20,'api_apply_total':100},
-        'counts':{'mark_calls':count,'remove_calls':1 if variant=='baseline' else count//32+1,
-        'native_ack_writes':count+(1 if variant=='baseline' else count//32),'native_ack_chars':10000,
+        'counts':{'mark_calls':1,'remove_calls':1 if variant=='baseline' else count//32+1,
+        'native_ack_writes':2+(1 if variant=='baseline' else count//32),'native_ack_chars':10000,
         'native_ack_utf8_bytes':10000,'apply_review_requests':count,'accepted_unique':count,'pending_after':0}}
 
 
@@ -86,6 +86,14 @@ class ContractTests(unittest.TestCase):
             for key in ['mark_calls','remove_calls','native_ack_writes','apply_review_requests','accepted_unique','pending_after']:
                 data=receipt(variant);data['counts'][key]+=1
                 with self.subTest(variant=variant,key=key),self.assertRaises(contract.Refused):contract.validate(data,variant=variant,count=128,pid=101,fixture_sha=FIXTURE)
+    def test_per_review_marks_no_longer_qualify(self):
+        # Drains mark the first send alone and the rest in one batch write; a
+        # receipt with one mark write per review is a regression, not a sample.
+        for variant in ['baseline','checkpoint']:
+            for count in [128,512]:
+                data=receipt(variant,count);removals=1 if variant=='baseline' else count//32
+                data['counts'].update(mark_calls=count,native_ack_writes=count+removals)
+                with self.subTest(variant=variant,count=count),self.assertRaises(contract.Refused):contract.validate(data,variant=variant,count=count,pid=101,fixture_sha=FIXTURE)
     def test_timing_and_byte_consistency_refuse(self):
         for metric in contract.TIMINGS:
             data=receipt();data['timing_us'][metric]=-1
@@ -168,7 +176,7 @@ class PreparerTests(unittest.TestCase):
         # loading production files into the invented unit fixture. The pinned
         # ACK-batch experiment is independently source-bound before compilation.
         real=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
-        self.assertEqual(H(real),'aec1d26bf160df83cd4345d3227eacd70a03e59ac7122f9dbe2919f79911226b')
+        self.assertEqual(H(real),'8c4a898149000014b2788bbfaf94a49b309fc2ab7895be2d3646f2c583e5c50e')
         self.assertEqual(prepare.apply_checkpoint(self.BASE,self.PATCH),self.RESULT)
         for data,payload in [(self.BASE+b'\n',self.PATCH),(self.BASE,self.PATCH+b'\n')]:
             with self.assertRaises(contract.Refused):prepare.apply_checkpoint(data,payload)

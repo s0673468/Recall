@@ -3,6 +3,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 
 import 'package:health_anki_flutter/features/review/data/local_review_preferences.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
@@ -17,17 +18,26 @@ class _Native extends InMemorySharedPreferencesStore {
   int succeedGetAllBeforeFail = 0;
   bool failNextGetAll = false;
 
+  // Full and keyed native reads share one fault gate, so the counters below
+  // count every native read exactly once.
   @override
-  Future<Map<String, Object>> getAll() async {
+  Future<Map<String, Object>> getAll() => getAllWithParameters(
+    GetAllParameters(filter: PreferencesFilter(prefix: 'flutter.')),
+  );
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) async {
     if (succeedGetAllBeforeFail > 0) {
       succeedGetAllBeforeFail--;
-      return super.getAll();
+      return super.getAllWithParameters(parameters);
     }
     if (failNextGetAll) {
       failNextGetAll = false;
       throw StateError('synthetic native read failure');
     }
-    return super.getAll();
+    return super.getAllWithParameters(parameters);
   }
 
   @override
