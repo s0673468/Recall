@@ -44,6 +44,19 @@ command prints its wall time and exit status. Narrow runs do not create reusable
 passing-gate receipts. Combined plans avoid repeating the three Python suites
 already executed by Dart wrapper tests.
 
+## Suite speed
+
+Hosted CI splits the Flutter tests into whole-file shards with
+`tool/flutter_test_shards.py` and runs each at `--concurrency=4`, the hosted
+runner's vCPU count. Built-in `--total-shards` is avoided because it slices the
+tests inside every file, so each shard would still compile the whole suite.
+The required `flutter` check passes only when `flutter-checks` (analyze, browser
+and tooling tests) and every `flutter-tests` shard succeeded.
+
+Tests that drive a 503 or an offline transport through postgrest wrap the call
+in `withInstantRetryBackoff` (`test/support/instant_retry_backoff.dart`). Every
+retry still runs; only the real 1 s + 2 s + 4 s backoff sleep is skipped.
+
 ## Coverage boundaries
 
 - Flutter tests exercise scheduling, replay/idempotency, auth, owner isolation,
