@@ -68,7 +68,17 @@ class LocalReviewStore {
   bool isActiveOwner(String ownerId) =>
       _activeOwnerScope == _scopeForOwner(ownerId);
 
-  Future<LocalReviewPreferences> get _prefs async {
+  /// Read native truth for exactly [keys]. Each operation still makes the
+  /// same single native read, so a failed read surfaces exactly as before,
+  /// but never ships unrelated values (such as card snapshots) to Dart.
+  Future<LocalReviewPreferences> _prefsFor(Iterable<String> keys) async {
+    final writer = await (_prefsFuture ??= SharedPreferences.getInstance());
+    return LocalReviewPreferences.readSnapshot(writer, keys: keys);
+  }
+
+  /// Read every native preference. Only [clear] needs this, to find the
+  /// per-deck snapshot keys it removes.
+  Future<LocalReviewPreferences> get _allPrefs async {
     final writer = await (_prefsFuture ??= SharedPreferences.getInstance());
     return LocalReviewPreferences.readSnapshot(writer);
   }
@@ -98,7 +108,7 @@ class LocalReviewStore {
     final cached = _installId;
     if (cached != null) return Future.value(cached);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([installIdKey]);
       var value = prefs.getString(installIdKey);
       if (value == null || value.isEmpty) {
         value = _token();
@@ -176,9 +186,21 @@ class LocalReviewStore {
       return Future.error(ArgumentError.value(ownerId, 'ownerId'));
     }
     final scope = _scopeForOwner(ownerId);
+    final migrationKey = '$_ownerMigrationKey:$scope';
+    const migratedBases = [
+      _snapshotKey,
+      _outboxKey,
+      _flagOutboxKey,
+      catchUpKey,
+      remediationKey,
+    ];
     return _withOutboxLock(
       () => _withOwnerMigrationLock(() async {
-        final prefs = await _prefs;
+        final prefs = await _prefsFor([
+          _legacyOwnerClaimKey,
+          migrationKey,
+          for (final base in migratedBases) ...[base, _scopedKey(base, scope)],
+        ]);
         // The isolated view reads persisted values without reloading the
         // shared settings cache. It includes only acknowledged writes here.
         final claimed = prefs.getString(_legacyOwnerClaimKey);
@@ -188,15 +210,8 @@ class LocalReviewStore {
           }
         }
         final ownerClaim = claimed ?? scope;
-        final migrationKey = '$_ownerMigrationKey:$scope';
         if (ownerClaim == scope && prefs.getBool(migrationKey) != true) {
-          for (final base in [
-            _snapshotKey,
-            _outboxKey,
-            _flagOutboxKey,
-            catchUpKey,
-            remediationKey,
-          ]) {
+          for (final base in migratedBases) {
             final legacy = prefs.getString(base);
             final scoped = _scopedKey(base, scope);
             if (legacy != null && prefs.getString(scoped) == null) {
@@ -244,7 +259,9 @@ class LocalReviewStore {
   }) async {
     final snapshotKey = _snapshotStorageKey(deckId);
     await _withOutboxLock(() async {
-      final prefs = await _prefs;
+      // Nothing is read back, but the native read still gates the write as
+      // before; an empty allowList keeps the old snapshot off the channel.
+      final prefs = await _prefsFor(const []);
       if (canWrite != null && !canWrite()) return;
       await prefs.setString(
         snapshotKey,
@@ -269,7 +286,7 @@ class LocalReviewStore {
   >
   loadSnapshot({int? deckId}) async {
     final snapshotKey = _snapshotStorageKey(deckId);
-    final prefs = await _prefs;
+    final prefs = await _prefsFor([snapshotKey]);
     final raw = prefs.getString(snapshotKey);
     if (raw == null) return null;
     try {
@@ -307,7 +324,7 @@ class LocalReviewStore {
   }) {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final list = _readOutbox(prefs, key);
       // A producer may lose its session while waiting for another local write.
       // Cancel only before append; an already durable event is never removed.
@@ -325,7 +342,7 @@ class LocalReviewStore {
   Future<List<Map<String, dynamic>>> outbox({String? ownerScope}) {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       return _readOutbox(prefs, key);
     });
   }
@@ -335,7 +352,7 @@ class LocalReviewStore {
   Future<bool> markReviewAttempted(Object clientId, {String? ownerScope}) {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final list = _readOutbox(prefs, key);
       final index = list.indexWhere((e) => e['client_id'] == clientId);
       if (index < 0) return false;
@@ -389,7 +406,10 @@ class LocalReviewStore {
       final writer = await _writerPrefs;
       // Read persisted truth independently, then capture the current same-key
       // cache. Never reload another producer's unacknowledged edits away.
-      final nativeView = await LocalReviewPreferences.readSnapshot(writer);
+      final nativeView = await LocalReviewPreferences.readSnapshot(
+        writer,
+        keys: [key],
+      );
       final native = _decodeList(nativeView.getString(key), key);
       final cached = _decodeList(writer.getString(key), key);
       // A conflicting payload in either view removes deletion authority for
@@ -614,12 +634,12 @@ class LocalReviewStore {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     if (count <= 0) {
       return _withOutboxLock(() async {
-        final prefs = await _prefs;
+        final prefs = await _prefsFor([key]);
         return _readOutbox(prefs, key).length;
       });
     }
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final list = _readOutbox(prefs, key);
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
@@ -639,7 +659,7 @@ class LocalReviewStore {
   }) {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final list = _readOutbox(prefs, key);
       final before = list.length;
       list.removeWhere(
@@ -668,7 +688,7 @@ class LocalReviewStore {
 
   Future<int?> _settleUnknown(String key, Object clientId) {
     return _withOutboxLock(() async {
-      final durable = _readList(await _prefs, key);
+      final durable = _readList(await _prefsFor([key]), key);
       _settleVisiblePending(key, durable);
       if (durable.any((e) => e['client_id'] == clientId)) {
         return _pendingCount(key, durable);
@@ -699,7 +719,7 @@ class LocalReviewStore {
     return _withOutboxLock(() async {
       // A settled writer may have refused its eager cache update. Read native
       // progress without replacing unrelated pending producer values in cache.
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final raw = prefs.getString(key);
       if (raw == null) return CatchUpLocalState.none;
       try {
@@ -736,7 +756,7 @@ class LocalReviewStore {
   Future<int> enqueueFlag(Map<String, dynamic> entry) {
     final key = _storageKey(_flagOutboxKey);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       return _appendProducer(prefs, key, _readList(prefs, key), entry);
     });
   }
@@ -745,7 +765,7 @@ class LocalReviewStore {
   Future<List<Map<String, dynamic>>> flagOutbox({String? ownerScope}) {
     final key = _storageKey(_flagOutboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       return _readList(prefs, key);
     });
   }
@@ -755,7 +775,7 @@ class LocalReviewStore {
   Future<bool> removeFlagEntry(Object clientId) {
     final key = _storageKey(_flagOutboxKey);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final list = _readList(prefs, key);
       final before = list.length;
       list.removeWhere((e) => e['client_id'] == clientId);
@@ -775,12 +795,12 @@ class LocalReviewStore {
     final key = _storageKey(_flagOutboxKey, ownerScope: ownerScope);
     if (count <= 0) {
       return _withOutboxLock(() async {
-        final prefs = await _prefs;
+        final prefs = await _prefsFor([key]);
         return _readList(prefs, key).length;
       });
     }
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final list = _readList(prefs, key);
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
@@ -801,7 +821,7 @@ class LocalReviewStore {
   Future<Set<int>> hiddenCardIds() {
     final key = _storageKey(_hiddenCardsKey);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       return _readHidden(prefs, key);
     });
   }
@@ -830,7 +850,7 @@ class LocalReviewStore {
   }) {
     final key = _storageKey(_hiddenCardsKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       if (canWrite != null && !canWrite()) return;
       final next = change(_readHidden(prefs, key));
       final ids = next.toList()..sort();
@@ -859,7 +879,7 @@ class LocalReviewStore {
     final key = _storageKey(remediationKey);
     final today = _dayKey(now ?? DateTime.now());
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final current = _readRemediations(prefs, key)
           .where((item) => item.dayKey == today)
           .take(maxDailyRemediations)
@@ -886,7 +906,7 @@ class LocalReviewStore {
     final queuedAt = now ?? DateTime.now();
     final today = _dayKey(queuedAt);
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final current = _readRemediations(prefs, key)
           .where((item) => item.dayKey == today)
           .take(maxDailyRemediations)
@@ -914,7 +934,7 @@ class LocalReviewStore {
     final key = _storageKey(remediationKey);
     final today = _dayKey(now ?? DateTime.now());
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _prefsFor([key]);
       final current = _readRemediations(prefs, key)
           .where((item) => item.dayKey == today)
           .take(maxDailyRemediations)
@@ -949,7 +969,7 @@ class LocalReviewStore {
       ownerScope: ownerScope,
     );
     return _withOutboxLock(() async {
-      final prefs = await _prefs;
+      final prefs = await _allPrefs;
       if (requireEmptyOutboxes) {
         final pendingReviews = _pendingCount(
           outboxKey,
@@ -1032,7 +1052,7 @@ class LocalReviewStore {
       }
       _uncertainAppends.putIfAbsent(key, () => []).add(appended);
       try {
-        _settleVisiblePending(key, _readList(await _prefs, key));
+        _settleVisiblePending(key, _readList(await _prefsFor([key]), key));
       } catch (_) {
         // A failed reconciliation read cannot grant retry authority.
       }
