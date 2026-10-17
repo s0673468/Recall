@@ -8,6 +8,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 
+import 'support/instant_retry_backoff.dart';
+
 Map<String, dynamic> _cardRow(int id, {required int state}) => {
   'id': id,
   'guid': 'g$id',
@@ -273,9 +275,12 @@ void main() {
 
     // The budget cannot be computed, so the read fails rather than serving
     // an over-limit new-card page; the concurrent due read leaks no error.
-    await expectLater(
-      RecallApi(client).fetchQueue(newLimit: 20),
-      throwsA(isA<PostgrestException>()),
+    // The 503 is retried with postgrest's backoff; skip the real sleeps.
+    await withInstantRetryBackoff(
+      () => expectLater(
+        RecallApi(client).fetchQueue(newLimit: 20),
+        throwsA(isA<PostgrestException>()),
+      ),
     );
   });
 }
