@@ -20,6 +20,10 @@ class ReviewState {
   /// wording differs.
   final bool serverError;
   final int pendingSync;
+
+  /// Queued reviews the server permanently refused. They are still counted in
+  /// [pendingSync] and kept on the device, but no longer hold the rest.
+  final int syncErrors;
   final bool authSubmitting;
   final int? globalDueCount;
   final DateTime? globalDueUpdatedAt;
@@ -47,6 +51,7 @@ class ReviewState {
     this.offline = false,
     this.serverError = false,
     this.pendingSync = 0,
+    this.syncErrors = 0,
     this.authSubmitting = false,
     this.globalDueCount,
     this.globalDueUpdatedAt,
@@ -75,6 +80,7 @@ class ReviewState {
     bool? offline,
     bool? serverError,
     int? pendingSync,
+    int? syncErrors,
     bool? authSubmitting,
     Object? globalDueCount = _unset,
     Object? globalDueUpdatedAt = _unset,
@@ -97,6 +103,7 @@ class ReviewState {
       offline: offline ?? this.offline,
       serverError: serverError ?? this.serverError,
       pendingSync: pendingSync ?? this.pendingSync,
+      syncErrors: syncErrors ?? this.syncErrors,
       authSubmitting: authSubmitting ?? this.authSubmitting,
       globalDueCount: identical(globalDueCount, _unset)
           ? this.globalDueCount

@@ -12,6 +12,7 @@ void main() {
     'scripts/supabase/migrations/005_review_event_idempotency.sql',
     'scripts/supabase/migrations/006_apply_review_rpc.sql',
     'scripts/supabase/migrations/007_note_flags_hide_reasons.sql',
+    'scripts/supabase/migrations/008_apply_review_missing_card.sql',
   ];
 
   const tableContracts = <String>{
@@ -125,6 +126,48 @@ void main() {
     expect(migrations, contains('on conflict (card_id, client_event_id)'));
     expect(migrations, contains('security invoker'));
     expect(migrations, contains('c.suspended = false'));
+  });
+
+  test('the newest apply_review acknowledges a hard-deleted card', () {
+    final rpcMigrations = migrationPaths
+        .where(
+          (path) => File(
+            path,
+          ).readAsStringSync().contains('function public.apply_review('),
+        )
+        .toList();
+    expect(rpcMigrations.last, endsWith('008_apply_review_missing_card.sql'));
+    final sql = File(rpcMigrations.last).readAsStringSync().toLowerCase();
+    // The card is read before any log insert, and only the review_log ->
+    // cards foreign key turns into a 0 acknowledgement without a log row.
+    expect(
+      sql.indexOf('from public.cards'),
+      lessThan(sql.indexOf('insert into public.review_log')),
+    );
+    expect(sql, contains('exception when foreign_key_violation'));
+    expect(sql, contains("confrelid = 'public.cards'::regclass"));
+    expect(sql, contains('return 0;'));
+    expect(sql, contains('\nsecurity invoker\n'));
+    expect(sql, contains('set search_path = public, pg_temp'));
+    expect(sql, contains('on conflict (card_id, client_event_id) do nothing'));
+    expect(
+      sql,
+      contains("raise exception 'apply_review requires a client_event_id'"),
+    );
+    expect(sql, contains(') to authenticated;'));
+
+    final verifier = File(
+      'scripts/supabase/verify/verify_apply_review.sql',
+    ).readAsStringSync();
+    expect(verifier, contains('E:fk_blocks_outbox'));
+    expect(
+      File('scripts/supabase/verify/verify_schema.sql').readAsStringSync(),
+      contains('apply_review predates 008'),
+    );
+    expect(
+      File('scripts/supabase/tests/test_apply_review_pg.py').existsSync(),
+      isTrue,
+    );
   });
 
   test('verification and non-destructive rollback files are present', () {

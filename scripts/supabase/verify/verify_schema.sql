@@ -312,6 +312,15 @@ begin
     raise exception 'VERIFY FAILED: apply_review must be SECURITY INVOKER';
   end if;
 
+  if not exists (
+    select 1
+      from pg_catalog.pg_proc
+     where oid = 'public.apply_review(bigint,text,smallint,timestamp with time zone,real,real,timestamp with time zone,smallint,boolean,integer,text,text)'::regprocedure
+       and prosrc like '%foreign_key_violation%'
+  ) then
+    raise exception 'VERIFY FAILED: apply_review predates 008 (a hard-deleted card blocks the outbox)';
+  end if;
+
   if not has_function_privilege('authenticated', 'public.deck_counts()', 'EXECUTE')
      or not has_function_privilege(
        'authenticated',
