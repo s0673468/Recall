@@ -522,11 +522,12 @@ void main() {
     );
   });
 
-  test('the redo of an unconfirmed save stays undoable after a batch', () async {
-    final api = api5();
-    final store = LocalReviewStore();
-    final controller = build(api, store);
-    final ids = await offlineRatings(api, store, controller, 2);
+  /// Two offline ratings, then a third whose save commits but cannot be
+  /// confirmed; a flush delivers the first review, batch-marks the second,
+  /// then drops. Returns the two earlier ids, the unconfirmed id and its card.
+  Future<({List<Object> ids, Object unconfirmed, int cardId})>
+  unconfirmedAfterBatch(_Api api, ReviewController controller) async {
+    final ids = await offlineRatings(api, controller.store, controller, 2);
     final cardId = controller.state.current!.id;
     controller.flip();
     native.throwAfterCommit = true;
@@ -536,23 +537,85 @@ void main() {
     );
     native.failReads = false;
     final stored = await native.outbox();
-    final unconfirmed = stored.last['client_id'];
+    final unconfirmed = stored.last['client_id'] as Object;
     expect(stored.map((e) => e['client_id']), [...ids, unconfirmed]);
 
     api.failAtCall = 1; // first send lands, the batch is marked, then a drop
     await controller.syncPending();
     expect(api.calls, 2);
-    expect((await native.outbox()).last['delivery_attempted'], isFalse);
+    expect(attempted(await native.outbox()), [true, false]);
+    // The delivered first review proves the server reachable (#137).
+    expect(controller.state.offline, isFalse);
+    return (ids: ids, unconfirmed: unconfirmed, cardId: cardId);
+  }
 
-    // The redo reuses the stored id and becomes the Undo slot; never sent.
-    await controller.rate(Rating.good);
-    expect(controller.state.current?.id, isNot(cardId));
-    expect(controller.canUndo, isTrue);
-    await controller.undo();
-    expect(controller.state.current?.id, cardId);
-    expect((await native.outbox()).map((e) => e['client_id']), [ids[1]]);
-    expect(loggedEvents(api), [ids[0]]);
-  });
+  test(
+    'the redo of an unconfirmed save stays undoable after a batch',
+    () async {
+      final api = api5();
+      final controller = build(api, LocalReviewStore());
+      final (:ids, :unconfirmed, :cardId) = await unconfirmedAfterBatch(
+        api,
+        controller,
+      );
+
+      // The connection is down again, so the redo's own flush stops at the
+      // batch-marked review before reaching the redo.
+      api.failAtCall = 2;
+      // The redo reuses the stored id and becomes the Undo slot; never sent.
+      await controller.rate(Rating.good);
+      expect(controller.state.current?.id, isNot(cardId));
+      expect(controller.canUndo, isTrue);
+      await controller.undo();
+      expect(api.calls, 3);
+      expect(controller.state.current?.id, cardId);
+      expect((await native.outbox()).map((e) => e['client_id']), [ids[1]]);
+      expect(loggedEvents(api), [ids[0]]);
+      expect(
+        api.applied.map((e) => e['client_id']),
+        isNot(contains(unconfirmed)),
+      );
+    },
+  );
+
+  test(
+    'an online redo of an unconfirmed save is sent once, closing its own Undo',
+    () async {
+      final api = api5();
+      final controller = build(api, LocalReviewStore());
+      final (:ids, :unconfirmed, :cardId) = await unconfirmedAfterBatch(
+        api,
+        controller,
+      );
+      final seen = <({Object? sending, List<Object?> marks, bool canUndo})>[];
+      api.onSend = (entry) async => seen.add((
+        sending: entry['client_id'],
+        marks: attempted(await native.outbox()),
+        canUndo: controller.canUndo,
+      ));
+
+      // Online again: the redo syncs behind the UI.
+      await controller.rate(Rating.good);
+      expect(controller.state.current?.id, isNot(cardId));
+      await controller.undo();
+
+      expect(seen.map((s) => s.sending), [ids[1], unconfirmed]);
+      // The batch left the redo out; it stayed undoable until its own send.
+      expect(seen[0].marks, [true, false]);
+      expect(seen[0].canUndo, isTrue);
+      expect(seen[1].marks, [true, true]);
+      expect(seen[1].canUndo, isFalse);
+      expect(controller.flagNotice, 'Synced reviews cannot be undone');
+      expect(controller.state.current?.id, isNot(cardId));
+      expect(await native.outbox(), isEmpty);
+      expect(loggedEvents(api), [...ids, unconfirmed]);
+      expect(
+        api.applied.where((e) => e['client_id'] == unconfirmed),
+        hasLength(1),
+      );
+      expect(api.undone, isEmpty);
+    },
+  );
 
   test(
     'a rating still saving its progress when the batch is marked stays undoable',

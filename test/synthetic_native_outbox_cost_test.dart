@@ -105,6 +105,41 @@ void main() {
     },
   );
 
+  test(
+    'a baseline drain of 128 meets the exact batched count contract',
+    () async {
+      final previous = SharedPreferencesStorePlatform.instance;
+      final delegate = InMemorySharedPreferencesStore.empty();
+      SharedPreferences.resetStatic();
+      SharedPreferencesStorePlatform.instance = delegate;
+      try {
+        final sample = await measureSyntheticOutboxCost(
+          pendingCount: 128,
+          delegate: delegate,
+        );
+        final counts = sample.metrics()['counts'] as Map<String, dynamic>;
+        // One single mark, one batch mark and one drain: 3 writes, not 129.
+        expect(counts['mark_calls'], 1);
+        expect(sample.store.batchMarkCalls, 1);
+        expect(counts['remove_calls'], 1);
+        expect(counts['native_ack_writes'], 3);
+        expect(
+          () => requireExpectedOutboxCostCounts(sample, 'baseline'),
+          returnsNormally,
+        );
+        // The unpatched Controller never checkpoints, so the checkpoint
+        // variant's removal counts refuse it.
+        expect(
+          () => requireExpectedOutboxCostCounts(sample, 'checkpoint'),
+          throwsStateError,
+        );
+      } finally {
+        SharedPreferencesStorePlatform.instance = previous;
+        SharedPreferences.resetStatic();
+      }
+    },
+  );
+
   test('only two fixed runtime routes select a workload', () {
     expect(syntheticOutboxCountFromRoute('/recall-outbox-cost/128'), 128);
     expect(syntheticOutboxCountFromRoute('/recall-outbox-cost/512'), 512);

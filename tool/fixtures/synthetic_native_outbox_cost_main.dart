@@ -28,13 +28,13 @@ const _patchSha = String.fromEnvironment('RECALL_PATCH_SHA256');
 const _fixtureSha = String.fromEnvironment('RECALL_FIXTURE_SHA256');
 const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
-const _storeBlob = '18d4c9535d0a3866604fd93ea91cffa248911848';
+const _storeBlob = '0dd4ef8be7f500f4ee75d09b6f3d2835d2e2b75a';
 const _baselineControllerSha =
-    '99b304c9d58df1ec7b3087ee3965fbeeb33ff727d5dc17a3f59a81c6c9166bfa';
+    'fe9ac9bea83d3afe4da6efd232e953b5964856b2a2f59585787021709cb83fca';
 const _checkpointControllerSha =
-    '013859e2125af8bc3e10d9b6b52681f653a9ababe8f8867d20d74ed9676fe7fc';
+    '287d2a89733e5acee7ec1bed573728cbe8346582bda23b7dbdc01c7645d592a6';
 const _checkpointPatchSha =
-    'aec1d26bf160df83cd4345d3227eacd70a03e59ac7122f9dbe2919f79911226b';
+    '8c4a898149000014b2788bbfaf94a49b309fc2ab7895be2d3646f2c583e5c50e';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');
@@ -297,16 +297,19 @@ Future<OutboxCostSample> measureSyntheticOutboxCost({
     _require((await store.outbox(ownerScope: scope)).isEmpty);
     _require(store.activeOwnerScope == scope);
     _require(store.isActiveOwner(api.currentUser!.id));
-    // Pinned per-send variants mark each review alone; batching marks the
-    // same reviews in fewer writes. Either way, all are marked before transport.
-    _require(store.markCalls + store.batchMarkCalls >= 1);
+    // The first send is marked alone; once it is acknowledged, the rest are
+    // marked in one batch write. All are marked before their own transport.
+    _require(store.markCalls == 1);
+    _require(store.batchMarkCalls == (pendingCount > 1 ? 1 : 0));
     _require(store.markedBeforeTransport.length == pendingCount);
     _require(transport.requestedIds.length == pendingCount);
     _require(transport.counts['apply_review'] == pendingCount);
     _require(transport.acceptedIds.length == pendingCount);
     _require(transport.totalRequests == pendingCount);
     _require(store.removeCalls >= 1);
-    _require(probe.acknowledgedWrites >= 2);
+    _require(
+      probe.acknowledgedWrites >= store.markCalls + store.batchMarkCalls + 1,
+    );
     return OutboxCostSample(
       pendingSeeded: pendingCount,
       syncPendingUs: syncPendingUs,
@@ -330,12 +333,14 @@ void requireExpectedOutboxCostCounts(OutboxCostSample sample, String variant) {
   final count = sample.pendingSeeded;
   _require(count == 128 || count == 512);
   final expectedRemoves = variant == 'baseline' ? 1 : count ~/ 32 + 1;
-  final expectedWrites = variant == 'baseline'
-      ? count + 1
-      : count + count ~/ 32;
-  _require(sample.store.markCalls == count);
+  // Removal writes: one final drain, or one per full checkpoint (the final
+  // empty drain writes nothing).
+  final removalWrites = variant == 'baseline' ? 1 : count ~/ 32;
+  // One single mark and one batch mark, independent of count.
+  _require(sample.store.markCalls == 1);
+  _require(sample.store.batchMarkCalls == 1);
   _require(sample.store.removeCalls == expectedRemoves);
-  _require(sample.probe.acknowledgedWrites == expectedWrites);
+  _require(sample.probe.acknowledgedWrites == 2 + removalWrites);
 }
 
 int syntheticOutboxCountFromRoute(String route) => switch (route) {
@@ -350,7 +355,7 @@ Future<void> main() async {
   try {
     _require(_enabled && kDebugMode && Platform.isAndroid);
     _require(RegExp(r'^[0-9a-f]{40}$').hasMatch(_sourceCommit));
-    _require(_baseCommit == '8d6344a860968de68daa66b67a3d840bf03b32bd');
+    _require(_baseCommit == '7e4e396d06b028a2757198fb241c432bffa9d8ab');
     _require(RegExp(r'^[0-9a-f]{64}$').hasMatch(_fixtureSha));
     _require(
       (_variant == 'baseline' &&

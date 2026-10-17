@@ -1,6 +1,6 @@
 --- a/lib/features/review/application/review_controller.dart
 +++ b/lib/features/review/application/review_controller.dart
-@@ -2480,6 +2480,10 @@
+@@ -2673,6 +2673,10 @@
      } while (_flushFollowUp);
    }
  
@@ -11,7 +11,7 @@
    /// Send queued reviews oldest-first. Stops at the first failure (keeps the
    /// rest queued) so a flaky network never drops a review. Drain captured,
    /// server-acknowledged identities, even when another tab already removed one;
-@@ -2492,6 +2496,7 @@
+@@ -2685,6 +2689,7 @@
      if (pending.isEmpty) return;
  
      final acknowledged = <Map<String, dynamic>>[];
@@ -19,7 +19,7 @@
      final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
        pending,
        legacyReviews: true,
-@@ -2521,9 +2526,24 @@
+@@ -2727,9 +2732,24 @@
          debugPrint('Recall: review sync deferred (offline?)');
          break;
        }
