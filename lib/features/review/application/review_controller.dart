@@ -109,7 +109,9 @@ class ReviewController extends ChangeNotifier {
   final DateTime Function() clock;
 
   /// How long one review send may take before the flush gives up on it and
-  /// leaves it queued. Injectable so tests need not wait the full bound.
+  /// leaves it queued. Undo of a hide, sign-out and [syncPending] also stop
+  /// waiting on a flag send after it (see [_flushFlagOutboxBounded]).
+  /// Injectable so tests need not wait the full bound.
   final Duration reviewSendTimeout;
 
   /// Study preferences (new-card limit, retention, ordering). Optional so the
@@ -447,7 +449,7 @@ class ReviewController extends ChangeNotifier {
         if (entry.value == attempt.sessionGeneration) entry.key,
     ]);
     requireSameOwner();
-    await Future.wait<void>([_flushOutbox(), _flushFlagOutbox()]);
+    await Future.wait<void>([_flushOutbox(), _flushFlagOutboxBounded()]);
     requireSameOwner();
     // Don't leave one user's snapshot/outbox on disk for the next person on a
     // shared browser — RLS protects the cloud, but the device cache is global.
@@ -1507,7 +1509,9 @@ class ReviewController extends ChangeNotifier {
   /// its own failures, so a stuck flag flush can never delay the review flush.
   Future<void> syncPending() => Future.wait<void>([
     _flushOutbox(),
-    _flushFlagOutbox(),
+    // The web timer and Android's reconnect are single-flight on this call,
+    // so a hung flag send must not stop them retrying reviews.
+    _flushFlagOutboxBounded(),
     if (prefs != null) prefs!.syncOwner(),
   ]);
 
@@ -2247,25 +2251,36 @@ class ReviewController extends ChangeNotifier {
     _undoInFlight = true;
     notifyListeners();
     try {
-      // Settle any flag flush so the entry is definitely either still queued
-      // or already delivered.
-      while (_flagFlushTask != null) {
-        try {
-          await _flagFlushTask;
-        } catch (_) {}
-      }
+      // Settle any flag flush so the entry is usually either still queued or
+      // already delivered. A send on a dead connection can hang for minutes
+      // while rating is blocked, so stop waiting after the bound.
+      await _joinFlagFlush();
       if (!identical(_hideUndo, record)) return;
       final loadSequence = _loadSequence;
       // A queued entry is not proof the server never saw the flag: a commit
       // whose reply was lost stays queued too. Drop the entry, then always
       // withdraw on the server, queueing a durable withdrawal when offline.
       await store.removeFlagEntry(record.clientId);
-      try {
-        await api.dismissFlag(
-          cardId: record.card.id,
-          clientEventId: record.clientId,
-        );
-      } catch (_) {
+      // A running pass may still be sending this flag. A direct withdrawal
+      // could reach the server first and match nothing, leaving the flag
+      // open. The queued one goes out in a later pass, after that send.
+      final sending = _flagFlushTask != null;
+      var withdrawn = false;
+      if (!sending) {
+        try {
+          await api
+              .dismissFlag(
+                cardId: record.card.id,
+                clientEventId: record.clientId,
+              )
+              .timeout(reviewSendTimeout);
+          withdrawn = true;
+        } catch (_) {
+          // Offline or hung. The withdrawal is a conditional update, so a
+          // late copy of this request and the queued replay are both safe.
+        }
+      }
+      if (!withdrawn) {
         try {
           await store.enqueueFlag(<String, dynamic>{
             'op': dismissOp,
@@ -2276,6 +2291,7 @@ class ReviewController extends ChangeNotifier {
           debugPrint('Recall: flag undo could not be recorded');
           return;
         }
+        if (sending) unawaited(_flushFlagOutbox()); // schedule that pass
       }
       _hiddenCardIds = {..._hiddenCardIds}..remove(record.card.id);
       unawaited(_quietly(() => store.removeHiddenCard(record.card.id)));
@@ -2869,6 +2885,28 @@ class ReviewController extends ChangeNotifier {
     final task = _runFlagFlushLoop().whenComplete(() => _flagFlushTask = null);
     _flagFlushTask = task;
     return task;
+  }
+
+  /// Starts or joins a flag flush, but waits at most [reviewSendTimeout]. A
+  /// flag send on a dead connection can stay open for minutes. Unlike a
+  /// review, the send itself is never abandoned and re-sent: a hide's queued
+  /// withdrawal must not overtake it. The flag stays queued until it settles,
+  /// so a caller that needs it delivered (sign-out) still sees it pending.
+  Future<void> _flushFlagOutboxBounded() =>
+      _flushFlagOutbox().timeout(reviewSendTimeout, onTimeout: () {});
+
+  /// Waits for a running flag flush, including its follow-up passes, for at
+  /// most [reviewSendTimeout]. Starts none.
+  Future<void> _joinFlagFlush() async {
+    Future<void> settle() async {
+      while (_flagFlushTask != null) {
+        try {
+          await _flagFlushTask;
+        } catch (_) {}
+      }
+    }
+
+    await settle().timeout(reviewSendTimeout, onTimeout: () {});
   }
 
   Future<void> _runFlagFlushLoop() async {
