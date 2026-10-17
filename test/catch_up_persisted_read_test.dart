@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 
 import 'package:health_anki_flutter/features/review/data/catch_up_state.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
@@ -32,10 +33,18 @@ class _Native extends InMemorySharedPreferencesStore {
   Completer<void>? writeStarted;
   Completer<void>? releaseWrite;
 
+  // Full and keyed native reads share one fault gate.
   @override
-  Future<Map<String, Object>> getAll() async {
+  Future<Map<String, Object>> getAll() => getAllWithParameters(
+    GetAllParameters(filter: PreferencesFilter(prefix: 'flutter.')),
+  );
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) async {
     if (failRead) throw readError;
-    return super.getAll();
+    return super.getAllWithParameters(parameters);
   }
 
   @override
