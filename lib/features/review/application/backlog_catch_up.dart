@@ -12,15 +12,21 @@ class BacklogCatchUp {
   static const int thresholdFloor = 80;
   static const int dailyCap = 20;
 
+  /// [localDate] builds local midnight from wall-clock fields; tests inject a
+  /// fixed zone. The window is [recentDays] calendar days ending today.
   static double recentDailyAverage(
     Iterable<ReviewLogEntry> reviews, {
     required DateTime now,
+    DateTime Function(int year, int month, int day) localDate = DateTime.new,
   }) {
-    final today = dayOnly(now);
-    final cutoff = today.subtract(const Duration(days: recentDays - 1));
+    final today = localDate(now.year, now.month, now.day);
+    // Calendar arithmetic: a fixed Duration is 24-hour days and shifts the
+    // cutoff by the DST hour for two weeks after each transition.
+    final cutoff = localDate(now.year, now.month, now.day - (recentDays - 1));
     var count = 0;
     for (final review in reviews) {
-      final day = dayOnly(review.at);
+      final at = review.at;
+      final day = localDate(at.year, at.month, at.day);
       if (day.isBefore(cutoff) || day.isAfter(today)) continue;
       count++;
     }
@@ -102,7 +108,11 @@ class BacklogCatchUp {
   ) {
     final today = dayKey(now);
     if (state.dayKey == today) return state;
-    return CatchUpLocalState(mode: state.mode, dayKey: today);
+    return CatchUpLocalState(
+      mode: state.mode,
+      dayKey: today,
+      deckStream: state.deckStream,
+    );
   }
 
   static DateTime dayOnly(DateTime value) =>

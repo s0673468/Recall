@@ -13,6 +13,12 @@ class ReviewState {
   final int? deckFilter;
   final int reviewedThisSession;
   final bool offline;
+
+  /// With [offline] or [error], the last load failed because Recall's server
+  /// answered with an error (permission, 5xx, missing function), not because
+  /// the connection failed. The saved-queue behaviour is the same; only the
+  /// wording differs.
+  final bool serverError;
   final int pendingSync;
   final bool authSubmitting;
   final int? globalDueCount;
@@ -39,6 +45,7 @@ class ReviewState {
     this.deckFilter,
     this.reviewedThisSession = 0,
     this.offline = false,
+    this.serverError = false,
     this.pendingSync = 0,
     this.authSubmitting = false,
     this.globalDueCount,
@@ -66,6 +73,7 @@ class ReviewState {
     Object? deckFilter = _unset,
     int? reviewedThisSession,
     bool? offline,
+    bool? serverError,
     int? pendingSync,
     bool? authSubmitting,
     Object? globalDueCount = _unset,
@@ -87,6 +95,7 @@ class ReviewState {
           : deckFilter as int?,
       reviewedThisSession: reviewedThisSession ?? this.reviewedThisSession,
       offline: offline ?? this.offline,
+      serverError: serverError ?? this.serverError,
       pendingSync: pendingSync ?? this.pendingSync,
       authSubmitting: authSubmitting ?? this.authSubmitting,
       globalDueCount: identical(globalDueCount, _unset)

@@ -188,9 +188,14 @@ the Android application sandbox. There is no network telemetry path.
 
 ## Local commands
 
+Recall's application platforms are **Android and web**. Android is built,
+tested and released from this repository; web review uses Recall Hub. iOS is
+not maintained (see [Platforms](#platforms)).
+
 For conservative checks selected from branch and working-tree changes, see
 [Local test feedback](docs/testing.md). `python3 tool/affected_tests.py --base
-origin/main` prints a plan without executing it; add `--run` for the portable lane.
+origin/main` prints a plan without executing it; add `--run` for the portable lane
+and `--lane android --run` for the native Android checks.
 
 ```bash
 ./tool/bootstrap_flutter
@@ -217,8 +222,18 @@ verification, production-approval, and rollback boundaries in
 [`scripts/supabase/README.md`](scripts/supabase/README.md). Repository changes
 never apply SQL to production automatically.
 
-See [ANDROID_SETUP.md](ANDROID_SETUP.md) for Android signing, safe device
-installation, platform behavior and validation. For laptop/web, use the
-[Recall Hub source and setup guide](https://github.com/s0673468/recall-hub) and
-the [web client pointer](web/README.md). The preserved legacy platform guides
-describe historical clients; they are not current build or delivery instructions.
+## Platforms
+
+- **Android** — maintained. [ANDROID_SETUP.md](ANDROID_SETUP.md) covers native
+  checks, release signing, safe device installation, platform behavior and
+  validation.
+- **Web** — maintained through Recall Hub. Use the
+  [Recall Hub source and setup guide](https://github.com/s0673468/recall-hub) and
+  the [web client pointer](web/README.md).
+- **iOS** — not maintained (Android + web only). Existing iOS source and
+  [IOS_SETUP.md](IOS_SETUP.md) are preserved as history; do not build, test or
+  release from them.
+
+[WEB_SETUP.md](WEB_SETUP.md) describes the retired built-in PWA. The preserved
+legacy guides describe historical clients; they are not current build or
+delivery instructions.
