@@ -287,11 +287,6 @@ class RecallApi implements ReviewReplayGateway {
       excludeCardIds,
     );
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    final introducedToday = await _newCardsIntroducedToday(
-      deckId: deckId,
-      includedDeckIds: included,
-    );
-    final remainingNewLimit = (newLimit - introducedToday).clamp(0, newLimit);
 
     // Suspended cards (cards.suspended = true, set one-way by the desktop
     // importer) are dormant — never queued as due or new. Filtered server-side
@@ -329,9 +324,24 @@ class RecallApi implements ReviewReplayGateway {
     // newest_first inverts the id order; random still fetches a stable page
     // (id asc) and shuffles client-side so the same cards recur across loads.
     final newAscending = order != NewOrder.newestFirst;
+    // Only the new-card page depends on today's introduction count. Due paging
+    // starts alongside that history read instead of waiting behind it, so the
+    // queue costs the longer of the two chains rather than their sum.
     final results = await Future.wait<List<Map<String, dynamic>>>([
       _fetchAllDueRows(dueQ),
-      newQ.order('id', ascending: newAscending).limit(remainingNewLimit),
+      () async {
+        final introducedToday = await _newCardsIntroducedToday(
+          deckId: deckId,
+          includedDeckIds: included,
+        );
+        final remainingNewLimit = (newLimit - introducedToday).clamp(
+          0,
+          newLimit,
+        );
+        return newQ
+            .order('id', ascending: newAscending)
+            .limit(remainingNewLimit);
+      }(),
     ]);
     final dueRows = results[0];
     final newRows = results[1];
