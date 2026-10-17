@@ -1410,11 +1410,13 @@ class ReviewController extends ChangeNotifier {
     _interactionGeneration++;
     _undo = null;
     _hideUndo = null;
+    // A local choice proves nothing about the network: keep offline (and its
+    // server-error label), or the next rating is sent into a dead connection
+    // and loses its Undo. Only a delivery or a successful load clears it.
     _set(
       _state.copyWith(
         loading: false,
         error: null,
-        offline: false,
         queue: mode == CatchUpMode.active
             ? _presentedQueue(source, view)
             : source,
