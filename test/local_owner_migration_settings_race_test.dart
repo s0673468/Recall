@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
@@ -30,9 +31,17 @@ class _SnapshotNative extends InMemorySharedPreferencesStore {
   bool holdNextPendingWrite = false;
   String? pendingKey;
 
+  // Full and keyed native reads share one hold, once per read.
   @override
-  Future<Map<String, Object>> getAll() async {
-    final snapshot = await super.getAll();
+  Future<Map<String, Object>> getAll() => getAllWithParameters(
+    GetAllParameters(filter: PreferencesFilter(prefix: 'flutter.')),
+  );
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) async {
+    final snapshot = await super.getAllWithParameters(parameters);
     if (holdNextRead) {
       holdNextRead = false;
       snapshotCaptured.complete();

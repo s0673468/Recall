@@ -6,6 +6,8 @@ import 'dart:io';
 // Already pinned transitively by shared_preferences; no dependency changes.
 // ignore: depend_on_referenced_packages
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+// ignore: depend_on_referenced_packages
+import 'package:shared_preferences_platform_interface/types.dart';
 
 class LabFilePreferences extends SharedPreferencesStorePlatform {
   final Directory directory;
@@ -54,6 +56,18 @@ class LabFilePreferences extends SharedPreferencesStorePlatform {
 
   @override
   Future<Map<String, Object>> getAll() async => _read();
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) async {
+    final filter = parameters.filter;
+    return _read()..removeWhere(
+      (key, _) =>
+          !key.startsWith(filter.prefix) ||
+          (filter.allowList != null && !filter.allowList!.contains(key)),
+    );
+  }
 
   @override
   Future<bool> setValue(String valueType, String key, Object value) async =>

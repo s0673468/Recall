@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show User;
 
 import 'package:health_anki_flutter/features/review/application/backlog_catch_up.dart';
@@ -45,11 +46,20 @@ class _Native extends InMemorySharedPreferencesStore {
   bool failReadAfterNextReview = false;
   _ProgressFailure? progressFailure;
 
+  // Full and keyed native reads share one fault gate.
   @override
-  Future<Map<String, Object>> getAll() {
+  Future<Map<String, Object>> getAll() => getAllWithParameters(_allFlutter());
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) {
     if (failRead) throw StateError('invented native read refusal');
-    return super.getAll();
+    return super.getAllWithParameters(parameters);
   }
+
+  static GetAllParameters _allFlutter() =>
+      GetAllParameters(filter: PreferencesFilter(prefix: 'flutter.'));
 
   @override
   Future<bool> setValue(String valueType, String key, Object value) async {
@@ -70,13 +80,15 @@ class _Native extends InMemorySharedPreferencesStore {
   }
 
   Future<CatchUpLocalState> progress(String scope) async {
-    final values = await super.getAll();
+    // Inspection bypasses the injected read fault.
+    final values = await super.getAllWithParameters(_allFlutter());
     final raw = values['flutter.${LocalReviewStore.catchUpKey}:owner:$scope'];
     return CatchUpLocalState.fromJson(jsonDecode(raw as String));
   }
 
   Future<List<Map<String, dynamic>>> reviews(String scope) async {
-    final values = await super.getAll();
+    // Inspection bypasses the injected read fault.
+    final values = await super.getAllWithParameters(_allFlutter());
     final raw = values['flutter.recall_outbox_v1:owner:$scope'];
     if (raw == null) return [];
     return [
