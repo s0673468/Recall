@@ -52,4 +52,9 @@ config/supabase.local.json
 
 # Local tooling state (pr-shepherd audit ledger, etc.) — not repo content
 reports/
-!/docs/reports/
+
+# Keep the requested reports while ignoring disposable local reports.
+!docs/reports/
+docs/reports/*
+!docs/reports/mutation-sweep-recall-20261017.md
+!docs/reports/audit-recall-20261017.md
