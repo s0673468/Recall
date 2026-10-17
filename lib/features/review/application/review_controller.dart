@@ -516,9 +516,15 @@ class ReviewController extends ChangeNotifier {
 
   /// [sessionReady] is set by the account setup itself, which must load the
   /// queue directly rather than wait on (or re-run) its own setup.
-  Future<void> _loadSafely({int? deckId, bool sessionReady = false}) async {
+  Future<void> _loadSafely({
+    int? deckId,
+    bool keepReviewed = true,
+    bool sessionReady = false,
+  }) async {
     try {
-      await (sessionReady ? _loadQueue(deckId: deckId) : load(deckId: deckId));
+      await (sessionReady
+          ? _loadQueue(deckId: deckId, keepReviewed: keepReviewed)
+          : load(deckId: deckId, keepReviewed: keepReviewed));
     } on LocalOutboxCorruptException {
       // Durable writes must fail closed, but malformed local storage must not
       // become another startup crash. Stop the session and surface a stable
@@ -1335,7 +1341,9 @@ class ReviewController extends ChangeNotifier {
     }
   }
 
-  Future<void> refresh() => load(deckId: _state.deckFilter);
+  /// Retry/reload uses the startup recovery path: a corrupt outbox shows the
+  /// same recovery message instead of escaping from the button's callback.
+  Future<void> refresh() => _loadSafely(deckId: _state.deckFilter);
 
   /// Refreshes a stale aggregate after foregrounding without displacing an
   /// active card. The outbox is flushed by [load] before the cloud count is
@@ -1351,8 +1359,10 @@ class ReviewController extends ChangeNotifier {
     return _loadSafely(deckId: _state.deckFilter);
   }
 
+  /// Deck switching also uses the recovery path, so a corrupt outbox shows the
+  /// recovery message instead of escaping from the deck picker.
   Future<void> selectDeck(int? deckId) =>
-      load(deckId: deckId, keepReviewed: false);
+      _loadSafely(deckId: deckId, keepReviewed: false);
 
   /// Opt into the currently offered catch-up episode. This only changes the
   /// local presentation list; it does not reload, reschedule, or write a card.
