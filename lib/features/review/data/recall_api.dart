@@ -20,6 +20,11 @@ class RecallApi implements ReviewReplayGateway {
   final Future<void> Function(String)? _persistSession;
   final Future<void> Function()? _removePersistedSession;
 
+  /// Local wall time and calendar that bound the daily new-card budget. Tests
+  /// pin both to cover daylight-saving days in any host time zone.
+  final DateTime Function() _localNow;
+  final DateTime Function(int year, int month, int day) _localMidnight;
+
   /// The exact confirmation phrase required before a DIR-1b optimizer result
   /// can write the user's scheduling settings.
   static const fsrsApplyConfirmation = 'APPLY_PERSONAL_FSRS';
@@ -29,8 +34,12 @@ class RecallApi implements ReviewReplayGateway {
     this.client, {
     Future<void> Function(String)? persistSession,
     Future<void> Function()? removePersistedSession,
+    DateTime Function()? localNow,
+    DateTime Function(int year, int month, int day)? localMidnight,
   }) : _persistSession = persistSession,
-       _removePersistedSession = removePersistedSession;
+       _removePersistedSession = removePersistedSession,
+       _localNow = localNow ?? DateTime.now,
+       _localMidnight = localMidnight ?? DateTime.new;
 
   static const _cardSelect =
       'id,guid,stability,difficulty,due,state,reps,lapses,last_review,'
@@ -287,11 +296,6 @@ class RecallApi implements ReviewReplayGateway {
       excludeCardIds,
     );
     final nowIso = DateTime.now().toUtc().toIso8601String();
-    final introducedToday = await _newCardsIntroducedToday(
-      deckId: deckId,
-      includedDeckIds: included,
-    );
-    final remainingNewLimit = (newLimit - introducedToday).clamp(0, newLimit);
 
     // Suspended cards (cards.suspended = true, set one-way by the desktop
     // importer) are dormant — never queued as due or new. Filtered server-side
@@ -329,9 +333,24 @@ class RecallApi implements ReviewReplayGateway {
     // newest_first inverts the id order; random still fetches a stable page
     // (id asc) and shuffles client-side so the same cards recur across loads.
     final newAscending = order != NewOrder.newestFirst;
+    // Only the new-card page depends on today's introduction count. Due paging
+    // starts alongside that history read instead of waiting behind it, so the
+    // queue costs the longer of the two chains rather than their sum.
     final results = await Future.wait<List<Map<String, dynamic>>>([
       _fetchAllDueRows(dueQ),
-      newQ.order('id', ascending: newAscending).limit(remainingNewLimit),
+      () async {
+        final introducedToday = await _newCardsIntroducedToday(
+          deckId: deckId,
+          includedDeckIds: included,
+        );
+        final remainingNewLimit = (newLimit - introducedToday).clamp(
+          0,
+          newLimit,
+        );
+        return newQ
+            .order('id', ascending: newAscending)
+            .limit(remainingNewLimit);
+      }(),
     ]);
     final dueRows = results[0];
     final newRows = results[1];
@@ -544,13 +563,21 @@ class RecallApi implements ReviewReplayGateway {
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return 0;
-    final localNow = DateTime.now();
-    final localStart = DateTime(localNow.year, localNow.month, localNow.day);
+    final localNow = _localNow();
+    final localStart = _localMidnight(
+      localNow.year,
+      localNow.month,
+      localNow.day,
+    );
+    // The day ends at the next local midnight, not 24 hours later: a
+    // daylight-saving day lasts 23 or 25 hours.
+    final localEnd = _localMidnight(
+      localNow.year,
+      localNow.month,
+      localNow.day + 1,
+    );
     final startIso = localStart.toUtc().toIso8601String();
-    final endIso = localStart
-        .add(const Duration(days: 1))
-        .toUtc()
-        .toIso8601String();
+    final endIso = localEnd.toUtc().toIso8601String();
 
     final logSelect = deckId == null && included == null
         ? 'id,card_id'

@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show User;
 
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
@@ -37,11 +38,20 @@ class _Native extends InMemorySharedPreferencesStore {
   bool failReads = false;
   bool failReadsAfterThrow = false;
 
+  // Full and keyed native reads share one fault gate.
   @override
-  Future<Map<String, Object>> getAll() {
+  Future<Map<String, Object>> getAll() => getAllWithParameters(_allFlutter());
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) {
     if (failReads) throw StateError('Invented native read failure');
-    return super.getAll();
+    return super.getAllWithParameters(parameters);
   }
+
+  static GetAllParameters _allFlutter() =>
+      GetAllParameters(filter: PreferencesFilter(prefix: 'flutter.'));
 
   @override
   Future<bool> setValue(String valueType, String key, Object value) async {
@@ -67,7 +77,8 @@ class _Native extends InMemorySharedPreferencesStore {
 
   /// Persisted rows for one outbox base key, across owner scopes.
   Future<List<Map<String, dynamic>>> rows(String base) async {
-    final values = await super.getAll();
+    // Inspection bypasses the injected read fault.
+    final values = await super.getAllWithParameters(_allFlutter());
     return [
       for (final entry in values.entries)
         if (entry.key.contains(base))

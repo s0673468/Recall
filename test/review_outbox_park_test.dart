@@ -178,6 +178,27 @@ class _StateController extends ChangeNotifier implements ReviewController {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// Records the per-send and batched attempt marks of a flush (#136).
+class _RecordingStore extends LocalReviewStore {
+  final single = <Object>[];
+  final batches = <List<Object>>[];
+
+  @override
+  Future<bool> markReviewAttempted(Object clientId, {String? ownerScope}) {
+    single.add(clientId);
+    return super.markReviewAttempted(clientId, ownerScope: ownerScope);
+  }
+
+  @override
+  Future<Set<Object>> markReviewsAttempted(
+    Iterable<Object> clientIds, {
+    String? ownerScope,
+  }) {
+    batches.add([...clientIds]);
+    return super.markReviewsAttempted(clientIds, ownerScope: ownerScope);
+  }
+}
+
 Future<T> _bounded<T>(Future<T> future) => future.timeout(_waitLimit);
 
 void main() {
@@ -262,6 +283,45 @@ void main() {
         expect(controller.state.syncErrors, 0);
       });
     }
+
+    test('a park before the first delivery keeps the batched marks', () async {
+      final recording = _RecordingStore();
+      server.responses['ev-orphan'] = _foreignKeyRefusal;
+      server.responses['ev-b'] = (r) => _json(r, 200, 101);
+      server.responses['ev-c'] = (r) => _json(r, 200, 102);
+      server.responses['ev-d'] = (r) => _json(r, 200, 103);
+      for (final (card, id) in [
+        (41, 'ev-orphan'),
+        (42, 'ev-b'),
+        (43, 'ev-c'),
+        (44, 'ev-d'),
+      ]) {
+        await recording.enqueueReview(_entry(card, id));
+      }
+      final controller = server.controller(recording);
+      addTearDown(controller.dispose);
+
+      await controller.syncPending();
+
+      expect(server.requests, ['ev-orphan', 'ev-b', 'ev-c', 'ev-d']);
+      // The refusal proves nothing about the transport: the first delivery
+      // does, and only then is the rest marked in one write.
+      expect(recording.single, ['ev-orphan', 'ev-b']);
+      expect(recording.batches, [
+        ['ev-c', 'ev-d'],
+      ]);
+      final kept = await recording.outbox();
+      expect(kept.map((e) => e['client_id']), ['ev-orphan']);
+      expect(kept.single['delivery_attempted'], isTrue);
+      expect(controller.state.pendingSync, 1);
+      expect(controller.state.syncErrors, 1);
+
+      // The next pass skips the parked review without marking it again.
+      await controller.syncPending();
+      expect(server.requests, hasLength(4));
+      expect(recording.single, ['ev-orphan', 'ev-b']);
+      expect(recording.batches, hasLength(1));
+    });
 
     test('a restart retries the parked review and drains its ACK', () async {
       server.responses['ev-orphan'] = _foreignKeyRefusal;
@@ -390,6 +450,54 @@ void main() {
       expect(controller.state.syncErrors, 1);
     });
 
+    test('a delivery after a parked review clears offline', () async {
+      await _bounded(
+        store.enqueueReview(
+          _entry(_FixtureApi.deletedCardId, 'invented-orphan-event'),
+        ),
+      );
+      await _bounded(controller.syncPending());
+      expect(controller.state.syncErrors, 1);
+
+      api.online = false;
+      await _bounded(controller.load(deckId: 1));
+      expect(controller.state.offline, isTrue);
+      final cardA = controller.state.current!.id;
+      controller.flip();
+      await _bounded(controller.rate(Rating.good));
+      expect(api.appliedReviewCardIds, isEmpty);
+
+      api.online = true;
+      await _bounded(controller.syncPending());
+
+      expect(api.appliedReviewCardIds, [cardA]);
+      expect(await queuedCardIds(), [_FixtureApi.deletedCardId]);
+      expect(controller.state.offline, isFalse);
+      expect(controller.state.pendingSync, 1);
+      expect(controller.state.syncErrors, 1);
+    });
+
+    test('a sync that only parks a review keeps the session offline', () async {
+      api.online = false;
+      await _bounded(controller.load(deckId: 1));
+      expect(controller.state.offline, isTrue);
+      await _bounded(
+        store.enqueueReview(
+          _entry(_FixtureApi.deletedCardId, 'invented-orphan-event'),
+        ),
+      );
+
+      api.online = true;
+      await _bounded(controller.syncPending());
+
+      // Only a delivery clears offline, as for any flush that delivers nothing.
+      expect(api.attempts, [_FixtureApi.deletedCardId]);
+      expect(api.appliedReviewCardIds, isEmpty);
+      expect(controller.state.offline, isTrue);
+      expect(controller.state.pendingSync, 1);
+      expect(controller.state.syncErrors, 1);
+    });
+
     test('Keep going is not held offline by a parked review', () async {
       await _bounded(
         store.enqueueReview(
@@ -451,5 +559,50 @@ void main() {
     expect(find.text('1 couldn’t sync'), findsOneWidget);
     await pump(2, 0);
     expect(find.text('2 syncing'), findsOneWidget);
+  });
+
+  testWidgets('the study header keeps the server-error label with refusals', (
+    tester,
+  ) async {
+    final card = ReviewCard(
+      id: 7,
+      guid: 'invented-header',
+      deckId: 1,
+      front: 'Invented front',
+      back: 'Invented back',
+      hasLatex: false,
+      stability: 3,
+      difficulty: 5,
+      due: DateTime.utc(2026, 10, 1),
+      state: 2,
+      reps: 3,
+      lapses: 0,
+      lastReview: DateTime.utc(2026, 9, 28),
+    );
+    Future<void> pump({required bool serverError}) async {
+      final controller = _StateController(
+        ReviewState(
+          loading: false,
+          queue: [card],
+          offline: true,
+          serverError: serverError,
+          pendingSync: 3,
+          syncErrors: 1,
+        ),
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StudyScreen(controller: controller, nativeIos: false),
+          ),
+        ),
+      );
+    }
+
+    await pump(serverError: true);
+    expect(find.text('Server error · 3 waiting to sync'), findsOneWidget);
+    await pump(serverError: false);
+    expect(find.text('Offline · 3 waiting to sync'), findsOneWidget);
   });
 }
