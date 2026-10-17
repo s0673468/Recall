@@ -108,6 +108,10 @@ class ReviewController extends ChangeNotifier {
   /// Wall clock, injectable so tests can drive the elapsed-time stopwatch.
   final DateTime Function() clock;
 
+  /// How long one review send may take before the flush gives up on it and
+  /// leaves it queued. Injectable so tests need not wait the full bound.
+  final Duration reviewSendTimeout;
+
   /// Study preferences (new-card limit, retention, ordering). Optional so the
   /// existing test harness can construct the controller without one.
   final RecallPrefsController? prefs;
@@ -136,6 +140,7 @@ class ReviewController extends ChangeNotifier {
     ReviewHaptics? haptics,
     OperationalEventRecorder? diagnostics,
     DateTime Function()? clock,
+    this.reviewSendTimeout = const Duration(seconds: 15),
   }) : haptics = haptics ?? ReviewHaptics.forPlatform(),
        diagnostics = diagnostics ?? RecallDiagnostics.instance,
        clock = clock ?? DateTime.now {
@@ -2685,7 +2690,10 @@ class ReviewController extends ChangeNotifier {
   Future<void> _runFlushLoop() async {
     do {
       _flushFollowUp = false;
-      await _flushOnce();
+      // After a send timed out, a follow-up pass would only repeat the wait
+      // that Undo, Keep going and sign-out are already joining. The next
+      // rating, resume or reconnect retries instead.
+      if (await _flushOnce()) break;
     } while (_flushFollowUp);
   }
 
@@ -2699,10 +2707,12 @@ class ReviewController extends ChangeNotifier {
   /// refusal parks only that review and continues. Drain captured,
   /// server-acknowledged identities, even when another tab already removed one;
   /// a stale delivered count must never remove a later queued action.
-  Future<void> _flushOnce() async {
+  ///
+  /// Returns true when a send timed out (see [reviewSendTimeout]).
+  Future<bool> _flushOnce() async {
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
-    if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
+    if (!_flushStillOwnsSession(ownerId, ownerScope)) return false;
     final pending = await store.outbox(ownerScope: ownerScope);
     final parked = _parkedReviews.putIfAbsent(ownerScope, () => {});
     if (pending.isEmpty) {
@@ -2711,9 +2721,10 @@ class ReviewController extends ChangeNotifier {
           _state.syncErrors != 0) {
         _set(_state.copyWith(syncErrors: 0));
       }
-      return;
+      return false;
     }
 
+    var timedOut = false;
     final acknowledged = <Map<String, dynamic>>[];
     final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
       pending,
@@ -2745,7 +2756,13 @@ class ReviewController extends ChangeNotifier {
           _undo = null;
           _showFlagNotice('Synced reviews cannot be undone');
         }
-        await api.applyReview(entry);
+        // A dead connection can hold a request open for minutes, and Undo,
+        // Keep going and sign-out wait for this pass. Stop waiting after the
+        // bound: the review stays queued, and apply_review dedupes its replay
+        // on client_event_id even if the abandoned request lands later. A
+        // legacy review without that id keeps the unbounded wait.
+        final send = api.applyReview(entry);
+        await (eventId == null ? send : send.timeout(reviewSendTimeout));
         acknowledged.add(entry);
         if (batchMarked == null && index + 1 < pending.length) {
           if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
@@ -2762,6 +2779,7 @@ class ReviewController extends ChangeNotifier {
           parked.add(deliveryId!);
           continue;
         }
+        timedOut = error is TimeoutException;
         debugPrint('Recall: review sync deferred (offline?)');
         break;
       }
@@ -2777,7 +2795,7 @@ class ReviewController extends ChangeNotifier {
       for (final entry in pending) LocalReviewStore.reviewDeliveryId(entry),
     };
     parked.retainWhere(queuedIds.contains);
-    if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
+    if (!_flushStillOwnsSession(ownerId, ownerScope)) return timedOut;
     // A delivered review proves the server is reachable again. Without this,
     // a session that went offline mid-way stays offline until its next load,
     // and the rating path keeps every later review off the network. A parked
@@ -2794,6 +2812,7 @@ class ReviewController extends ChangeNotifier {
         ),
       );
     }
+    return timedOut;
   }
 
   /// Mark the rest of this pass's sendable prefix attempted in one native
