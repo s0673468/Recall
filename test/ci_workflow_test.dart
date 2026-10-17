@@ -42,11 +42,14 @@ void main() {
         reason: '$job must stay retired',
       );
     }
+    // The required `flutter` context gates these two; see the shard test below.
     const maintainedCommands = {
-      'flutter': [
+      'flutter-checks': [
         './tool/flutterw analyze',
-        './tool/flutterw test --reporter=failures-only --exclude-tags apple-mobile',
         "python3 -m unittest discover -s tool/tests -p 'test_*.py'",
+      ],
+      'flutter-tests': [
+        './tool/flutterw test --reporter=failures-only --exclude-tags apple-mobile',
       ],
       'android-build': [
         './tool/flutterw build apk --debug --no-pub',
@@ -105,6 +108,8 @@ void main() {
     for (final job in [
       'concept-sync-safety:',
       'flutter:',
+      'flutter-checks:',
+      'flutter-tests:',
       'android-build:',
       'android-gradle-checks:',
       'android-native:',
@@ -199,6 +204,56 @@ void main() {
       ),
     );
     expect(gate, contains('runs-on: ubuntu-latest'));
+  });
+
+  test('Flutter tests run as hosted file shards behind the required check', () {
+    String job(String name) => ci
+        .readAsStringSync()
+        .split('\n  $name:\n')
+        .last
+        .split(RegExp(r'\n  [a-z0-9-]+:\n'))
+        .first;
+
+    final shards = job('flutter-tests');
+    // Built-in --total-shards slices tests inside every file, so each shard
+    // would still compile the whole suite. Shards are whole files instead.
+    expect(shards, isNot(contains('--total-shards')));
+    expect(shards, isNot(contains('--shard-index')));
+    expect(
+      shards,
+      contains(
+        'python3 tool/flutter_test_shards.py --total "\$SHARD_TOTAL" '
+        '--index "\$SHARD_INDEX"',
+      ),
+    );
+    expect(shards, contains('--concurrency=4'));
+    expect(shards, contains('fail-fast: false'));
+    final total = int.parse(
+      RegExp(r'SHARD_TOTAL: (\d+)').firstMatch(shards)!.group(1)!,
+    );
+    final matrix = RegExp(r'shard: \[([0-9, ]+)\]').firstMatch(shards)!;
+    expect(
+      matrix.group(1)!.split(',').map((s) => int.parse(s.trim())),
+      orderedEquals(List.generate(total, (i) => i)),
+      reason: 'the matrix must run every shard index exactly once',
+    );
+    expect(shards, contains(r'SHARD_INDEX: ${{ matrix.shard }}'));
+
+    // The required `flutter` context must fail unless every lane succeeded;
+    // a plain `needs` would be skipped on failure, which counts as passing.
+    final gate = job('flutter');
+    expect(gate, contains('\n    if: always()\n'));
+    expect(gate, contains('needs: [flutter-checks, flutter-tests]'));
+    expect(gate, contains(r'${{ needs.flutter-checks.result }}'));
+    expect(gate, contains(r'${{ needs.flutter-tests.result }}'));
+    expect(
+      gate,
+      contains(
+        r'[[ "$CHECKS_RESULT" == success && "$TESTS_RESULT" == success ]]',
+      ),
+    );
+    expect(gate, contains('runs-on: ubuntu-latest'));
+    expect(gate, contains('contents: read'));
   });
 
   test('public workflows stay on GitHub-hosted runners', () {

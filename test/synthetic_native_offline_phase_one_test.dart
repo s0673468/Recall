@@ -15,6 +15,7 @@ import 'package:health_anki_flutter/features/review/application/review_haptics.d
 
 import '../tool/fixtures/synthetic_native_offline_restart_main.dart';
 import '../tool/fixtures/synthetic_recall_flow.dart';
+import 'support/instant_retry_backoff.dart';
 
 Future<void> withGeneratedFlow(
   Future<void> Function(
@@ -44,7 +45,8 @@ Future<void> withGeneratedFlow(
     haptics: const ReviewHaptics(),
   );
   try {
-    await body(transport, controller, store);
+    // Offline reads retry with postgrest's backoff; skip the real sleeps.
+    await withInstantRetryBackoff(() => body(transport, controller, store));
   } finally {
     controller.dispose();
     await store.outbox();
