@@ -161,6 +161,8 @@ void main() {
       final queue = await RecallApi(
         transport.client,
         localNow: () => now,
+        // Keep the day boundaries aligned with the UTC fixtures on every host.
+        localMidnight: DateTime.utc,
       ).fetchQueue(newLimit: 3);
       expect(queue.map((card) => card.id), [1, 2]);
     },
