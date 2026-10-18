@@ -22,9 +22,31 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = 'lib/features/review/application/fsrs_engine.dart'
+API = 'lib/features/review/data/recall_api.dart'
+CONTROLLER = 'lib/features/review/application/review_controller.dart'
 STORE = 'lib/features/review/data/local_review_store.dart'
 REPLAY = 'lib/features/review/data/review_replay.dart'
 TESTS = {
+    # The older calendar transport assumes a four-character `lte.` prefix;
+    # strict-cutoff probes use transports that accept either wire operator.
+    'queue_cutoff_edges': [
+        'test/recall_api_queue_round_trips_test.dart',
+        'test/recall_api_introduction_pagination_test.dart',
+    ],
+    'schedule_edges': [
+        'test/recall_fsrs_test.dart',
+        'test/review_date_boundaries_test.dart',
+        'test/mutation_sweep_regressions_test.dart',
+    ],
+    'queue_edges': [
+        'test/review_date_boundaries_test.dart',
+        'test/recall_api_queue_round_trips_test.dart',
+        'test/recall_api_introduction_pagination_test.dart',
+    ],
+    'controller_edges': [
+        'test/recall_review_controller_test.dart',
+        'test/review_date_boundaries_test.dart',
+    ],
     'schedule': ['test/recall_fsrs_test.dart'],
     'outbox': [
         'test/recall_offline_store_test.dart',
@@ -36,6 +58,7 @@ TESTS = {
     'replay': ['test/recall_multi_device_sync_test.dart'],
 }
 REGRESSIONS = 'test/mutation_sweep_regressions_test.dart'
+SCHEDULING_REGRESSIONS = 'test/review_scheduling_mutation_test.dart'
 
 
 @dataclass(frozen=True)
@@ -48,6 +71,39 @@ class Mutation:
 
 
 MUTATIONS = [
+    Mutation('S11', 'schedule_edges', ENGINE, 'stability: stability,', 'stability: c.difficulty,'),
+    Mutation('S12', 'schedule_edges', ENGINE, 'difficulty: c.difficulty,', 'difficulty: 5,'),
+    Mutation('S13', 'schedule_edges', ENGINE, 'lastReview: c.lastReview,', 'lastReview: null,'),
+    Mutation('S14', 'schedule_edges', ENGINE, 'final gap = due.difference(lastReview);', 'final gap = lastReview.difference(due);'),
+    Mutation('S15', 'schedule_edges', ENGINE, 'final learning = c.state != 2 && c.state != 3;', 'final learning = c.state != 2 || c.state != 3;'),
+    Mutation('S16', 'schedule_edges', ENGINE, 'c.stability! > _parameters[2]', 'c.stability! > _parameters[1]'),
+    Mutation('S17', 'schedule_edges', ENGINE, '? _parameters[2]\n        : c.stability;', '? _parameters[1]\n        : c.stability;'),
+    Mutation('S18', 'schedule_edges', ENGINE, 'rating,\n      reviewDateTime: when,', 'Rating.good,\n      reviewDateTime: when,'),
+    Mutation('S19', 'schedule_edges', ENGINE, 'reviewDateTime: when,', 'reviewDateTime: when.add(const Duration(days: 1)),'),
+    # Equivalent with pinned fsrs 2.0.1: reviewCard overwrites input due using
+    # reviewDateTime + interval; retrievability uses lastReview. Recall's step
+    # reconstruction still reads the original ReviewCard.due in either case.
+    Mutation('S20', 'schedule_edges', ENGINE, 'due: c.due ?? when,', 'due: when,'),
+    Mutation('Q01', 'queue_cutoff_edges', API, ".lte('due', nowIso);", ".lt('due', nowIso);"),
+    Mutation('Q02', 'queue_edges', API, 'final nowIso = now.toUtc().toIso8601String();', 'final nowIso = now.toUtc().add(const Duration(days: 1)).toIso8601String();'),
+    Mutation('Q03', 'queue_edges', API, 'now.toUtc().add(horizon)', 'now.toUtc().subtract(horizon)'),
+    Mutation('Q04', 'queue_cutoff_edges', API, ".lte('due', horizonIso);", ".lt('due', horizonIso);"),
+    Mutation('Q05', 'queue_edges', API, 'now.toUtc().add(horizon)', 'now.toUtc().add(const Duration(hours: 24))'),
+    Mutation('Q06', 'queue_edges', API, 'now: now,\n          deckId: deckId,', 'now: _localNow(),\n          deckId: deckId,'),
+    Mutation('Q07', 'queue_edges', API, 'newOrderDaySeed(now, deckId));\n    }\n\n    final ordinary', 'newOrderDaySeed(_localNow(), deckId));\n    }\n\n    final ordinary'),
+    Mutation('Q08', 'queue_edges', API, 'now.toUtc().add(horizon)', '_localNow().toUtc().add(horizon)'),
+    Mutation('Q09', 'queue_edges', API, '(newLimit - introducedToday)', '(newLimit + introducedToday)'),
+    Mutation('Q10', 'queue_edges', API, 'todayCardIds.difference(seenBefore).length', 'todayCardIds.intersection(seenBefore).length'),
+    Mutation('Q11', 'queue_edges', API, ".lt('rating_at', startIso);", ".lte('rating_at', startIso);"),
+    Mutation('Q12', 'queue_edges', API, ".gte('rating_at', startIso)", ".gt('rating_at', startIso)"),
+    Mutation('Q13', 'queue_edges', API, ".lt('rating_at', endIso);", ".lte('rating_at', endIso);"),
+    Mutation('Q14', 'queue_edges', API, 'final newSlots = limit - ahead.length;', 'final newSlots = limit;'),
+    Mutation('Q15', 'queue_edges', API, 'newOrderDaySeed(now, deckId));\n    }\n    return [...ahead', 'newOrderDaySeed(_localNow(), deckId));\n    }\n    return [...ahead'),
+    Mutation('C01', 'controller_edges', CONTROLLER, '!due.isAfter(clock().toUtc())', 'due.isBefore(clock().toUtc())'),
+    Mutation('C02', 'controller_edges', CONTROLLER, '_preview = engine.preview(card, now: _previewAt);', '_preview = engine.preview(card);'),
+    Mutation('C03', 'controller_edges', CONTROLLER, 'final outcome = engine.review(card, rating, now: reviewedAt);', 'final outcome = engine.review(card, rating);'),
+    Mutation('C04', 'controller_edges', CONTROLLER, 'if (_previewForCardId != card.id) {', 'if (true) {'),
+    Mutation('C05', 'controller_edges', CONTROLLER, 'if (review.at.isBefore(since)) continue;', 'if (!review.at.isAfter(since)) continue;'),
     Mutation('S01', 'schedule', ENGINE, 'reps: c.reps + 1,', 'reps: c.reps,'),
     Mutation('S02', 'schedule', ENGINE, 'lapses: c.lapses + (lapsed ? 1 : 0),', 'lapses: c.lapses + (lapsed ? 0 : 0),'),
     Mutation('S03', 'schedule', ENGINE, 'c.state == 2 || c.state == 3', 'c.state == 2'),
@@ -168,7 +224,10 @@ def run_sweep(args):
     command = ['./tool/flutterw', 'test', '--no-pub', '--concurrency=1',
                '--reporter=expanded', '--exclude-tags', 'apple-mobile']
     def tests(group):
-        return TESTS[group] + ([REGRESSIONS] if args.phase == 'after' else [])
+        regressions = [REGRESSIONS] if args.phase == 'after' else []
+        if args.phase == 'after' and group.endswith('_edges'):
+            regressions.append(SCHEDULING_REGRESSIONS)
+        return list(dict.fromkeys(TESTS[group] + regressions))
     baseline_tests = sorted({p for m in mutations for p in tests(m.group)})
     baseline = run(command + baseline_tests, output / 'baseline.log', args.timeout)
     if baseline['status'] != 'survived':
