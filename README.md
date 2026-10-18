@@ -50,6 +50,10 @@ surface hierarchy, product-accent rules, and cross-platform contract.
 
 ## Data ownership
 
+For read-only study questions in chat, use the
+[Study guide for chat bots](docs/bot-guide-study.md), including schema meanings,
+study metrics, SQL examples, and the connector-only grading boundary.
+
 **Recall's Supabase project is the source of truth for all review and
 scheduling state.** Everything on the device is cache or an outbound write
 buffer — never an authority.
