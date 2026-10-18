@@ -35,7 +35,9 @@ class RecallDependencies {
     this.browserSync,
   });
 
-  static Future<RecallDependencies> create() async {
+  static Future<RecallDependencies> create({
+    DateTime Function() clock = DateTime.now,
+  }) async {
     var startupStage = OperationalCauseCode.startupConfigFailed;
     try {
       final config = await RecallConfig.load();
@@ -59,11 +61,15 @@ class RecallDependencies {
 
       final api = RecallApi(
         client,
+        localNow: clock,
         persistSession: secureSessionStorage?.persistSessionStrict,
         removePersistedSession:
             secureSessionStorage?.removePersistedSessionStrict,
       );
-      final engine = FsrsEngine(desiredRetention: RecallPrefs.defaultRetention);
+      final engine = FsrsEngine(
+        desiredRetention: RecallPrefs.defaultRetention,
+        clock: clock,
+      );
       final prefs = RecallPrefsController(api: api);
       final store = LocalReviewStore();
       final restoredOwner = api.currentUser;
@@ -85,6 +91,7 @@ class RecallDependencies {
         api: api,
         engine: engine,
         store: store,
+        clock: clock,
         prefs: prefs,
         beforeSessionLoad: () async {
           final owner = api.currentUser;

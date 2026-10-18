@@ -5,6 +5,7 @@ import '../data/models.dart';
 /// Wraps the FSRS-6 scheduler. Reconstructs a card from its cloud state, applies
 /// a rating, and returns the columns to persist. FSRS is UTC-only.
 class FsrsEngine {
+  final DateTime Function() _clock;
   late Scheduler _scheduler;
   late List<double> _parameters;
   late double _desiredRetention;
@@ -12,7 +13,11 @@ class FsrsEngine {
       FsrsConfigurationStatus.packageDefaults;
   DateTime? _fittedAt;
 
-  FsrsEngine({List<double>? parameters, double desiredRetention = 0.9}) {
+  FsrsEngine({
+    List<double>? parameters,
+    double desiredRetention = 0.9,
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now {
     _configure(
       parameters: parameters ?? defaultParameters,
       desiredRetention: desiredRetention,
@@ -87,9 +92,9 @@ class FsrsEngine {
 
   /// Build the FSRS card. A new card (state 0, no real stability/difficulty)
   /// becomes a fresh learning card so the first review initialises it.
-  Card _build(ReviewCard c) {
+  Card _build(ReviewCard c, DateTime when) {
     if (c.isNew || (c.stability ?? 0) <= 0) {
-      return Card(cardId: c.id);
+      return Card(cardId: c.id, due: when);
     }
     // Learning cards can't have legitimately earned more stability than a
     // first Good press (w[2], ~3 days) plus short-term noise — Easy graduates
@@ -120,7 +125,7 @@ class FsrsEngine {
       },
       stability: stability,
       difficulty: c.difficulty,
-      due: c.due ?? DateTime.now().toUtc(),
+      due: c.due ?? when,
       lastReview: c.lastReview,
     );
   }
@@ -145,9 +150,9 @@ class FsrsEngine {
   }
 
   ReviewOutcome review(ReviewCard c, Rating rating, {DateTime? now}) {
-    final when = (now ?? DateTime.now()).toUtc();
+    final when = (now ?? _clock()).toUtc();
     final result = _scheduler.reviewCard(
-      _build(c),
+      _build(c, when),
       rating,
       reviewDateTime: when,
     );
@@ -169,19 +174,21 @@ class FsrsEngine {
   /// Current FSRS retrievability for presentation-only queue ranking. This
   /// delegates to the package scheduler's forgetting-curve implementation; it
   /// never mutates the card or produces a scheduling write.
-  double retrievability(ReviewCard c, {DateTime? now}) =>
-      _scheduler.getCardRetrievability(
-        _build(c),
-        currentDateTime: (now ?? DateTime.now()).toUtc(),
-      );
+  double retrievability(ReviewCard c, {DateTime? now}) {
+    final when = (now ?? _clock()).toUtc();
+    return _scheduler.getCardRetrievability(
+      _build(c, when),
+      currentDateTime: when,
+    );
+  }
 
   /// Predicted next-due for each of the four ratings (powers the button labels).
   Map<Rating, DateTime> preview(ReviewCard c, {DateTime? now}) {
-    final when = (now ?? DateTime.now()).toUtc();
+    final when = (now ?? _clock()).toUtc();
     return {
       for (final r in Rating.values)
         r: _scheduler
-            .reviewCard(_build(c), r, reviewDateTime: when)
+            .reviewCard(_build(c, when), r, reviewDateTime: when)
             .card
             .due
             .toUtc(),
