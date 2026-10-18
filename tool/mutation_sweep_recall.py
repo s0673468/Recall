@@ -57,7 +57,7 @@ MUTATIONS = [
     Mutation('S07', 'schedule', ENGINE, '3 => State.relearning,', '3 => State.review,'),
     Mutation('S08', 'schedule', ENGINE, 'if (c.isNew || (c.stability ?? 0) <= 0)', 'if (c.isNew && (c.stability ?? 0) <= 0)'),
     Mutation('S09', 'schedule', ENGINE, '_configure(parameters: _parameters, desiredRetention: desiredRetention);', '_configure(parameters: defaultParameters, desiredRetention: desiredRetention);'),
-    Mutation('S10', 'schedule', ENGINE, 'currentDateTime: (now ?? DateTime.now()).toUtc(),', 'currentDateTime: (now ?? DateTime.now()).toUtc().add(const Duration(days: 1)),'),
+    Mutation('S10', 'schedule', ENGINE, 'currentDateTime: when,', 'currentDateTime: when.add(const Duration(days: 1)),'),
     Mutation('O01', 'outbox', STORE, "'delivery_attempted': entry['delivery_attempted'] ?? false,", "'delivery_attempted': entry['delivery_attempted'] ?? true,"),
     Mutation('O02', 'outbox', STORE, "e['client_id'] == clientId && e['delivery_attempted'] == false", "e['client_id'] == clientId && e['delivery_attempted'] != true"),
     Mutation('O03', 'outbox', STORE, 'Object key(Object id) => id is int ? id.toString() : id;', 'Object key(Object id) => id;'),
