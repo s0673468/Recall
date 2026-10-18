@@ -20,8 +20,8 @@ class RecallApi implements ReviewReplayGateway {
   final Future<void> Function(String)? _persistSession;
   final Future<void> Function()? _removePersistedSession;
 
-  /// Local wall time and calendar that bound the daily new-card budget. Tests
-  /// pin both to cover daylight-saving days in any host time zone.
+  /// Shared wall clock for queue cutoffs, daily budgets and review history.
+  /// The calendar seam lets tests cover DST in any host time zone.
   final DateTime Function() _localNow;
   final DateTime Function(int year, int month, int day) _localMidnight;
 
@@ -290,12 +290,14 @@ class RecallApi implements ReviewReplayGateway {
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
+    // Keep one cutoff and local day even if network reads cross midnight.
+    final now = _localNow();
     final revalidationsFuture = _fetchContentRevalidationQueueOrEmpty(
       deckId,
       included,
       excludeCardIds,
     );
-    final nowIso = DateTime.now().toUtc().toIso8601String();
+    final nowIso = now.toUtc().toIso8601String();
 
     // Suspended cards (cards.suspended = true, set one-way by the desktop
     // importer) are dormant — never queued as due or new. Filtered server-side
@@ -340,6 +342,7 @@ class RecallApi implements ReviewReplayGateway {
       _fetchAllDueRows(dueQ),
       () async {
         final introducedToday = await _newCardsIntroducedToday(
+          now: now,
           deckId: deckId,
           includedDeckIds: included,
         );
@@ -359,10 +362,7 @@ class RecallApi implements ReviewReplayGateway {
       for (final r in newRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
     ];
     if (order == NewOrder.random) {
-      newCards = seededShuffle(
-        newCards,
-        newOrderDaySeed(DateTime.now(), deckId),
-      );
+      newCards = seededShuffle(newCards, newOrderDaySeed(now, deckId));
     }
 
     final ordinary = [
@@ -558,24 +558,16 @@ class RecallApi implements ReviewReplayGateway {
   /// per-fetch page size. Repeated reviews of a card already present in the
   /// pre-day history do not consume another new-card slot.
   Future<int> _newCardsIntroducedToday({
+    required DateTime now,
     int? deckId,
     Set<int>? includedDeckIds,
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return 0;
-    final localNow = _localNow();
-    final localStart = _localMidnight(
-      localNow.year,
-      localNow.month,
-      localNow.day,
-    );
+    final localStart = _localMidnight(now.year, now.month, now.day);
     // The day ends at the next local midnight, not 24 hours later: a
     // daylight-saving day lasts 23 or 25 hours.
-    final localEnd = _localMidnight(
-      localNow.year,
-      localNow.month,
-      localNow.day + 1,
-    );
+    final localEnd = _localMidnight(now.year, now.month, now.day + 1);
     final startIso = localStart.toUtc().toIso8601String();
     final endIso = localEnd.toUtc().toIso8601String();
 
@@ -675,8 +667,8 @@ class RecallApi implements ReviewReplayGateway {
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return const [];
-    final now = DateTime.now().toUtc();
-    final horizonIso = now.add(horizon).toIso8601String();
+    final now = _localNow();
+    final horizonIso = now.toUtc().add(horizon).toIso8601String();
 
     PostgrestFilterBuilder<List<Map<String, dynamic>>> aheadQ = client
         .from('cards')
@@ -723,10 +715,7 @@ class RecallApi implements ReviewReplayGateway {
       for (final r in newRows) ReviewCard.fromRow(Map<String, dynamic>.from(r)),
     ];
     if (order == NewOrder.random) {
-      newCards = seededShuffle(
-        newCards,
-        newOrderDaySeed(DateTime.now(), deckId),
-      );
+      newCards = seededShuffle(newCards, newOrderDaySeed(now, deckId));
     }
     return [...ahead, ...newCards];
   }
@@ -1072,7 +1061,7 @@ class RecallApi implements ReviewReplayGateway {
   /// Enriched review-log rows (local timestamp, rating, post-review state and
   /// scheduled due) for the Stats screen's heatmap + retention.
   Future<List<ReviewLogEntry>> fetchReviewLog({int days = 190}) async {
-    final since = DateTime.now()
+    final since = _localNow()
         .toUtc()
         .subtract(Duration(days: days))
         .toIso8601String();

@@ -1053,7 +1053,7 @@ class ReviewController extends ChangeNotifier {
   /// two separate review-log round-trips on every load.
   Future<_RecentReviews> _fetchRecentReviews() async {
     // Mirror the server-side window RecallApi.fetchReviewLog(days: 2) applied.
-    final activitySince = DateTime.now().toUtc().subtract(
+    final activitySince = clock().toUtc().subtract(
       const Duration(days: _reviewActivityDays),
     );
     try {
