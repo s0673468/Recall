@@ -1,6 +1,6 @@
 --- a/lib/features/review/application/review_controller.dart
 +++ b/lib/features/review/application/review_controller.dart
-@@ -2673,6 +2673,10 @@
+@@ -2753,6 +2753,10 @@
      } while (_flushFollowUp);
    }
  
@@ -8,21 +8,22 @@
 +  // event still receives its own durable attempted marker before transport.
 +  static const int _reviewFlushCheckpointSize = 32;
 +
-   /// Send queued reviews oldest-first. Stops at the first failure (keeps the
-   /// rest queued) so a flaky network never drops a review. Drain captured,
-   /// server-acknowledged identities, even when another tab already removed one;
-@@ -2685,6 +2689,7 @@
-     if (pending.isEmpty) return;
- 
+   /// Reviews the server permanently refused, by owner scope and delivery id.
+   /// They stay in the durable outbox (and in [ReviewState.pendingSync]) but
+   /// are skipped until the app restarts, so one can never hold the rest.
+@@ -2785,6 +2789,7 @@
+     // local storage error: only the network's answer says it is unreachable.
+     Object? sendFailure;
      final acknowledged = <Map<String, dynamic>>[];
 +    var cacheInvalidated = false;
      final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
        pending,
        legacyReviews: true,
-@@ -2727,9 +2732,24 @@
+@@ -2844,10 +2849,25 @@
+         if (sending) sendFailure = error;
          debugPrint('Recall: review sync deferred (offline?)');
          break;
-       }
++      }
 +      if (acknowledged.length >= _reviewFlushCheckpointSize) {
 +        if (!cacheInvalidated) {
 +          RecallReadCache.of(api).reviewsChanged();
@@ -35,7 +36,7 @@
 +          ownerScope: ownerScope,
 +        );
 +        acknowledged.clear();
-+      }
+       }
      }
      // Delivered reviews changed the server's log and due dates.
 -    if (acknowledged.isNotEmpty) RecallReadCache.of(api).reviewsChanged();

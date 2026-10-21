@@ -176,7 +176,7 @@ class PreparerTests(unittest.TestCase):
         # loading production files into the invented unit fixture. The pinned
         # ACK-batch experiment is independently source-bound before compilation.
         real=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
-        self.assertEqual(H(real),'8c4a898149000014b2788bbfaf94a49b309fc2ab7895be2d3646f2c583e5c50e')
+        self.assertEqual(H(real),'a9926485223b74582a2e2847103d51c72bbe398f77b048cd0d2413a36e5aeb0b')
         self.assertEqual(prepare.apply_checkpoint(self.BASE,self.PATCH),self.RESULT)
         for data,payload in [(self.BASE+b'\n',self.PATCH),(self.BASE,self.PATCH+b'\n')]:
             with self.assertRaises(contract.Refused):prepare.apply_checkpoint(data,payload)
