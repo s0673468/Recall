@@ -22,7 +22,7 @@ import time
 PACKAGE = 'com.german.recall.syntheticbenchmark'
 ORIGINAL_PACKAGE = 'com.german.health_anki_flutter'
 BASE_GRADLE_SHA = '729f278b435614cb6c6060000a3cec7ab9ca1de31d42098a5b693921951beb5d'
-BASE_PUBSPEC_SHA = 'e3786a0d20e5e1c776655f23b9ac6b77229b69484be105bcfdd13f1baa02fb97'
+BASE_PUBSPEC_SHA = '026f14092a53baaf2c92539964c18c03f9f43b7416615093b67d2b12daf6222a'
 SENTINEL = 'RECALL_ANDROID_BENCH_JSON '
 SCHEMA = 'recall-synthetic-android/v1'
 FIXTURE_FAILURE_CODES = {'fixture_build_required', 'synthetic_phase_failed'}
@@ -70,8 +70,17 @@ def isolated_gradle(data: bytes) -> bytes:
     return changed.encode()
 
 
+def pubspec_pin_sha(data: bytes) -> str:
+    # Release bumps only touch the single top-level version line, so the pin
+    # ignores its value; every other byte stays pinned. The exact original
+    # hash is still recorded as pubspec_original_sha256 in provenance.
+    normalized, count = re.subn(rb'(?m)^version:[^\n]*$', b'version: <pinned-elsewhere>', data)
+    require(count == 1, 'pubspec_source_pin_changed')
+    return sha(normalized)
+
+
 def technical_assets_only(data: bytes) -> bytes:
-    require(sha(data) == BASE_PUBSPEC_SHA, 'pubspec_source_pin_changed')
+    require(pubspec_pin_sha(data) == BASE_PUBSPEC_SHA, 'pubspec_source_pin_changed')
     # The exact approved base has one assets stanza, containing technical font
     # assets only. The fixture drops every asset stanza and re-adds this closed
     # font directory; no corpus/article/media path can enter its build manifest.

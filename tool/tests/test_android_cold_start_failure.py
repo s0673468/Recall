@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -46,6 +47,15 @@ class TechnicalAssetManifestTests(unittest.TestCase):
                     consumer.technical_assets_only(unapproved)
                 self.assertEqual(caught.exception.code, 'pubspec_source_pin_changed')
 
+
+    def test_version_only_bump_keeps_pin_but_extra_version_line_is_refused(self):
+        manifest = (SCRIPT.parent.parent / 'pubspec.yaml').read_bytes()
+        bumped = re.sub(rb'(?m)^version:[^\n]*$', b'version: 99.0.0+99999', manifest)
+        self.assertNotEqual(bumped, manifest)
+        self.assertIn(b'version: 99.0.0+99999\n', consumer.technical_assets_only(bumped))
+        with self.assertRaises(consumer.Refused) as caught:
+            consumer.technical_assets_only(bumped + b'version: 1.0.0+1\n')
+        self.assertEqual(caught.exception.code, 'pubspec_source_pin_changed')
 
 class ClosedFailureTests(unittest.TestCase):
     def test_allowlisted_phases_survive_projection(self):

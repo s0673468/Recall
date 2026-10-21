@@ -155,7 +155,7 @@ class PreparerTests(unittest.TestCase):
     STORE = b"// Invented isolated Store unit fixture.\n"
     FIXTURE = b"// Invented isolated entrypoint.\nvoid main() {}\n"
     GRADLE = b'android {\n  namespace = "invented.fixture"\n  defaultConfig {\n    applicationId = "com.german.health_anki_flutter"\n  }\n}\n'
-    PUBSPEC = b'name: invented_unit_fixture\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/private/\n'
+    PUBSPEC = b'name: invented_unit_fixture\nversion: 0.0.1+1\nflutter:\n  uses-material-design: true\n  assets:\n    - assets/private/\n'
     PATCH = ("--- a/"+prepare.CONTROLLER+"\n+++ b/"+prepare.CONTROLLER+
              "\n@@ -2,1 +2,1 @@\n-  int a = 1;\n+  int a = 11;\n"
              "@@ -4,1 +4,1 @@\n-  int b = 2;\n+  int b = 22;\n"
@@ -169,7 +169,7 @@ class PreparerTests(unittest.TestCase):
                            ('FIXTURE_SHA',H(self.FIXTURE)),('PATCH_SHA',H(self.PATCH))]:
             self.mocks.enter_context(patch.object(contract,name,value))
         self.mocks.enter_context(patch.object(cold,'BASE_GRADLE_SHA',H(self.GRADLE)))
-        self.mocks.enter_context(patch.object(cold,'BASE_PUBSPEC_SHA',H(self.PUBSPEC)))
+        self.mocks.enter_context(patch.object(cold,'BASE_PUBSPEC_SHA',cold.pubspec_pin_sha(self.PUBSPEC)))
 
     def test_invented_exact_patch_scope_context_and_result_pins(self):
         # This independent check binds the tracked technical patch, without
