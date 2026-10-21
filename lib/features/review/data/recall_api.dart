@@ -1083,11 +1083,20 @@ class RecallApi implements ReviewReplayGateway {
           .order('rating_at', ascending: true)
           .order('id', ascending: true)
           .limit(_statsPageSize);
+      // A server-side cap can be lower than our requested limit, so only an
+      // empty page proves exhaustion (as in the due-card loader).
+      if (page.isEmpty) break;
       rows.addAll(page);
-      if (page.length < _statsPageSize) break;
       final last = page.last;
-      afterRatingAt = DateTime.parse(last['rating_at'] as String);
-      afterId = (last['id'] as num).toInt();
+      final nextAt = DateTime.parse(last['rating_at'] as String);
+      final nextId = (last['id'] as num).toInt();
+      if (afterRatingAt != null &&
+          (nextAt.isBefore(afterRatingAt) ||
+              (nextAt.isAtSameMomentAs(afterRatingAt) && nextId <= afterId!))) {
+        throw StateError('Review-log pagination did not advance');
+      }
+      afterRatingAt = nextAt;
+      afterId = nextId;
     }
     return [
       for (final r in rows)
@@ -1121,9 +1130,15 @@ class RecallApi implements ReviewReplayGateway {
       final page = await query
           .order('guid', ascending: true)
           .limit(_statsPageSize);
+      // A server-side cap can be lower than our requested limit, so only an
+      // empty page proves exhaustion (as in the due-card loader).
+      if (page.isEmpty) break;
       rows.addAll(page);
-      if (page.length < _statsPageSize) break;
-      afterGuid = page.last['guid'] as String;
+      final nextGuid = page.last['guid'] as String;
+      if (afterGuid != null && nextGuid.compareTo(afterGuid) <= 0) {
+        throw StateError('Note-tag pagination did not advance');
+      }
+      afterGuid = nextGuid;
     }
     return {
       for (final r in rows)
@@ -1219,11 +1234,20 @@ class RecallApi implements ReviewReplayGateway {
           .order('due', ascending: true)
           .order('id', ascending: true)
           .limit(_statsPageSize);
+      // A server-side cap can be lower than our requested limit, so only an
+      // empty page proves exhaustion (as in the due-card loader).
+      if (page.isEmpty) break;
       rows.addAll(page);
-      if (page.length < _statsPageSize) break;
       final last = page.last;
-      afterDue = DateTime.parse(last['due'] as String);
-      afterId = (last['id'] as num).toInt();
+      final nextDue = DateTime.parse(last['due'] as String);
+      final nextId = (last['id'] as num).toInt();
+      if (afterDue != null &&
+          (nextDue.isBefore(afterDue) ||
+              (nextDue.isAtSameMomentAs(afterDue) && nextId <= afterId!))) {
+        throw StateError('Due-date pagination did not advance');
+      }
+      afterDue = nextDue;
+      afterId = nextId;
     }
     return [
       for (final r in rows)

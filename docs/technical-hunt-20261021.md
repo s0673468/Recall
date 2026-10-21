@@ -53,22 +53,15 @@ Existing tests were neither edited nor deleted.
 | Crashes and swallowed errors | `lib/features/review/application/review_controller.dart:150`, `:899`, `:1054`: auth stream errors are handled, server/connection failures have distinct states, optional activity failures degrade without blocking study. Existing load-error, diagnostic, refused-save and corrupt-outbox tests pass. No new crash reproduced. |
 | Synthetic scale acceptance | `test/production_scale_acceptance_test.dart:24`, `:166`, `:196`: existing generated fixtures cover 1,600 cards, 32 decks and 12,000 reviews, offline reconstruction and app navigation. Passed in the full suite; no real collection accessed. |
 
-## Unresolved finding: smaller server caps truncate Stats
+## Fixed by HQ: smaller server caps truncated Stats
 
-`fetchReviewLog`, `fetchNoteTags` and `fetchDueDates` stop on a page shorter than
-500 (`lib/features/review/data/recall_api.dart:1087`, `:1125`, `:1223`). A smaller
-server cap therefore looks like exhaustion. An isolated synthetic MockClient
-probe with three rows and a two-row cap reproduced **expected 3, actual 2** for
-all three methods. No live service was contacted. The disposable probe was removed.
-
-The safe correction is to continue keyset paging until an empty page and guard
-against a non-advancing cursor, as the ordinary due queue already does. However,
-`test/recall_api_stats_pagination_test.dart:28` returns its final row forever and
-`:63` requires exactly two requests. That fixture must supply exhaustion and
-its request-count assertions must change. The ticket forbids editing existing
-tests; permission for this specific adjustment was requested but not received.
-Consequently this path and its existing test remain unchanged. This finding is
-not claimed fixed or rejected.
+`fetchReviewLog`, `fetchNoteTags` and `fetchDueDates` stopped on a page shorter than
+500, so a smaller server cap looked like exhaustion and Stats silently lost rows.
+They now stop only on an empty page and refuse a cursor that does not advance,
+as the due-card loader already did (`lib/features/review/data/recall_api.dart`).
+The existing pagination fixture now ends with an empty page, and a new test pages
+600 rows through a 250-row server cap
+(`test/recall_api_stats_pagination_test.dart`).
 
 ## Validation
 
