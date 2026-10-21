@@ -20,6 +20,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 SUPABASE = ROOT / "scripts" / "supabase"
 MIGRATIONS = sorted((SUPABASE / "migrations").glob("[0-9][0-9][0-9]_*.sql"))
+EXTRA_FIGURES = SUPABASE / "migrations" / "009_concept_pages_extra_figures.sql"
+
+
+def _without(prefix):
+    """Every migration except one, so each gap is reported on its own."""
+    return [path for path in MIGRATIONS if not path.name.startswith(prefix)]
+
 OWNER = "a0000000-0000-4000-8000-000000000001"  # 000's review_log default
 OTHER = "b0000000-0000-4000-8000-000000000002"
 SIGNATURE = (
@@ -48,6 +55,10 @@ insert into public.cards (id, user_id, note_id, guid, state, last_review)
 values (1, '{OWNER}', 1, 'c1', 2, '2026-10-01T00:00:00Z'),
        (2, '{OWNER}', 2, 'c2', 2, '2026-10-01T00:00:00Z'),
        (3, '{OTHER}', 3, 'c3', 2, '2026-10-01T00:00:00Z');
+insert into public.concept_nodes (node_id, title, module)
+values ('m00-invented', 'Invented node', 'M00');
+insert into public.concept_pages (node_id, title, body_html, figure_svg)
+values ('m00-invented', 'Invented primer', 'One.<br><br>Two.', '<svg/>');
 """
 
 
@@ -100,8 +111,10 @@ class ApplyReviewPostgresTests(unittest.TestCase):
             cls._started = True
             cls.psql("postgres", SUPABASE_ROLES)
             cls.psql("postgres", "create database recall_pre008")
+            cls.psql("postgres", "create database recall_pre009")
             cls.psql("postgres", "create database recall_template")
-            for db, migrations in (("recall_pre008", MIGRATIONS[:-1]),
+            for db, migrations in (("recall_pre008", _without("008_")),
+                                   ("recall_pre009", _without("009_")),
                                    ("recall_template", MIGRATIONS)):
                 cls.psql(db, SUPABASE_STAND_IN)
                 for path in migrations:
@@ -236,6 +249,54 @@ class ApplyReviewPostgresTests(unittest.TestCase):
         with self.assertRaises(SqlError) as raised:
             self.psql("recall_pre008", file=SUPABASE / "verify" / "verify_apply_review.sql")
         self.assertIn("VERIFY FAILED: E:fk_blocks_outbox", str(raised.exception))
+
+
+    def test_009_backfills_existing_pages_with_an_empty_list(self):
+        db = f"{self.db}_up"[:63]
+        self.psql("postgres", f"create database {db} template recall_pre009")
+        self.addCleanup(self.psql, "postgres", f"drop database {db}")
+        self.psql(db, file=EXTRA_FIGURES)
+        self.psql(db, file=EXTRA_FIGURES)  # idempotent
+        self.assertEqual(
+            self.psql(db, "select title, body_html, extra_figures::text from public.concept_pages"),
+            "Invented primer|One.<br><br>Two.|[]")
+        self.assertIn("VERIFY OK: Recall schema contract",
+                      self.psql(db, file=SUPABASE / "verify" / "verify_schema.sql"))
+
+    def test_009_accepts_up_to_three_figures_and_rejects_other_shapes(self):
+        three = ('[{"svg": "<svg/>", "after_paragraph": 1}, {"svg": "<svg/>", '
+                 '"after_paragraph": 2}, {"svg": "<svg/>", "after_paragraph": 2}]')
+        self.scalar(f"update public.concept_pages set extra_figures = '{three}'::jsonb")
+        self.assertEqual(
+            self.scalar("select jsonb_array_length(extra_figures) from public.concept_pages"), "3")
+        four = three[:-1] + ', {"svg": "<svg/>", "after_paragraph": 9}]'
+        for bad, code in ((four, "23514"), ('{"svg": "<svg/>"}', "23514"),
+                          ('"[]"', "23514"), ("null", "23514")):
+            with self.subTest(bad=bad), self.assertRaises(SqlError) as raised:
+                self.scalar(f"update public.concept_pages set extra_figures = '{bad}'::jsonb")
+            self.assertIn(code, str(raised.exception))
+        with self.assertRaises(SqlError) as raised:
+            self.scalar("update public.concept_pages set extra_figures = null")
+        self.assertIn("23502", str(raised.exception))
+        self.assertEqual(
+            self.scalar("select jsonb_array_length(extra_figures) from public.concept_pages"), "3")
+
+    def test_009_keeps_concept_pages_read_only_for_clients(self):
+        self.assertEqual(
+            self.owner("select extra_figures::text from public.concept_pages"), "[]")
+        with self.assertRaises(SqlError) as raised:
+            self.owner("update public.concept_pages set extra_figures = '[]'::jsonb")
+        self.assertIn("42501", str(raised.exception))
+
+    def test_verify_schema_reports_a_project_without_009(self):
+        with self.assertRaises(SqlError) as raised:
+            self.psql("recall_pre009", file=SUPABASE / "verify" / "verify_schema.sql")
+        self.assertIn("concept_pages.extra_figures expected jsonb", str(raised.exception))
+        self.scalar("alter table public.concept_pages "
+                    "drop constraint concept_pages_extra_figures_check")
+        with self.assertRaises(SqlError) as raised:
+            self.psql(self.db, file=SUPABASE / "verify" / "verify_schema.sql")
+        self.assertIn("apply 009", str(raised.exception))
 
 
 if __name__ == "__main__":

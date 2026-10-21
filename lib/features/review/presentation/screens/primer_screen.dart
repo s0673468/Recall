@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../../../theme/ui_tokens.dart';
+import '../../domain/primer_layout.dart';
 import '../../domain/stats_models.dart';
 import '../widgets/card_face.dart';
 
@@ -46,6 +47,43 @@ class PrimerContent extends StatelessWidget {
       if (node.nodeId == page.nodeId) return node.module;
     }
     return null;
+  }
+
+  // Parser caches validate the body text as well as this stable identity, so
+  // an in-session refresh can never reuse an older primer revision.
+  Widget _body(String html, String cacheKey, TextStyle style) => CardFace(
+    html: html,
+    hasLatex: true,
+    revealCloze: true,
+    selectable: false,
+    textAlign: TextAlign.start,
+    cacheKey: cacheKey,
+    style: style,
+  );
+
+  /// The body split at the extra figures' paragraphs, each figure inline with
+  /// the hero figure's box and spacing. Text runs get distinct cache keys.
+  List<Widget> _bodyWithExtraFigures(TextStyle style) {
+    var textIndex = 0;
+    return [
+      for (final block in layoutPrimerBody(page.bodyHtml, page.extraFigures))
+        switch (block) {
+          PrimerTextBlock(:final html) => _body(
+            html,
+            'primer:${page.nodeId}:${textIndex++}',
+            style,
+          ),
+          PrimerFigureBlock(:final index, :final figure) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: UiSpacing.lg),
+            child: _PrimerFigure(
+              svg: figure.svg,
+              figureKey: ValueKey(
+                'recall_primer_extra_figure_${page.nodeId}_$index',
+              ),
+            ),
+          ),
+        },
+    ];
   }
 
   @override
@@ -95,35 +133,17 @@ class PrimerContent extends StatelessWidget {
                       if (page.figureSvg case final figureSvg?)
                         Padding(
                           padding: const EdgeInsets.only(bottom: UiSpacing.lg),
-                          // The scroll view gives no height bound, and an
-                          // unbounded SvgPicture asserts in layout — pin the
-                          // figure to the spec's ~600x360 canvas ratio and let
-                          // BoxFit.contain letterbox any other aspect.
-                          child: AspectRatio(
-                            aspectRatio: 600 / 360,
-                            child: SvgPicture.string(
-                              figureSvg,
-                              key: ValueKey(
-                                'recall_primer_figure_${page.nodeId}',
-                              ),
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, _, _) =>
-                                  const SizedBox.shrink(),
+                          child: _PrimerFigure(
+                            svg: figureSvg,
+                            figureKey: ValueKey(
+                              'recall_primer_figure_${page.nodeId}',
                             ),
                           ),
                         ),
-                      CardFace(
-                        html: page.bodyHtml,
-                        hasLatex: true,
-                        revealCloze: true,
-                        selectable: false,
-                        textAlign: TextAlign.start,
-                        // Parser caches validate the body text as well as
-                        // this stable identity, so an in-session refresh can
-                        // never reuse an older primer revision.
-                        cacheKey: 'primer:${page.nodeId}',
-                        style: bodyStyle,
-                      ),
+                      if (page.extraFigures.isEmpty)
+                        _body(page.bodyHtml, 'primer:${page.nodeId}', bodyStyle)
+                      else
+                        ..._bodyWithExtraFigures(bodyStyle),
                     ],
                   ),
                 ),
@@ -135,4 +155,26 @@ class PrimerContent extends StatelessWidget {
       ),
     );
   }
+}
+
+/// A primer figure. The scroll view gives no height bound, and an unbounded
+/// SvgPicture asserts in layout — pin the figure to the spec's ~600x360 canvas
+/// ratio and let BoxFit.contain letterbox any other aspect. Markup that fails
+/// to parse renders nothing instead of breaking the page.
+class _PrimerFigure extends StatelessWidget {
+  final String svg;
+  final Key figureKey;
+
+  const _PrimerFigure({required this.svg, required this.figureKey});
+
+  @override
+  Widget build(BuildContext context) => AspectRatio(
+    aspectRatio: 600 / 360,
+    child: SvgPicture.string(
+      svg,
+      key: figureKey,
+      fit: BoxFit.contain,
+      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+    ),
+  );
 }

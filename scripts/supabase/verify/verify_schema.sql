@@ -87,6 +87,7 @@ begin
       ('concept_pages', 'title', 'text'),
       ('concept_pages', 'body_html', 'text'),
       ('concept_pages', 'figure_svg', 'text'),
+      ('concept_pages', 'extra_figures', 'jsonb'),
       ('concept_pages', 'updated_at', 'timestamp with time zone')
   )
   select string_agg(
@@ -270,6 +271,24 @@ begin
        and confrelid = 'public.concept_nodes'::regclass
   ) then
     raise exception 'VERIFY FAILED: a required content/history foreign key is absent';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'concept_pages'
+       and column_name = 'extra_figures'
+       and is_nullable = 'NO'
+       and column_default like '%[]%'
+  ) or not exists (
+    select 1
+      from pg_catalog.pg_constraint
+     where conrelid = 'public.concept_pages'::regclass
+       and conname = 'concept_pages_extra_figures_check'
+       and contype = 'c'
+       and pg_get_constraintdef(oid) like '%jsonb_typeof%array%jsonb_array_length%<= 3%'
+  ) then
+    raise exception 'VERIFY FAILED: concept_pages.extra_figures default/shape check drifted (apply 009)';
   end if;
 
   foreach v_table in array array[

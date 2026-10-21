@@ -34,7 +34,7 @@ No card text, private values, project URLs, or credentials belong in this guide.
 | `user_settings` | Per-owner `settings_key` / JSON `settings_value`. `fsrs_params` holds scheduler parameters/desired retention and optimizer metadata; `recall_prefs` holds `new_limit_default`, `per_deck`, `new_order`, `desired_retention`. Read only. |
 | `note_flags` | Card feedback: `card_id`, `guid`, `reason`, `flagged_at`, `status`, resolution metadata, optional `client_event_id`. Reasons: `wrong`, `confusing`, `too_long`, `duplicate`, `dislike`, `delete`; statuses: `open`, `resolved`, `dismissed`. |
 | `concept_nodes` | Shared reference catalog: `node_id`, `title`, `module`, optional integer `difficulty`, `updated_at`. This difficulty is not a card's FSRS difficulty. |
-| `concept_pages` | Read-only primers keyed by `node_id`: `title`, `body_html`, optional `figure_svg`, `updated_at`. A primer may have no associated cards. |
+| `concept_pages` | Read-only primers keyed by `node_id`: `title`, `body_html`, optional hero `figure_svg`, `updated_at`; after migration 009, `extra_figures` is a JSON array of at most 3 `{svg, after_paragraph}` inline figures (default `[]`). A primer may have no associated cards. |
 
 User-owned tables have RLS with `auth.uid() = user_id`. Keep owner predicates
 and matching-owner joins even when RLS already filters. `concept_nodes` and

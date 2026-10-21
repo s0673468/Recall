@@ -103,12 +103,15 @@ class ConceptNodeInfo {
 }
 
 /// A read-only primer for one concept-graph node. [bodyHtml] uses the same
-/// light-HTML + inline-LaTeX format as a card face.
+/// light-HTML + inline-LaTeX format as a card face. [figureSvg] is the hero
+/// figure drawn above the body; [extraFigures] are drawn inline after chosen
+/// top-level paragraphs (see [ConceptExtraFigure]).
 class ConceptPage {
   final String nodeId;
   final String title;
   final String bodyHtml;
   final String? figureSvg;
+  final List<ConceptExtraFigure> extraFigures;
   final DateTime updatedAt;
 
   const ConceptPage({
@@ -116,8 +119,48 @@ class ConceptPage {
     required this.title,
     required this.bodyHtml,
     this.figureSvg,
+    this.extraFigures = const [],
     required this.updatedAt,
   });
+}
+
+/// One inline primer figure from `concept_pages.extra_figures` (migration 009).
+///
+/// [afterParagraph] is the 1-based top-level paragraph of the body the figure
+/// follows; null means "after the body" (missing or invalid in the row).
+class ConceptExtraFigure {
+  /// Clients render at most this many extra figures per page.
+  static const maxCount = 3;
+
+  final String svg;
+  final int? afterParagraph;
+
+  const ConceptExtraFigure({required this.svg, this.afterParagraph});
+
+  /// Parses the `extra_figures` JSON column defensively: a page must never
+  /// fail or disappear because of it. A non-array (or null) value yields no
+  /// figures; an element without a string `svg` starting with `<svg` is
+  /// skipped; a missing or invalid `after_paragraph` (not an integer >= 1)
+  /// places the figure after the body; only the first [maxCount] valid
+  /// figures are kept, in array order.
+  static List<ConceptExtraFigure> parseList(Object? raw) {
+    if (raw is! List) return const [];
+    final figures = <ConceptExtraFigure>[];
+    for (final element in raw) {
+      if (figures.length == maxCount) break;
+      if (element is! Map) continue;
+      final svg = element['svg'];
+      if (svg is! String || !svg.trimLeft().startsWith('<svg')) continue;
+      final after = element['after_paragraph'];
+      figures.add(
+        ConceptExtraFigure(
+          svg: svg,
+          afterParagraph: after is int && after >= 1 ? after : null,
+        ),
+      );
+    }
+    return List.unmodifiable(figures);
+  }
 }
 
 /// Per-node retention over the Concepts window: how a concept's tagged cards

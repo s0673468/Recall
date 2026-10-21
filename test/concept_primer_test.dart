@@ -53,13 +53,14 @@ void main() {
       expect(requestedUri.path, '/rest/v1/concept_pages');
       expect(
         requestedUri.queryParameters['select'],
-        'node_id,title,body_html,figure_svg,updated_at',
+        'node_id,title,body_html,figure_svg,extra_figures,updated_at',
       );
       expect(pages, hasLength(1));
       expect(pages.single.nodeId, 'm00-vector-geometry');
       expect(pages.single.title, 'Vector geometry');
       expect(pages.single.bodyHtml, r'<b>Projection</b>: \(x\)');
       expect(pages.single.figureSvg, contains('<svg'));
+      expect(pages.single.extraFigures, isEmpty);
       expect(
         pages.single.updatedAt,
         DateTime.parse('2026-07-29T12:00:00.000Z'),
