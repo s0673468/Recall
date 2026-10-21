@@ -37,6 +37,9 @@ class RecallPrefsController extends ChangeNotifier {
   bool _ownerReady = false;
   bool _applyingCloudUpdate = false;
   int _version = 0;
+  // Optimistic UI state alone cannot prove that an update reached storage.
+  // A retry of the same value must persist it again after a local failure.
+  int? _durableVersion;
   Future<void> _localTail = Future<void>.value();
   Future<void> _syncTail = Future<void>.value();
 
@@ -108,6 +111,7 @@ class RecallPrefsController extends ChangeNotifier {
         _value = selected;
         _hasStored = true;
       }
+      _durableVersion = _version;
       _ownerReady = true;
       notifyListeners();
     });
@@ -209,6 +213,7 @@ class RecallPrefsController extends ChangeNotifier {
         );
         _value = next;
         _hasStored = true;
+        _durableVersion = _version;
         _applyingCloudUpdate = true;
         try {
           notifyListeners();
@@ -229,7 +234,7 @@ class RecallPrefsController extends ChangeNotifier {
       await _updateLegacyCompatibility(next);
       return;
     }
-    if (next == _value && _hasStored) {
+    if (next == _value && _hasStored && _durableVersion == _version) {
       await syncOwner();
       return;
     }
@@ -237,6 +242,7 @@ class RecallPrefsController extends ChangeNotifier {
     _value = next;
     _hasStored = true;
     _version++;
+    final version = _version;
     notifyListeners();
 
     final encoded = jsonEncode(next.toJson());
@@ -246,6 +252,9 @@ class RecallPrefsController extends ChangeNotifier {
       // new value and can never let stale cloud state win.
       await _setStringStrict(prefs, pendingKeyForOwner(ownerId), encoded);
       await _setStringStrict(prefs, localKeyForOwner(ownerId), encoded);
+      if (_ownerId == ownerId && _version == version) {
+        _durableVersion = version;
+      }
     });
     if (_ownerId == ownerId) await syncOwner();
   }
@@ -253,7 +262,11 @@ class RecallPrefsController extends ChangeNotifier {
   RecallPrefs? _decode(String? raw, {bool pending = false}) {
     if (raw == null) return null;
     try {
-      return RecallPrefs.fromJson(jsonDecode(raw));
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        throw const FormatException('Stored preferences must be an object.');
+      }
+      return RecallPrefs.fromJson(decoded);
     } catch (_) {
       debugPrint(
         pending
@@ -267,6 +280,7 @@ class RecallPrefsController extends ChangeNotifier {
   void _resetValue() {
     _value = const RecallPrefs();
     _hasStored = false;
+    _durableVersion = null;
   }
 
   Future<void> _withLocalLock(Future<void> Function() action) {
