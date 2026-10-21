@@ -1152,24 +1152,35 @@ class RecallApi implements ReviewReplayGateway {
   /// Read-only concept primers. The table is deployed independently of this
   /// client, so any PostgREST failure is treated as "no primers available".
   /// This keeps the feature entirely absent until the table is ready.
+  ///
+  /// `extra_figures` (migration 009) may not be deployed yet: when the full
+  /// select fails, the pre-009 select is retried once so primers never
+  /// disappear during the rollout; those pages then have no extra figures.
   Future<List<ConceptPage>> fetchConceptPages() async {
+    const select =
+        'node_id,title,body_html,figure_svg,extra_figures,updated_at';
+    const legacySelect = 'node_id,title,body_html,figure_svg,updated_at';
+    List<Map<String, dynamic>> rows;
     try {
-      final rows = await client
-          .from('concept_pages')
-          .select('node_id,title,body_html,figure_svg,updated_at');
-      return [
-        for (final r in rows)
-          ConceptPage(
-            nodeId: r['node_id'] as String,
-            title: (r['title'] as String?) ?? r['node_id'] as String,
-            bodyHtml: (r['body_html'] as String?) ?? '',
-            figureSvg: r['figure_svg'] as String?,
-            updatedAt: DateTime.parse(r['updated_at'] as String),
-          ),
-      ];
+      rows = await client.from('concept_pages').select(select);
     } on PostgrestException {
-      return const [];
+      try {
+        rows = await client.from('concept_pages').select(legacySelect);
+      } on PostgrestException {
+        return const [];
+      }
     }
+    return [
+      for (final r in rows)
+        ConceptPage(
+          nodeId: r['node_id'] as String,
+          title: (r['title'] as String?) ?? r['node_id'] as String,
+          bodyHtml: (r['body_html'] as String?) ?? '',
+          figureSvg: r['figure_svg'] as String?,
+          extraFigures: ConceptExtraFigure.parseList(r['extra_figures']),
+          updatedAt: DateTime.parse(r['updated_at'] as String),
+        ),
+    ];
   }
 
   /// Upcoming due dates (local) for scheduled (non-new) cards — powers the due

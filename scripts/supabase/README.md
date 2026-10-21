@@ -22,7 +22,7 @@ same owner default as the deployed single-user project and importer.
 | `user_settings` | JSON `fsrs_params` and `recall_prefs`, unique per user/key | importer seed and Recall |
 | `note_flags` | four fixed reasons; open/resolved/dismissed lifecycle and resolution | Recall inserts; revision tooling resolves |
 | `concept_nodes` | `node_id`, title, module, difficulty, update time | service-role concept sync |
-| `concept_pages` | title, HTML primer, optional SVG figure, update time | service-role primer authoring |
+| `concept_pages` | title, HTML primer, optional SVG hero figure, `extra_figures` (JSON array of at most 3 `{svg, after_paragraph}` inline figures, default `[]`), update time | service-role primer authoring |
 | `deck_counts()` | due/new counts excluding deleted notes/cards and suspended cards | database RPC |
 | `apply_review(...)` | atomic newest-review-wins merge with accumulated counters; a review for a hard-deleted card is acknowledged with `0` and no log row | database RPC |
 
@@ -43,6 +43,7 @@ Apply each file as one transaction, in this order:
 7. [`migrations/006_apply_review_rpc.sql`](migrations/006_apply_review_rpc.sql)
 8. [`migrations/007_note_flags_hide_reasons.sql`](migrations/007_note_flags_hide_reasons.sql)
 9. [`migrations/008_apply_review_missing_card.sql`](migrations/008_apply_review_missing_card.sql)
+10. [`migrations/009_concept_pages_extra_figures.sql`](migrations/009_concept_pages_extra_figures.sql)
 
 All migrations are idempotent. Re-running them preserves rows. `000` uses
 `CREATE TABLE IF NOT EXISTS`; it intentionally does not guess how to repair a
@@ -50,7 +51,7 @@ wrongly shaped existing table. The verification step reports drift instead.
 
 ### Fresh project
 
-Create the isolated Recall Supabase project and configure Auth. Apply all nine
+Create the isolated Recall Supabase project and configure Auth. Apply all ten
 migrations before running the importer or releasing a client. Then create the
 private runtime environment with only `SUPABASE_URL`,
 `SUPABASE_SERVICE_KEY`, and `SUPABASE_USER_ID`; do not commit it.
@@ -115,15 +116,21 @@ RECALL_REQUIRE_PG=1 RECALL_PG_BIN=/path/to/postgresql/bin \
 ```
 
 It creates a throwaway cluster on a private Unix socket with a minimal
-stand-in for Supabase's `auth` schema and roles, applies `000`–`008`, checks
+stand-in for Supabase's `auth` schema and roles, applies `000`–`009`, checks
 `apply_review` behaviour (including a card hard-deleted while its review was
-queued, and the pre-008 failure), and deletes the cluster. Without PostgreSQL
+queued, and the pre-008 failure), checks that `009` backfills existing primers
+with `[]`, enforces the array/at-most-3 shape and leaves clients read-only, and
+deletes the cluster. Without PostgreSQL
 binaries it skips unless `RECALL_REQUIRE_PG=1`. It never contacts Supabase.
 
 ## Rollback policy
 
 The safe rollback is intentionally asymmetric:
 
+- `009` needs no rollback for an incident: older clients never select
+  `extra_figures`, and current clients fall back to the pre-009 select when the
+  column is absent. To hide every inline figure, set the column to `[]` (after a
+  backup of its values); do not drop it.
 - To undo only `008`, re-apply
   [`migrations/006_apply_review_rpc.sql`](migrations/006_apply_review_rpc.sql);
   it replaces the function body with the previous one and touches no rows.
@@ -155,6 +162,7 @@ or column removal is destructive data work and outside these scripts.
 | `005_review_event_idempotency.sql` | Health `supabase_migrate_recall_idempotency.sql` |
 | `006_apply_review_rpc.sql` | Health `supabase_migrate_recall_review_rpc.sql` |
 | `008_apply_review_missing_card.sql` | Recall-native: `006` with the card read before the log insert |
+| `009_concept_pages_extra_figures.sql` | Recall-native: the 2026-10-21 multi-figure contract shared with METIS and primer publishing |
 | `verify_apply_review.sql` and RPC rollback | matching Health verification/rollback SQL |
 
 The canonical copies remove machine/project identifiers, add explicit grants,

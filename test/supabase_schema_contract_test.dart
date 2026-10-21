@@ -13,6 +13,7 @@ void main() {
     'scripts/supabase/migrations/006_apply_review_rpc.sql',
     'scripts/supabase/migrations/007_note_flags_hide_reasons.sql',
     'scripts/supabase/migrations/008_apply_review_missing_card.sql',
+    'scripts/supabase/migrations/009_concept_pages_extra_figures.sql',
   ];
 
   const tableContracts = <String>{
@@ -106,6 +107,7 @@ void main() {
       'module',
       'body_html',
       'figure_svg',
+      'extra_figures',
       'settings_value',
     };
     for (final column in requiredColumns) {
@@ -167,6 +169,36 @@ void main() {
     expect(
       File('scripts/supabase/tests/test_apply_review_pg.py').existsSync(),
       isTrue,
+    );
+  });
+
+  test('extra_figures is additive and bounded to an array of three', () {
+    final sql = File(
+      'scripts/supabase/migrations/009_concept_pages_extra_figures.sql',
+    ).readAsStringSync().toLowerCase();
+    expect(
+      sql,
+      contains(
+        'add column if not exists extra_figures jsonb not null '
+        "default '[]'::jsonb",
+      ),
+    );
+    expect(sql, contains("jsonb_typeof(extra_figures) = 'array'"));
+    expect(sql, contains('jsonb_array_length(extra_figures) <= 3'));
+    expect(sql, isNot(contains('drop column')));
+    expect(sql, isNot(contains('grant ')));
+    expect(sql, isNot(contains('policy')));
+
+    final api = File(
+      'lib/features/review/data/recall_api.dart',
+    ).readAsStringSync();
+    expect(
+      api,
+      contains("'node_id,title,body_html,figure_svg,extra_figures,updated_at'"),
+    );
+    expect(
+      File('scripts/supabase/verify/verify_schema.sql').readAsStringSync(),
+      contains('concept_pages_extra_figures_check'),
     );
   });
 
