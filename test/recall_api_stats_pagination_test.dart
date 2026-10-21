@@ -25,19 +25,25 @@ void main() {
         late final List<Map<String, dynamic>> rows;
         if (path.endsWith('/review_log')) {
           reviewPage++;
-          rows = reviewPage == 1
-              ? [for (var i = 0; i < 500; i++) _reviewRow(i)]
-              : [_reviewRow(500)];
+          rows = switch (reviewPage) {
+            1 => [for (var i = 0; i < 500; i++) _reviewRow(i)],
+            2 => [_reviewRow(500)],
+            _ => const <Map<String, dynamic>>[],
+          };
         } else if (path.endsWith('/notes')) {
           notesPage++;
-          rows = notesPage == 1
-              ? [for (var i = 0; i < 500; i++) _noteRow(i)]
-              : [_noteRow(500)];
+          rows = switch (notesPage) {
+            1 => [for (var i = 0; i < 500; i++) _noteRow(i)],
+            2 => [_noteRow(500)],
+            _ => const <Map<String, dynamic>>[],
+          };
         } else if (path.endsWith('/cards')) {
           duePage++;
-          rows = duePage == 1
-              ? [for (var i = 0; i < 500; i++) _dueRow(i)]
-              : [_dueRow(500)];
+          rows = switch (duePage) {
+            1 => [for (var i = 0; i < 500; i++) _dueRow(i)],
+            2 => [_dueRow(500)],
+            _ => const <Map<String, dynamic>>[],
+          };
         } else {
           rows = const [];
         }
@@ -60,10 +66,10 @@ void main() {
     expect(reviews, hasLength(501));
     expect(tags, hasLength(501));
     expect(dueDates, hasLength(501));
-    expect(reviewPage, 2);
-    expect(notesPage, 2);
-    expect(duePage, 2);
-    expect(cursorQueries, hasLength(3));
+    expect(reviewPage, 3);
+    expect(notesPage, 3);
+    expect(duePage, 3);
+    expect(cursorQueries, hasLength(6));
     expect(
       cursorQueries.any(
         (uri) => (uri.queryParameters['or'] ?? '').contains('rating_at.gt.'),
@@ -81,6 +87,46 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'Stats keep paging when the server caps pages below the requested size',
+    () async {
+      const total = 600, cap = 250;
+      final pages = <String, int>{};
+      final client = SupabaseClient(
+        'https://example.supabase.co',
+        'anon-key',
+        httpClient: MockClient((request) async {
+          final table = request.url.pathSegments.last;
+          final page = pages.update(table, (n) => n + 1, ifAbsent: () => 1);
+          final start = (page - 1) * cap;
+          final ids = [
+            for (var i = start; i < total && i < start + cap; i++) i,
+          ];
+          final rows = switch (table) {
+            'review_log' => [for (final i in ids) _reviewRow(i)],
+            'notes' => [for (final i in ids) _noteRow(i)],
+            'cards' => [for (final i in ids) _dueRow(i)],
+            _ => const <Map<String, dynamic>>[],
+          };
+          return http.Response(
+            jsonEncode(rows),
+            200,
+            request: request,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+      );
+      addTearDown(client.dispose);
+      final api = RecallApi(client);
+
+      expect(await api.fetchReviewLog(), hasLength(total));
+      expect(await api.fetchNoteTags(), hasLength(total));
+      expect(await api.fetchDueDates(), hasLength(total));
+      expect(pages, {'review_log': 4, 'notes': 4, 'cards': 4});
+    },
+  );
 }
 
 Map<String, dynamic> _reviewRow(int id) {
