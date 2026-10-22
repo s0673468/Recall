@@ -17,8 +17,8 @@ void main() {
 
       expect(decks, hasLength(1003));
       expect(decks.map((d) => d.deckId).toSet(), hasLength(1003));
-      expect(decks.first.name, 'Deck 1003');
-      expect(decks.last.name, 'Deck 0001');
+      expect(decks.first.name, 'Deck 0001');
+      expect(decks.last.name, 'Deck 1003');
       expect(counts, hasLength(1003));
       expect(counts[1003], (due: 1003, neu: 0));
       expect(counts.values.fold<int>(0, (sum, c) => sum + c.due), 503506);
@@ -39,15 +39,32 @@ void main() {
         ..names = {1: 'Z', 2: 'Same', 3: 'Same', 4: 'A'}
         ..renamedOnSecondPage = {4: 'Opt-in::Nested::A'};
       final decks = await fixture.api().fetchDecks();
-      expect(decks.map((d) => d.deckId), [1, 2, 3, 4]);
+      expect(decks.map((d) => d.deckId).toSet(), {1, 2, 3, 4});
+      expect(decks.map((d) => d.deckId), [4, 2, 3, 1]);
       expect(decks.map((d) => d.name), [
-        'Z',
-        'Same',
-        'Same',
         'Opt-in::Nested::A',
+        'Same',
+        'Same',
+        'Z',
       ]);
     },
   );
+
+  test('decks are listed A-to-Z with the deck id breaking name ties', () async {
+    final fixture = _DeckTransport(
+      cap: 2,
+      size: 5,
+    )..names = {1: 'Delta', 2: 'Charlie', 3: 'Bravo', 4: 'Alpha', 5: 'Charlie'};
+    final decks = await fixture.api().fetchDecks();
+    expect(decks.map((d) => d.name), [
+      'Alpha',
+      'Bravo',
+      'Charlie',
+      'Charlie',
+      'Delta',
+    ]);
+    expect(decks.map((d) => d.deckId), [4, 3, 2, 5, 1]);
+  });
 
   for (final counts in [false, true]) {
     test('${counts ? 'counts' : 'decks'} stop on an empty response', () async {

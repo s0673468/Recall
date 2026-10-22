@@ -121,8 +121,10 @@ class RecallApi implements ReviewReplayGateway {
       afterId = nextId;
     }
     // Page by stable identity so a rename/move cannot shift a page boundary.
+    // Present the decks A-to-Z, as the previous `.order('name')` query did.
+    // Equal names keep a stable order by deck id.
     decks.sort((a, b) {
-      final byName = b.name.compareTo(a.name);
+      final byName = a.name.compareTo(b.name);
       return byName != 0 ? byName : a.deckId.compareTo(b.deckId);
     });
     return decks;
