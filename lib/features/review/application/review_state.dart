@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import '../data/models.dart';
 import 'backlog_catch_up.dart';
 
@@ -64,8 +66,12 @@ class ReviewState {
   ReviewCard? get current =>
       index >= 0 && index < queue.length ? queue[index] : null;
   int get remaining => (queue.length - index).clamp(0, queue.length);
-  int get dueRemaining => queue.skip(index).where((c) => !c.isNew).length;
-  int get newRemaining => queue.skip(index).where((c) => c.isNew).length;
+  int get dueRemaining => queue is _CountedReviewQueue
+      ? (queue as _CountedReviewQueue).remainingFrom(index) - newRemaining
+      : queue.skip(index).where((c) => !c.isNew).length;
+  int get newRemaining => queue is _CountedReviewQueue
+      ? (queue as _CountedReviewQueue).newFrom(index)
+      : queue.skip(index).where((c) => c.isNew).length;
   bool get isDone => !loading && error == null && current == null;
 
   ReviewState copyWith({
@@ -92,7 +98,7 @@ class ReviewState {
     return ReviewState(
       loading: loading ?? this.loading,
       error: identical(error, _unset) ? this.error : error as String?,
-      queue: queue ?? this.queue,
+      queue: queue == null ? this.queue : _CountedReviewQueue.of(queue),
       index: index ?? this.index,
       showBack: showBack ?? this.showBack,
       decks: decks ?? this.decks,
@@ -118,5 +124,37 @@ class ReviewState {
       reviewActivityKnown: reviewActivityKnown ?? this.reviewActivityKnown,
       aheadExhausted: aheadExhausted ?? this.aheadExhausted,
     );
+  }
+}
+
+/// Published queues cannot change under their counts. Build the prefix once,
+/// on the first counter read, and share it across flips, sync ticks, grading
+/// and Undo. Replacing a queue starts a new index; metadata copies reuse it.
+class _CountedReviewQueue extends UnmodifiableListView<ReviewCard> {
+  _CountedReviewQueue._(super.source);
+
+  static _CountedReviewQueue of(List<ReviewCard> source) =>
+      source is _CountedReviewQueue
+      ? source
+      : _CountedReviewQueue._(List<ReviewCard>.unmodifiable(source));
+
+  late final List<int> _newPrefix = _countNew();
+
+  List<int> _countNew() {
+    final prefix = List<int>.filled(length + 1, 0);
+    for (var i = 0; i < length; i++) {
+      prefix[i + 1] = prefix[i] + (this[i].isNew ? 1 : 0);
+    }
+    return prefix;
+  }
+
+  int remainingFrom(int index) {
+    RangeError.checkNotNegative(index, 'index');
+    return index >= length ? 0 : length - index;
+  }
+
+  int newFrom(int index) {
+    RangeError.checkNotNegative(index, 'index');
+    return index >= length ? 0 : _newPrefix[length] - _newPrefix[index];
   }
 }

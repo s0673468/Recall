@@ -93,7 +93,10 @@ class ContractTests(unittest.TestCase):
                 stale = {'baseline_source_commit':source,
                          'controller_sha256':baseline if variant=='baseline' else checkpoint,
                          'fixture_sha256':fixture}
-                if variant=='checkpoint':stale['patch_sha256']=patch_sha
+                # A prior profile can share identical patch bytes when its
+                # hunk positions coincide; only a distinct patch pin is stale.
+                if variant=='checkpoint' and patch_sha!=contract.PATCH_SHA:
+                    stale['patch_sha256']=patch_sha
                 for key,value in stale.items():
                     with self.subTest(source=source,variant=variant,key=key):
                         for count in [128,512]:
@@ -101,6 +104,26 @@ class ContractTests(unittest.TestCase):
                                 contract.validate({**receipt(variant,count),key:value},variant=variant,count=count,pid=101,fixture_sha=FIXTURE)
                         with self.assertRaises(contract.Refused):
                             contract.validate_provenance({**source_proof(variant),key:value},variant)
+    def test_previous_main_profile_pins_are_refused(self):
+        for variant,controller in [
+            ('baseline','41f5faf0621886563e85b644dad6bf26cae412305afc09d0fa58c2de73e9bfd1'),
+            ('checkpoint','bf09fae109736b8bc93ddc407d0fa9c5c5f3ce4036952b19dfc4d679f096e28e'),
+        ]:
+            stale = {
+                'baseline_source_commit':'fcefe7f19653402ddd4d1b8562e7088d9677e676',
+                'controller_sha256':controller,
+                'fixture_sha256':'a126a57433830e47c5088cd502be927a4b42230c8c99cef9cd34d2edc23d9aa5',
+            }
+            if variant=='checkpoint':
+                stale['patch_sha256']='7ed41d29484fd3b7e9c0afaf881f301221be40cc0ec46d8dc14a10381e50af0a'
+            for key,value in stale.items():
+                with self.subTest(variant=variant,key=key):
+                    for count in [128,512]:
+                        with self.assertRaises(contract.Refused):
+                            contract.validate({**receipt(variant,count),key:value},variant=variant,count=count,pid=101,fixture_sha=FIXTURE)
+                    with self.assertRaises(contract.Refused):
+                        contract.validate_provenance({**source_proof(variant),key:value},variant)
+
     def test_invented_values_cannot_claim_real_provider_or_release_device(self):
         for update in [{'real_provider_contacted':True},{'physical_device_tested':True},{'native_preferences':False},{'build_mode':'release'},{'power_loss_tested':True}]:
             with self.subTest(update=update),self.assertRaises(contract.Refused):contract.validate({**receipt(),**update},variant='baseline',count=128,pid=101,fixture_sha=FIXTURE)
@@ -235,7 +258,7 @@ class PreparerTests(unittest.TestCase):
         # loading production files into the invented unit fixture. The pinned
         # ACK-batch experiment is independently source-bound before compilation.
         real=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
-        self.assertEqual(H(real),'7ed41d29484fd3b7e9c0afaf881f301221be40cc0ec46d8dc14a10381e50af0a')
+        self.assertEqual(H(real),'5b763397f9315c456c7d585d2d01382b06de242751e49aafa427608790c91e76')
         self.assertEqual(prepare.apply_checkpoint(self.BASE,self.PATCH),self.RESULT)
         for data,payload in [(self.BASE+b'\n',self.PATCH),(self.BASE,self.PATCH+b'\n')]:
             with self.assertRaises(contract.Refused):prepare.apply_checkpoint(data,payload)

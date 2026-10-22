@@ -48,25 +48,66 @@ class BacklogCatchUp {
     FsrsEngine engine, {
     required DateTime now,
   }) {
-    final ranked = [
-      for (var index = 0; index < cards.length; index++)
-        if (!cards.elementAt(index).isNew)
-          (
-            card: cards.elementAt(index),
-            index: index,
-            retrievability: engine.retrievability(
-              cards.elementAt(index),
-              now: now,
-            ),
-          ),
-    ];
-    ranked.sort((a, b) {
-      final byRetrievability = a.retrievability.compareTo(b.retrievability);
-      return byRetrievability == 0
-          ? a.index.compareTo(b.index)
-          : byRetrievability;
-    });
+    final ranked = _rankDue(cards, engine, now: now).toList();
+    ranked.sort(_compareRank);
     return [for (final item in ranked) item.card];
+  }
+
+  /// Select the same prefix as orderDue + takeForToday without allocating and
+  /// sorting the entire backlog. Only the remaining daily ranks are retained.
+  /// Equal retrievability keeps fetched order, including ties at the cutoff.
+  static List<ReviewCard> takeDueForToday(
+    Iterable<ReviewCard> cards,
+    FsrsEngine engine, {
+    required DateTime now,
+    required int completedToday,
+  }) {
+    final limit = math.max(0, dailyCap - completedToday);
+    if (limit == 0) return [];
+    final best = <_DueRank>[];
+    for (final rank in _rankDue(cards, engine, now: now)) {
+      if (best.length == limit && _compareRank(rank, best.last) >= 0) {
+        continue;
+      }
+      var low = 0;
+      var high = best.length;
+      while (low < high) {
+        final mid = (low + high) ~/ 2;
+        if (_compareRank(best[mid], rank) <= 0) {
+          low = mid + 1;
+        } else {
+          high = mid;
+        }
+      }
+      best.insert(low, rank);
+      if (best.length > limit) best.removeLast();
+    }
+    return [for (final rank in best) rank.card];
+  }
+
+  static Iterable<_DueRank> _rankDue(
+    Iterable<ReviewCard> cards,
+    FsrsEngine engine, {
+    required DateTime now,
+  }) sync* {
+    var index = 0;
+    for (final card in cards) {
+      if (!card.isNew) {
+        yield (
+          card: card,
+          index: index,
+          retrievability: engine.retrievability(card, now: now),
+        );
+      }
+      index++;
+    }
+  }
+
+  static int _compareRank(_DueRank a, _DueRank b) {
+    final byRetrievability = a.retrievability.compareTo(b.retrievability);
+    return byRetrievability == 0
+        ? a.index.compareTo(b.index)
+        : byRetrievability;
   }
 
   static List<ReviewCard> takeForToday(
@@ -118,6 +159,8 @@ class BacklogCatchUp {
   static DateTime dayOnly(DateTime value) =>
       DateTime(value.year, value.month, value.day);
 }
+
+typedef _DueRank = ({ReviewCard card, int index, double retrievability});
 
 /// Presentation metadata exposed to the study screen. It contains no server
 /// or scheduling state and is rebuilt from the fetched queue on every load.
