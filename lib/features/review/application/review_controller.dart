@@ -1764,6 +1764,8 @@ class ReviewController extends ChangeNotifier {
             catchUpSourceQueue: catchUpBefore.source,
             previousLastReviewedAt: session.lastReviewedAt,
             previousReviewActivityKnown: session.reviewActivityKnown,
+            reducedGlobalDue:
+                countsTowardsGlobalDue && (_state.globalDueCount ?? 0) > 0,
           );
     _hideUndo = null;
     _clearFlagNotice();
@@ -2064,6 +2066,7 @@ class ReviewController extends ChangeNotifier {
       ]),
       previousLastReviewedAt: undo.previousLastReviewedAt,
       previousReviewActivityKnown: undo.previousReviewActivityKnown,
+      reducedGlobalDue: undo.reducedGlobalDue,
     );
   }
 
@@ -2236,10 +2239,13 @@ class ReviewController extends ChangeNotifier {
         return;
       }
       _undo = null;
+      final countsTowardsGlobalDue = _countsTowardsGlobalDue(card);
       _hideUndo = _HideUndoRecord(
         card: card,
         index: _state.index,
         clientId: clientId,
+        reducedGlobalDue:
+            countsTowardsGlobalDue && (_state.globalDueCount ?? 0) > 0,
       );
       _showFlagNotice(
         reason == 'delete'
@@ -2252,8 +2258,7 @@ class ReviewController extends ChangeNotifier {
         _state.copyWith(
           index: _state.index + 1,
           showBack: false,
-          globalDueCount:
-              !_countsTowardsGlobalDue(card) || globalDueCount == null
+          globalDueCount: !countsTowardsGlobalDue || globalDueCount == null
               ? globalDueCount
               : (globalDueCount - 1).clamp(0, globalDueCount),
         ),
@@ -2364,8 +2369,7 @@ class ReviewController extends ChangeNotifier {
                 ],
           index: at ?? record.index,
           showBack: false,
-          globalDueCount:
-              !_countsTowardsGlobalDue(record.card) || globalDueCount == null
+          globalDueCount: !record.reducedGlobalDue || globalDueCount == null
               ? globalDueCount
               : globalDueCount + 1,
         ),
@@ -2637,7 +2641,6 @@ class ReviewController extends ChangeNotifier {
     final loadToken = _loadSequence;
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
-    final countsTowardsGlobalDue = _countsTowardsGlobalDue(u.card);
     bool sessionOwned() =>
         loadToken == _loadSequence &&
         ownerScope == store.activeOwnerScope &&
@@ -2687,7 +2690,7 @@ class ReviewController extends ChangeNotifier {
           index: u.index,
           showBack: false,
           reviewedThisSession: reviewed > 0 ? reviewed - 1 : 0,
-          globalDueCount: !countsTowardsGlobalDue || globalDueCount == null
+          globalDueCount: !u.reducedGlobalDue || globalDueCount == null
               ? globalDueCount
               : globalDueCount + 1,
           lastReviewedAt: u.previousLastReviewedAt,
@@ -3066,11 +3069,13 @@ class _HideUndoRecord {
   final ReviewCard card;
   final int index;
   final String clientId;
+  final bool reducedGlobalDue;
 
   const _HideUndoRecord({
     required this.card,
     required this.index,
     required this.clientId,
+    required this.reducedGlobalDue,
   });
 }
 
@@ -3083,6 +3088,9 @@ class _UndoRecord {
   final List<ReviewCard> catchUpSourceQueue;
   final DateTime? previousLastReviewedAt;
   final bool previousReviewActivityKnown;
+  // Undo reverses the actual count change, even after a due-time boundary or
+  // when a stale aggregate was already clamped at zero.
+  final bool reducedGlobalDue;
 
   _UndoRecord({
     required this.clientId,
@@ -3093,5 +3101,6 @@ class _UndoRecord {
     required this.catchUpSourceQueue,
     required this.previousLastReviewedAt,
     required this.previousReviewActivityKnown,
+    required this.reducedGlobalDue,
   });
 }

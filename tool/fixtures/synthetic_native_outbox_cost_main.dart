@@ -30,11 +30,11 @@ const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
 const _storeBlob = '1ba1a9e8b25508eeaf6b50f79df174350505d968';
 const _baselineControllerSha =
-    'dd06f96a561a26837ef05ce3b922b5455502619e9a74259532ea1658e6f6d34c';
+    '19261c0fb264ccdd73438aecf2e4e9253263e8f07b341e371ec8448e8f9f1718';
 const _checkpointControllerSha =
-    'aadfed529f70451fc9a2c497c222915b4460917ec2d8ba432de2ee9260ac9ce2';
+    '75310a20d3d611979c069e936074937fa23ce325182904b6c9fbeba04f30a4c6';
 const _checkpointPatchSha =
-    '5b763397f9315c456c7d585d2d01382b06de242751e49aafa427608790c91e76';
+    '0e86e56d778c35b00e743dda28bb2a441c7a0cb8c45c12f757b859f675a0bc5e';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');
@@ -355,7 +355,7 @@ Future<void> main() async {
   try {
     _require(_enabled && kDebugMode && Platform.isAndroid);
     _require(RegExp(r'^[0-9a-f]{40}$').hasMatch(_sourceCommit));
-    _require(_baseCommit == '5d47516c79198da7c85a64c5324ac5e41b2a57e8');
+    _require(_baseCommit == 'ccad3943873239b697ecabee422931a2b3777db6');
     _require(RegExp(r'^[0-9a-f]{64}$').hasMatch(_fixtureSha));
     _require(
       (_variant == 'baseline' &&

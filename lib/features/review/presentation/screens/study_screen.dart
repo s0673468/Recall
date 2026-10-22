@@ -736,13 +736,23 @@ void _showFlagSheet(
   ReviewController controller, {
   required bool nativeIos,
 }) {
+  var submitting = false;
   Future<void> selectReason(BuildContext sheetContext, String reason) async {
+    if (submitting) return;
+    submitting = true;
     // Capture the navigator pre-await — using sheetContext across the gap
     // trips use_build_context_synchronously. The confirmation is the header's
     // inline notice, shown once the flag is durably queued.
     final navigator = Navigator.of(sheetContext);
-    await _absorbRefusedSave(controller.flag(reason));
-    navigator.pop();
+    final route = ModalRoute.of(sheetContext);
+    try {
+      await _absorbRefusedSave(controller.flag(reason));
+      // Cancel, Back or a swipe may already have dismissed this sheet while
+      // storage was busy. Never pop the study route underneath it.
+      if (route?.isCurrent == true) navigator.pop();
+    } finally {
+      submitting = false;
+    }
   }
 
   if (nativeIos) {
