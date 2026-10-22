@@ -138,13 +138,13 @@ class StudyReminderController extends ChangeNotifier {
     }
     final prefs = await _prefsLoader();
     _ownerId = ownerId;
+    final enabled = prefs.get(_key(_enabledKey, ownerId));
+    final hour = prefs.get(_key(_hourKey, ownerId));
+    final minute = prefs.get(_key(_minuteKey, ownerId));
     _value = StudyReminderSettings(
-      enabled: prefs.getBool(_key(_enabledKey, ownerId)) ?? false,
-      hour: (prefs.getInt(_key(_hourKey, ownerId)) ?? defaultHour).clamp(0, 23),
-      minute: (prefs.getInt(_key(_minuteKey, ownerId)) ?? defaultMinute).clamp(
-        0,
-        59,
-      ),
+      enabled: enabled is bool ? enabled : false,
+      hour: (hour is int ? hour : defaultHour).clamp(0, 23),
+      minute: (minute is int ? minute : defaultMinute).clamp(0, 59),
     );
     _initialized = true;
     notifyListeners();
