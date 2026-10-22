@@ -138,16 +138,30 @@ def build_payloads(con):
         for name, did in name_to_did.items()
     ]
 
+    # A card in a filtered deck keeps its home deck and real due date in
+    # odid/odue; `did`/`due` then name the filtered deck and a queue position.
     rows = con.execute(
         """
-        SELECT n.guid, c.did, n.mid, n.flds, n.tags, n.mod,
-               c.data, c.due, c.reps, c.lapses, c.type, c.queue
+        SELECT n.guid, CASE WHEN c.odid THEN c.odid ELSE c.did END, n.mid,
+               n.flds, n.tags, n.mod, c.data,
+               CASE WHEN c.odid AND c.odue THEN c.odue ELSE c.due END,
+               c.reps, c.lapses, c.type, c.queue, c.id
         FROM notes n JOIN cards c ON c.nid = n.id
         """
     ).fetchall()
+    # Older Anki versions keep FSRS memory state without `lrt`. FSRS reads a
+    # missing last review as "fully forgotten", so fall back to the newest
+    # rated review (manual reschedules carry ease 0).
+    rated_at = dict(
+        con.execute(
+            "SELECT cid, MAX(id) FROM revlog WHERE ease > 0 GROUP BY cid"
+        ).fetchall()
+    )
 
     notes, card_seed = [], {}
-    for guid, did, mid, flds, tags, mod, data, due, reps, lapses, ctype, queue in rows:
+    for (
+        guid, did, mid, flds, tags, mod, data, due, reps, lapses, ctype, queue, cid
+    ) in rows:
         parts = flds.split(FSEP)
         front = parts[0] if parts else ""
         back = parts[1] if len(parts) > 1 else ""
@@ -169,14 +183,16 @@ def build_payloads(con):
         # `due` units depend on card type:
         #   type 0 (new)         -> position int (no real due date)
         #   type 2 (review)      -> days since collection creation (col.crt)
-        #   type 1/3 (re/learning) -> unix epoch SECONDS for the next step
+        #   type 1/3 (re/learning) -> unix epoch SECONDS for the next step, or a
+        #     day number like type 2 for day-or-longer steps. Anki tells them
+        #     apart by magnitude, which also covers suspended/buried cards.
         if ctype == 0:
             state, due_abs = 0, None
         elif ctype == 2:
             state, due_abs = 2, _safe_iso(crt + due * 86400)
         else:
             state = 1 if ctype == 1 else 3
-            due_abs = _safe_iso(due)
+            due_abs = _safe_iso(due if due > 1_000_000_000 else crt + due * 86400)
         card_seed[guid] = {
             "user_id": USER_ID,
             "guid": guid,
@@ -186,7 +202,7 @@ def build_payloads(con):
             "due": due_abs,
             "reps": reps,
             "lapses": lapses,
-            "last_review": _iso(fsrs.get("lrt")),
+            "last_review": _iso(fsrs.get("lrt") or rated_at.get(cid)),
             # desktop suspension (queue == -1) -> Recall dormancy. Importer-owned
             # for ALL cards (like content), orthogonal to the FSRS columns.
             "suspended": queue == -1,
@@ -195,17 +211,28 @@ def build_payloads(con):
 
 
 def _fetch_all(sb, table_name, columns, **eq):
-    """Fetch ALL matching rows. PostgREST caps a single GET at 1000 rows, so page."""
-    rows, start = [], 0
+    """Fetch ALL matching rows. PostgREST caps a single GET, so page.
+
+    Keyset on `id`: unordered offset pages can skip a row the app updates
+    mid-read, and a skipped reviewed card would be reseeded. A server cap may
+    be below the requested page, so only an empty page ends the read.
+    """
+    if "id" not in columns.split(","):
+        columns = f"id,{columns}"
+    rows, after = [], None
     while True:
         q = sb.table(table_name).select(columns)
         for col, val in eq.items():
             q = q.eq(col, val)
-        chunk = q.range(start, start + 999).execute().data
-        rows.extend(chunk)
-        if len(chunk) < 1000:
+        if after is not None:
+            q = q.gt("id", after)
+        chunk = q.order("id").limit(1000).execute().data
+        if not chunk:
             return rows
-        start += 1000
+        if after is not None and chunk[-1]["id"] <= after:
+            raise RuntimeError(f"{table_name} pagination did not advance")
+        rows.extend(chunk)
+        after = chunk[-1]["id"]
 
 
 def run(sb):
