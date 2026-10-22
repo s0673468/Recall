@@ -1461,8 +1461,25 @@ class ReviewController extends ChangeNotifier {
     // same safety boundary as every normal load.
     final pending = await store.outbox(ownerScope: ownerScope);
     if (!stillCurrent()) return;
-    // Filter only the presentation: the source must retain unacknowledged
-    // validations for later offline snapshot writes, even while pending.
+    // This choice cancels any rating still awaiting optional remediation or
+    // progress persistence. Consume its durable review here too, before that
+    // producer can return without updating the source or session exclusions.
+    final pendingRatings = {
+      for (final entry in pending)
+        if (entry['card_id'] is num)
+          (entry['card_id'] as num).toInt(): entry['rating'],
+    };
+    _ratedCatchUpCardIds.addAll(pendingRatings.keys);
+    _catchUpSourceQueue = [
+      for (final card in _catchUpSourceQueue)
+        if (!pendingRatings.containsKey(card.id) ||
+            (card.contentRevalidationPending &&
+                pendingRatings[card.id] == Rating.again.value))
+          card,
+    ];
+    // Only Again leaves validation unacknowledged. Retain that offline retry
+    // in snapshots, while session exclusions keep it out of presentation even
+    // after delivery removes its pending entry.
     final source = [
       for (final card in _withoutPendingReviews(_catchUpSourceQueue, pending))
         if (!_ratedCatchUpCardIds.contains(card.id)) card,
