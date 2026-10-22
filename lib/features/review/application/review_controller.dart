@@ -1813,12 +1813,9 @@ class ReviewController extends ChangeNotifier {
             catchUpSourceQueue: catchUpBefore.source,
             previousLastReviewedAt: session.lastReviewedAt,
             previousReviewActivityKnown: session.reviewActivityKnown,
-<<<<<<< HEAD
             reducedGlobalDue:
                 countsTowardsGlobalDue && (_state.globalDueCount ?? 0) > 0,
-=======
             updatesSnapshot: updatesSnapshot,
->>>>>>> pr/158
           );
     _hideUndo = null;
     _clearFlagNotice();
@@ -2118,11 +2115,8 @@ class ReviewController extends ChangeNotifier {
       ]),
       previousLastReviewedAt: undo.previousLastReviewedAt,
       previousReviewActivityKnown: undo.previousReviewActivityKnown,
-<<<<<<< HEAD
       reducedGlobalDue: undo.reducedGlobalDue,
-=======
       updatesSnapshot: undo.updatesSnapshot,
->>>>>>> pr/158
     );
   }
 
@@ -3164,13 +3158,10 @@ class _UndoRecord {
   final List<ReviewCard> catchUpSourceQueue;
   final DateTime? previousLastReviewedAt;
   final bool previousReviewActivityKnown;
-<<<<<<< HEAD
   // Undo reverses the actual count change, even after a due-time boundary or
   // when a stale aggregate was already clamped at zero.
   final bool reducedGlobalDue;
-=======
   final bool updatesSnapshot;
->>>>>>> pr/158
 
   _UndoRecord({
     required this.clientId,
@@ -3181,10 +3172,7 @@ class _UndoRecord {
     required this.catchUpSourceQueue,
     required this.previousLastReviewedAt,
     required this.previousReviewActivityKnown,
-<<<<<<< HEAD
     required this.reducedGlobalDue,
-=======
     required this.updatesSnapshot,
->>>>>>> pr/158
   });
 }
