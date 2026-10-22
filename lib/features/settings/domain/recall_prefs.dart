@@ -99,7 +99,7 @@ class RecallPrefs {
   }
 
   static int _clampLimit(Object? v) {
-    if (v is num) return v.toInt().clamp(0, maxNewLimit);
+    if (v is num && v.isFinite) return v.toInt().clamp(0, maxNewLimit);
     return defaultNewLimit;
   }
 
@@ -127,7 +127,7 @@ class RecallPrefs {
       newLimitDefault: json.containsKey('new_limit_default')
           ? _clampLimit(json['new_limit_default'])
           : defaultNewLimit,
-      desiredRetention: retention is num
+      desiredRetention: retention is num && retention.isFinite
           ? retention.toDouble().clamp(minRetention, maxRetention)
           : defaultRetention,
       newOrder: NewOrder.fromKey(json['new_order']),

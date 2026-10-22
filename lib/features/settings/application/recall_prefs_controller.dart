@@ -36,6 +36,7 @@ class RecallPrefsController extends ChangeNotifier {
   String? _ownerId;
   bool _ownerReady = false;
   bool _applyingCloudUpdate = false;
+  bool _cacheNeedsReload = false;
   int _version = 0;
   // Optimistic UI state alone cannot prove that an update reached storage.
   // A retry of the same value must persist it again after a local failure.
@@ -93,8 +94,9 @@ class RecallPrefsController extends ChangeNotifier {
       _resetValue();
 
       final prefs = await _prefsLoader();
+      await _ensureCacheReloaded(prefs);
       final ownerKey = localKeyForOwner(ownerId);
-      final localRaw = prefs.getString(ownerKey);
+      final localRaw = prefs.get(ownerKey);
 
       // The old mirror has no owner marker. Even a restored session cannot
       // prove which account wrote it, so discard it and let the owner-scoped
@@ -103,7 +105,7 @@ class RecallPrefsController extends ChangeNotifier {
         await _removeStrict(prefs, localKey);
       }
 
-      final pendingRaw = prefs.getString(pendingKeyForOwner(ownerId));
+      final pendingRaw = prefs.get(pendingKeyForOwner(ownerId));
       final pending = _decode(pendingRaw, pending: true);
       final local = _decode(localRaw);
       final selected = pending ?? local;
@@ -148,8 +150,9 @@ class RecallPrefsController extends ChangeNotifier {
 
     try {
       final prefs = await _prefsLoader();
+      await _withLocalLock(() => _ensureCacheReloaded(prefs));
       final pendingKey = pendingKeyForOwner(ownerId);
-      final pendingRaw = prefs.getString(pendingKey);
+      final pendingRaw = prefs.get(pendingKey);
       if (pendingRaw != null) {
         final pending = _decode(pendingRaw, pending: true);
         if (pending == null) {
@@ -158,11 +161,11 @@ class RecallPrefsController extends ChangeNotifier {
           // refresh. Preserve the raw recovery evidence under the same hashed
           // owner scope, then clear only the unchanged corrupt value.
           await _withLocalLock(() async {
-            if (prefs.getString(pendingKey) != pendingRaw) return;
+            if (prefs.get(pendingKey) != pendingRaw) return;
             await _setStringStrict(
               prefs,
               corruptPendingKeyForOwner(ownerId),
-              pendingRaw,
+              pendingRaw is String ? pendingRaw : jsonEncode(pendingRaw),
             );
             await _removeStrict(prefs, pendingKey);
           });
@@ -178,7 +181,14 @@ class RecallPrefsController extends ChangeNotifier {
           // A newer update may have replaced the pending value while this
           // write was in flight. Clear only the exact value the server accepted.
           await _withLocalLock(() async {
-            if (prefs.getString(pendingKey) == pendingRaw) {
+            if (prefs.get(pendingKey) == pendingRaw) {
+              // The original update may have persisted only the pending record.
+              // Repair the mirror before removing that durable recovery value.
+              await _setStringStrict(
+                prefs,
+                localKeyForOwner(ownerId),
+                jsonEncode(pending.toJson()),
+              );
               await _removeStrict(prefs, pendingKey);
             }
           });
@@ -259,9 +269,12 @@ class RecallPrefsController extends ChangeNotifier {
     if (_ownerId == ownerId) await syncOwner();
   }
 
-  RecallPrefs? _decode(String? raw, {bool pending = false}) {
+  RecallPrefs? _decode(Object? raw, {bool pending = false}) {
     if (raw == null) return null;
     try {
+      if (raw is! String) {
+        throw const FormatException('Stored preferences must be JSON text.');
+      }
       final decoded = jsonDecode(raw);
       if (decoded is! Map) {
         throw const FormatException('Stored preferences must be an object.');
@@ -294,20 +307,49 @@ class RecallPrefsController extends ChangeNotifier {
     String key,
     String value,
   ) async {
-    if (!await prefs.setString(key, value)) {
-      throw StateError('Recall preferences could not be persisted.');
+    try {
+      if (!await prefs.setString(key, value)) {
+        throw StateError('Recall preferences could not be persisted.');
+      }
+    } catch (_) {
+      await _reloadAfterFailure(prefs);
+      rethrow;
     }
   }
 
   Future<void> _removeStrict(SharedPreferences prefs, String key) async {
-    if (!await prefs.remove(key)) {
-      throw StateError('Recall preferences could not be released.');
+    try {
+      if (!await prefs.remove(key)) {
+        throw StateError('Recall preferences could not be released.');
+      }
+    } catch (_) {
+      await _reloadAfterFailure(prefs);
+      rethrow;
     }
+  }
+
+  Future<void> _reloadAfterFailure(SharedPreferences prefs) async {
+    // SharedPreferences changes its cache before the backend accepts a write
+    // or removal. Never replay a refused value or forget a still-pending one.
+    _cacheNeedsReload = true;
+    try {
+      await _ensureCacheReloaded(prefs);
+    } catch (_) {
+      // Preserve the original storage error.
+    }
+  }
+
+  Future<void> _ensureCacheReloaded(SharedPreferences prefs) async {
+    if (!_cacheNeedsReload) return;
+    // If readback also failed, later sync/activation must retry it before
+    // trusting this process's optimistic cache again.
+    await prefs.reload();
+    _cacheNeedsReload = false;
   }
 
   Future<void> _loadLegacyCompatibility() async {
     final prefs = await _prefsLoader();
-    final local = _decode(prefs.getString(localKey));
+    final local = _decode(prefs.get(localKey));
     if (local != null) {
       _value = local;
       _hasStored = true;
