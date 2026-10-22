@@ -1023,15 +1023,31 @@ class RecallApi implements ReviewReplayGateway {
   /// Card ids with an open "don't like" or "delete" flag. Those cards stay out
   /// of the queue until the weekly review resolves or dismisses the flag.
   Future<Set<int>> fetchHiddenCardIds() async {
-    final rows = await client
-        .from('note_flags')
-        .select('card_id')
-        .eq('status', 'open')
-        .inFilter('reason', const ['dislike', 'delete']);
-    return {
-      for (final row in rows)
-        if (row['card_id'] is num) (row['card_id'] as num).toInt(),
-    };
+    final hidden = <int>{};
+    int? afterId;
+    while (true) {
+      var query = client
+          .from('note_flags')
+          .select('id,card_id')
+          .eq('status', 'open')
+          .inFilter('reason', const ['dislike', 'delete']);
+      if (afterId != null) query = query.gt('id', afterId);
+      final page = await query
+          .order('id', ascending: true)
+          .limit(_statsPageSize);
+      // A short page may be the server's row cap, not the complete hide set.
+      // Use the unique flag ID: several flags can refer to the same card.
+      if (page.isEmpty) return hidden;
+      final nextId = (page.last['id'] as num).toInt();
+      if (afterId != null && nextId <= afterId) {
+        throw StateError('Hidden-card pagination did not advance');
+      }
+      hidden.addAll({
+        for (final row in page)
+          if (row['card_id'] is num) (row['card_id'] as num).toInt(),
+      });
+      afterId = nextId;
+    }
   }
 
   /// Withdraw a synced one-tap flag the user undid. Only an open flag with
