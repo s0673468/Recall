@@ -46,6 +46,7 @@ class RecallApi implements ReviewReplayGateway {
       'cloud_seen,notes!inner(front,back,has_latex,deck_id,latex_svg,tags)';
   static const _duePageSize = 500;
   static const _statsPageSize = 500;
+  static const _deckPageSize = 500;
   static const contentRevalidationBatchSize = 20;
   static const _contentRevalidationPageSize = 250;
   static const _contentRevalidationAckPageSize = 1000;
@@ -99,14 +100,34 @@ class RecallApi implements ReviewReplayGateway {
   }
 
   Future<List<DeckRow>> fetchDecks() async {
-    final rows = await client
-        .from('decks')
-        .select('deck_id,name')
-        .eq('deleted', false)
-        .order('name');
-    return [
-      for (final r in rows) DeckRow.fromMap(Map<String, dynamic>.from(r)),
-    ];
+    final decks = <DeckRow>[];
+    int? afterId;
+    while (true) {
+      var query = client
+          .from('decks')
+          .select('deck_id,name')
+          .eq('deleted', false);
+      if (afterId != null) query = query.gt('deck_id', afterId);
+      final page = await query
+          .order('deck_id', ascending: true)
+          .limit(_deckPageSize);
+      // A server cap can be lower than our requested page size.
+      if (page.isEmpty) break;
+      final nextId = (page.last['deck_id'] as num).toInt();
+      if (afterId != null && nextId <= afterId) {
+        throw StateError('Deck pagination did not advance');
+      }
+      decks.addAll(page.map((row) => DeckRow.fromMap(row)));
+      afterId = nextId;
+    }
+    // Page by stable identity so a rename/move cannot shift a page boundary.
+    // Present the decks A-to-Z, as the previous `.order('name')` query did.
+    // Equal names keep a stable order by deck id.
+    decks.sort((a, b) {
+      final byName = a.name.compareTo(b.name);
+      return byName != 0 ? byName : a.deckId.compareTo(b.deckId);
+    });
+    return decks;
   }
 
   Future<FsrsSettings?> fetchFsrsSettings() async {
@@ -1275,15 +1296,28 @@ class RecallApi implements ReviewReplayGateway {
 
   /// Per-deck due/new counts via the deck_counts() RPC.
   Future<Map<int, ({int due, int neu})>> fetchDeckCounts() async {
-    final res = await client.rpc('deck_counts');
-    final rows = (res as List).cast<Map<String, dynamic>>();
-    return {
-      for (final r in rows)
-        (r['deck_id'] as num).toInt(): (
+    final counts = <int, ({int due, int neu})>{};
+    int? afterId;
+    while (true) {
+      var query = client.rpc('deck_counts');
+      if (afterId != null) query = query.gt('deck_id', afterId);
+      final res = await query
+          .order('deck_id', ascending: true)
+          .limit(_deckPageSize);
+      final rows = (res as List).cast<Map<String, dynamic>>();
+      if (rows.isEmpty) return counts;
+      final nextId = (rows.last['deck_id'] as num).toInt();
+      if (afterId != null && nextId <= afterId) {
+        throw StateError('Deck-count pagination did not advance');
+      }
+      for (final r in rows) {
+        counts[(r['deck_id'] as num).toInt()] = (
           due: (r['due'] as num?)?.toInt() ?? 0,
           neu: (r['new'] as num?)?.toInt() ?? 0,
-        ),
-    };
+        );
+      }
+      afterId = nextId;
+    }
   }
 }
 

@@ -274,6 +274,11 @@ def _same_schedule(row, schedule):
 
 def run(sb):
     """Do the one-way upsert against an already-built Supabase client."""
+    # Capture possible removals before the local snapshot. Decks published by
+    # another import after this point must not become our cleanup candidates.
+    previous_decks = _fetch_all(
+        sb, "decks", "deck_id,updated_at", user_id=USER_ID, deleted=False
+    )
     tmp = os.path.join(tempfile.gettempdir(), "anki_import_copy.anki2")
     shutil.copy2(LIVE_DB, tmp)  # snapshot so an open Anki can't torn-read us
     con = connect(tmp, ro=True)
@@ -367,6 +372,16 @@ def run(sb):
         sb.table("cards").update({"deleted": True}).eq("user_id", USER_ID).in_(
             "guid", stale
         ).execute()
+
+    # Deck identity survives renames/moves. Hide absent decks without removing
+    # their rows/history, but only if no other import has touched them since
+    # our initial read. The write guard also covers a publish during cleanup.
+    live_deck_ids = {d["deck_id"] for d in decks}
+    for deck in previous_decks:
+        if deck["deck_id"] not in live_deck_ids:
+            sb.table("decks").update({"deleted": True}).eq("user_id", USER_ID).eq(
+                "deck_id", deck["deck_id"]
+            ).eq("updated_at", deck["updated_at"]).execute()
 
     seeded = len(new_rows) + len(reseed)
     print(

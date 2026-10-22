@@ -280,7 +280,7 @@ class SyntheticRecallHttp {
     if (path.endsWith('/decks')) {
       _require(request.method == 'GET' && query['select'] == 'deck_id,name');
       kind = 'decks';
-      body = '[{"deck_id":1,"name":"ML"}]';
+      body = query['deck_id'] == 'gt.1' ? '[]' : '[{"deck_id":1,"name":"ML"}]';
     } else if (path.endsWith('/cards')) {
       _require(request.method == 'GET' && query.containsKey('select'));
       _require(query['deleted'] == 'eq.false');
@@ -326,7 +326,8 @@ class SyntheticRecallHttp {
       _require(request.method == 'POST');
       kind = 'deck_counts';
       body = jsonEncode([
-        {'deck_id': 1, 'due': cards.length, 'new': 0},
+        if (query['deck_id'] != 'gt.1')
+          {'deck_id': 1, 'due': cards.length, 'new': 0},
       ]);
     } else if (path.endsWith('/rpc/apply_review')) {
       _require(request.method == 'POST');
