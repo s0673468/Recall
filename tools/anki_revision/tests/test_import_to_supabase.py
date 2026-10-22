@@ -40,7 +40,8 @@ CREATE TABLE cards (
  due INTEGER, reps INTEGER, lapses INTEGER, odue INTEGER, odid INTEGER, data TEXT
 );
 CREATE TABLE revlog (
- id INTEGER PRIMARY KEY, cid INTEGER, ease INTEGER, type INTEGER
+ id INTEGER PRIMARY KEY, cid INTEGER, ease INTEGER, type INTEGER,
+ factor INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -94,9 +95,12 @@ class Collection:
         )
         return guid
 
-    def revlog(self, cid: int, at_epoch: int, *, ease: int, rtype: int) -> None:
+    def revlog(
+        self, cid: int, at_epoch: int, *, ease: int, rtype: int, factor: int = 0
+    ) -> None:
         self.con.execute(
-            "INSERT INTO revlog VALUES (?,?,?,?)", (at_epoch * 1000, cid, ease, rtype)
+            "INSERT INTO revlog (id, cid, ease, type, factor) VALUES (?,?,?,?,?)",
+            (at_epoch * 1000, cid, ease, rtype, factor),
         )
 
     def payloads(self):
@@ -185,6 +189,35 @@ class BuildPayloadsTest(unittest.TestCase):
         self.assertIsNone(seed[new]["last_review"])
         self.assertIsNone(seed[never_rated]["last_review"])
 
+    def test_filtered_practice_without_rescheduling_is_not_the_last_review(
+        self,
+    ) -> None:
+        c = self.collection
+        reviewed_at = CRT + 600 * DAY
+        # Practice in a filtered deck with rescheduling off logs a type 3
+        # entry with factor 0 and leaves the FSRS memory state unchanged.
+        crammed = c.card(1, ctype=2, queue=2, due=640, data={"s": 20.0, "d": 5.0})
+        c.revlog(1, reviewed_at, ease=3, rtype=1, factor=2500)
+        c.revlog(1, reviewed_at + 5 * DAY, ease=3, rtype=3, factor=0)
+        # Older schedulers logged rescheduling filtered reviews as type 3
+        # with the card's ease; those did move the memory state.
+        rescheduled_early = c.card(
+            2, ctype=2, queue=2, due=640, data={"s": 20.0, "d": 5.0}
+        )
+        c.revlog(2, reviewed_at + 2, ease=3, rtype=1, factor=2500)
+        c.revlog(2, reviewed_at + 5 * DAY + 2, ease=3, rtype=3, factor=2500)
+        # "Rescheduled" entries (type 5) are not reviews either.
+        rescheduled = c.card(3, ctype=2, queue=2, due=640, data={"s": 20.0, "d": 5.0})
+        c.revlog(3, reviewed_at + 3, ease=3, rtype=2, factor=2500)
+        c.revlog(3, reviewed_at + 5 * DAY + 3, ease=3, rtype=5, factor=2500)
+        _, _, seed, _ = c.payloads()
+
+        self.assertEqual(seed[crammed]["last_review"], iso(reviewed_at))
+        self.assertEqual(
+            seed[rescheduled_early]["last_review"], iso(reviewed_at + 5 * DAY + 2)
+        )
+        self.assertEqual(seed[rescheduled]["last_review"], iso(reviewed_at + 3))
+
 
 class FakeResponse:
     def __init__(self, data):
@@ -208,8 +241,9 @@ class FakeQuery:
         self.action, self.columns = "select", columns
         return self
 
-    def upsert(self, rows, on_conflict):
+    def upsert(self, rows, on_conflict, ignore_duplicates=False):
         self.action, self.payload, self.on_conflict = "upsert", rows, on_conflict
+        self.ignore_duplicates = ignore_duplicates
         return self
 
     def insert(self, row):
@@ -258,6 +292,8 @@ class FakeSupabase:
         self.tables = {"decks": [], "notes": [], "cards": [], "user_settings": []}
         self.next_id = {name: 1 for name in self.tables}
         self.after_select = None
+        self.before_write = None
+        self.updates = []
 
     def table(self, name):
         return FakeQuery(self, name)
@@ -288,6 +324,8 @@ class FakeSupabase:
             if self.after_select:
                 self.after_select(query, page)
             return page
+        if self.before_write:
+            self.before_write(query)
         if query.action == "insert":
             return [self.add(query.table_name, dict(query.payload))]
         if query.action == "upsert":
@@ -299,10 +337,11 @@ class FakeSupabase:
                 )
                 if match is None:
                     self.add(query.table_name, dict(incoming))
-                else:
+                elif not query.ignore_duplicates:
                     self.rewrite(query.table_name, match, incoming)
             return []
         if query.action == "update":
+            self.updates.append((query.table_name, query.payload))
             for row in [r for r in heap if all(f(r) for f in query.filters)]:
                 self.rewrite(query.table_name, row, query.payload)
             return []
@@ -389,6 +428,111 @@ class RunTest(unittest.TestCase):
                         row["last_review"], self.RECALL_STATE["last_review"]
                     )
                     self.assertGreaterEqual(row["reps"], 30)
+
+    def _cloud_card(self, sb, guid, **state):
+        note = sb.add("notes", {"user_id": importer.USER_ID, "guid": guid})
+        return sb.add(
+            "cards",
+            {
+                "user_id": importer.USER_ID,
+                "guid": guid,
+                "note_id": note["id"],
+                "deleted": False,
+                "suspended": False,
+                **state,
+            },
+        )
+
+    def _run(self, root, collection, sb):
+        collection.con.commit()
+        collection.con.close()
+        with (
+            mock.patch.object(importer, "LIVE_DB", str(collection.path)),
+            mock.patch.object(tempfile, "tempdir", str(root)),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            importer.run(sb)
+
+    def test_review_landing_before_the_seed_write_is_not_overwritten(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            collection = Collection(root / "collection.anki2")
+            sb = FakeSupabase()
+            guid = collection.card(
+                1, ctype=2, queue=2, due=100, data={"s": 3.0, "d": 9.0}
+            )
+            # Recall has not reviewed it yet, and the desktop has moved on.
+            card = self._cloud_card(
+                sb,
+                guid,
+                stability=1.0,
+                difficulty=5.0,
+                state=0,
+                due=None,
+                reps=0,
+                lapses=0,
+                last_review=None,
+                cloud_seen=False,
+            )
+
+            # The phone's first review commits after every importer read and
+            # before its first card write.
+            def phone_reviews(query):
+                if query.table_name == "cards":
+                    sb.before_write = None
+                    sb.rewrite("cards", card, dict(self.RECALL_STATE))
+
+            sb.before_write = phone_reviews
+            self._run(root, collection, sb)
+
+            (row,) = sb.tables["cards"]
+            for column, value in self.RECALL_STATE.items():
+                with self.subTest(column=column):
+                    self.assertEqual(row[column], value)
+            self.assertEqual(row["note_id"], card["note_id"])
+
+    def test_unreviewed_cards_still_follow_desktop_scheduling(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            collection = Collection(root / "collection.anki2")
+            sb = FakeSupabase()
+            data = {"s": 3.14159265, "d": 9.0, "lrt": CRT + 90 * DAY}
+            fresh = collection.card(1, ctype=2, queue=2, due=100, data=data)
+            moved = collection.card(2, ctype=2, queue=2, due=100, data=data)
+            same = collection.card(3, ctype=2, queue=2, due=100, data=data)
+            reviewed = collection.card(4, ctype=2, queue=2, due=100, data=data)
+            # PostgREST echoes timestamps and real columns in its own format.
+            desktop = {
+                "stability": 3.1415927,
+                "difficulty": 9.0,
+                "state": 2,
+                "due": iso(CRT + 100 * DAY).replace("+00:00", "Z"),
+                "reps": 3,
+                "lapses": 0,
+                "last_review": iso(CRT + 90 * DAY),
+                "cloud_seen": False,
+            }
+            self._cloud_card(sb, moved, **{**desktop, "stability": 1.0, "reps": 1})
+            self._cloud_card(sb, same, **desktop)
+            self._cloud_card(sb, reviewed, **self.RECALL_STATE)
+            self._run(root, collection, sb)
+
+            rows = {row["guid"]: row for row in sb.tables["cards"]}
+            for guid in (fresh, moved, same):
+                with self.subTest(guid=guid):
+                    self.assertAlmostEqual(rows[guid]["stability"], 3.14159265)
+                    self.assertEqual(rows[guid]["reps"], 3)
+                    self.assertEqual(rows[guid]["state"], 2)
+            self.assertEqual(rows[fresh]["due"], iso(CRT + 100 * DAY))
+            self.assertEqual(rows[reviewed]["stability"], 41.0)
+            self.assertEqual(rows[reviewed]["reps"], 30)
+            # Only the card whose desktop scheduling changed is rewritten.
+            scheduled = [
+                payload for table, payload in sb.updates if "stability" in payload
+            ]
+            self.assertEqual(len(scheduled), 1)
 
 
 if __name__ == "__main__":
