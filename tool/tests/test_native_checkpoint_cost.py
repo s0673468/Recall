@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -147,6 +148,36 @@ class DecoderTests(unittest.TestCase):
         with self.assertRaises(contract.Refused):driver.event(driver.framing.SENTINEL+'{"x":','baseline',128,101,FIXTURE)
 
 
+class ProfileBindingTests(unittest.TestCase):
+    def test_dart_guards_bind_the_same_profile_as_the_python_contract(self):
+        fixture=(TOOL/'fixtures/synthetic_native_outbox_cost_main.dart').read_text()
+        for name,value in [('_baselineControllerSha',contract.BASE_CONTROLLER),
+                           ('_checkpointControllerSha',contract.CHECKPOINT_CONTROLLER),
+                           ('_checkpointPatchSha',contract.PATCH_SHA),
+                           ('_storeBlob',contract.STORE_BLOB)]:
+            with self.subTest(name=name):
+                self.assertEqual(re.findall(r'const '+name+r"\s*=\s*'([0-9a-f]+)';",fixture),[value])
+        self.assertEqual(re.findall(r"_require\(_baseCommit == '([0-9a-f]+)'\);",fixture),[contract.SOURCE])
+        self.assertEqual(H(fixture.encode()),contract.FIXTURE_SHA)
+
+    def test_workflow_defines_and_documentation_bind_both_variants(self):
+        workflow=(TOOL.parent/'.github/workflows/recall-synthetic-native-cost.yml').read_text()
+        for name,values in [
+            ('RECALL_BASE_COMMIT',[contract.SOURCE]*2),
+            ('RECALL_CONTROLLER_SHA256',[contract.BASE_CONTROLLER,contract.CHECKPOINT_CONTROLLER]),
+            ('RECALL_PATCH_SHA256',['none',contract.PATCH_SHA]),
+            ('RECALL_FIXTURE_SHA256',[contract.FIXTURE_SHA]*2),
+        ]:
+            with self.subTest(name=name):
+                self.assertEqual(re.findall(r'--dart-define='+name+r'=([^\s]+)',workflow),values)
+        self.assertEqual(re.findall(r'--fixture-sha ([0-9a-f]+)',workflow),[contract.FIXTURE_SHA]*2)
+        readme=(TOOL/'fixtures/README-native-checkpoint-cost.md').read_text()
+        for value in [contract.SOURCE,contract.BASE_CONTROLLER,contract.CHECKPOINT_CONTROLLER,
+                      contract.STORE_SHA,contract.STORE_BLOB,contract.PATCH_SHA,contract.FIXTURE_SHA]:
+            with self.subTest(pin=value):self.assertIn('`'+value+'`',readme)
+        self.assertIn('RECALL_BASE_COMMIT='+contract.SOURCE[:8]+'...',readme)
+
+
 class PreparerTests(unittest.TestCase):
     # These tiny inputs are invented. Runtime constants are patched only for
     # this unit fixture; deployed source/profile pins remain immutable.
@@ -176,7 +207,7 @@ class PreparerTests(unittest.TestCase):
         # loading production files into the invented unit fixture. The pinned
         # ACK-batch experiment is independently source-bound before compilation.
         real=(TOOL/'fixtures/checkpoint-drain-only.patch').read_bytes()
-        self.assertEqual(H(real),'a9926485223b74582a2e2847103d51c72bbe398f77b048cd0d2413a36e5aeb0b')
+        self.assertEqual(H(real),'0e86e56d778c35b00e743dda28bb2a441c7a0cb8c45c12f757b859f675a0bc5e')
         self.assertEqual(prepare.apply_checkpoint(self.BASE,self.PATCH),self.RESULT)
         for data,payload in [(self.BASE+b'\n',self.PATCH),(self.BASE,self.PATCH+b'\n')]:
             with self.assertRaises(contract.Refused):prepare.apply_checkpoint(data,payload)

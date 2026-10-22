@@ -84,13 +84,13 @@ jobs:
             --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/baseline" \
             --source-commit "$GITHUB_SHA" --variant baseline \
             --patch tool/fixtures/checkpoint-drain-only.patch \
-            --fixture-sha 2bffe141f04aae5d408d26a5bc4e8fff645193244cdbac5235d7c52ad06e6c7b \
+            --fixture-sha 4bb392d3430bb161cd45f93baf9592d7a077e206f2a0049bd69ce866bac22cae \
             > "$COST_RESULTS/base-provenance.json"
           python3 tool/prepare_native_checkpoint_cost.py \
             --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/checkpoint" \
             --source-commit "$GITHUB_SHA" --variant checkpoint \
             --patch tool/fixtures/checkpoint-drain-only.patch \
-            --fixture-sha 2bffe141f04aae5d408d26a5bc4e8fff645193244cdbac5235d7c52ad06e6c7b \
+            --fixture-sha 4bb392d3430bb161cd45f93baf9592d7a077e206f2a0049bd69ce866bac22cae \
             > "$COST_RESULTS/checkpoint-provenance.json"
       - name: Build isolated baseline debug APK
         working-directory: ${{ env.COST_SOURCE }}/baseline
@@ -100,11 +100,11 @@ jobs:
             --target tool/fixtures/synthetic_native_outbox_cost_main.dart \
             --dart-define=RECALL_SYNTHETIC_NATIVE_OUTBOX_COST=true \
             --dart-define=RECALL_SOURCE_COMMIT="$GITHUB_SHA" \
-            --dart-define=RECALL_BASE_COMMIT=51bc1394be1afeb18ae4134fa3c7578394c2d36d \
+            --dart-define=RECALL_BASE_COMMIT=ccad3943873239b697ecabee422931a2b3777db6 \
             --dart-define=RECALL_VARIANT=baseline \
-            --dart-define=RECALL_CONTROLLER_SHA256=23347b967f91195355c56bfa6ffe749eb20f4fc487c4ffeaee3bd45716321999 \
+            --dart-define=RECALL_CONTROLLER_SHA256=19261c0fb264ccdd73438aecf2e4e9253263e8f07b341e371ec8448e8f9f1718 \
             --dart-define=RECALL_PATCH_SHA256=none \
-            --dart-define=RECALL_FIXTURE_SHA256=2bffe141f04aae5d408d26a5bc4e8fff645193244cdbac5235d7c52ad06e6c7b
+            --dart-define=RECALL_FIXTURE_SHA256=4bb392d3430bb161cd45f93baf9592d7a077e206f2a0049bd69ce866bac22cae
       - name: Build isolated checkpoint debug APK
         working-directory: ${{ env.COST_SOURCE }}/checkpoint
         run: |
@@ -113,11 +113,11 @@ jobs:
             --target tool/fixtures/synthetic_native_outbox_cost_main.dart \
             --dart-define=RECALL_SYNTHETIC_NATIVE_OUTBOX_COST=true \
             --dart-define=RECALL_SOURCE_COMMIT="$GITHUB_SHA" \
-            --dart-define=RECALL_BASE_COMMIT=51bc1394be1afeb18ae4134fa3c7578394c2d36d \
+            --dart-define=RECALL_BASE_COMMIT=ccad3943873239b697ecabee422931a2b3777db6 \
             --dart-define=RECALL_VARIANT=checkpoint \
-            --dart-define=RECALL_CONTROLLER_SHA256=3c15fe7843bea378fce1afe461d19425741d5b1436c50ed2d422539624342101 \
-            --dart-define=RECALL_PATCH_SHA256=a9926485223b74582a2e2847103d51c72bbe398f77b048cd0d2413a36e5aeb0b \
-            --dart-define=RECALL_FIXTURE_SHA256=2bffe141f04aae5d408d26a5bc4e8fff645193244cdbac5235d7c52ad06e6c7b
+            --dart-define=RECALL_CONTROLLER_SHA256=75310a20d3d611979c069e936074937fa23ce325182904b6c9fbeba04f30a4c6 \
+            --dart-define=RECALL_PATCH_SHA256=0e86e56d778c35b00e743dda28bb2a441c7a0cb8c45c12f757b859f675a0bc5e \
+            --dart-define=RECALL_FIXTURE_SHA256=4bb392d3430bb161cd45f93baf9592d7a077e206f2a0049bd69ce866bac22cae
       - name: Stop only these two disposable Gradle daemons before emulator
         run: |
           (cd "$COST_SOURCE/baseline/android" && ./gradlew --stop)
