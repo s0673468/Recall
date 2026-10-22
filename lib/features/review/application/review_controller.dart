@@ -2777,8 +2777,10 @@ class ReviewController extends ChangeNotifier {
     if (pending.isEmpty) {
       parked.clear();
       if (_flushStillOwnsSession(ownerId, ownerScope) &&
-          _state.syncErrors != 0) {
-        _set(_state.copyWith(syncErrors: 0));
+          (_state.pendingSync != 0 || _state.syncErrors != 0)) {
+        // Another instance may have delivered the shared outbox since our
+        // last pass. Its empty durable queue also clears our stale badge.
+        _set(_state.copyWith(pendingSync: 0, syncErrors: 0));
       }
       return false;
     }
