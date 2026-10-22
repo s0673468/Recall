@@ -237,9 +237,8 @@ class StudyScreen extends StatelessWidget {
           child: s.showBack
               ? RatingBar(
                   key: const ValueKey('study_rating_bar'),
-                  onRate: (rating) => unawaited(
-                    _absorbRefusedSave(controller.rate(rating)),
-                  ),
+                  onRate: (rating) =>
+                      unawaited(_absorbRefusedSave(controller.rate(rating))),
                   enabled: !controller.rateInFlight,
                 )
               : SizedBox(
@@ -256,34 +255,43 @@ class StudyScreen extends StatelessWidget {
                   ),
                 ),
         );
-        final accessibleScroll =
-            MediaQuery.textScalerOf(context).scale(1) > 1.3;
-
-        final body = RecallMotionSwap(
-          child: accessibleScroll
-              ? ListView(
-                  key: ValueKey('study_card_${card.id}'),
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  children: [
-                    header,
-                    const SizedBox(height: UiSpacing.sm),
-                    SizedBox(height: 260, child: cardPanel),
-                    const SizedBox(height: UiSpacing.md),
-                    actions,
-                    const SizedBox(height: UiSpacing.sm),
-                  ],
-                )
-              : Column(
-                  key: ValueKey('study_card_${card.id}'),
-                  children: [
-                    header,
-                    const SizedBox(height: UiSpacing.sm),
-                    Expanded(child: cardPanel),
-                    const SizedBox(height: UiSpacing.md),
-                    actions,
-                    const SizedBox(height: UiSpacing.sm),
-                  ],
-                ),
+        final body = LayoutBuilder(
+          builder: (context, constraints) {
+            // Short landscape windows need the same scrollable study surface as
+            // large type; otherwise the fixed controls can squeeze the card away.
+            final accessibleScroll =
+                MediaQuery.textScalerOf(context).scale(1) > 1.3 ||
+                constraints.maxHeight < 420;
+            return RecallMotionSwap(
+              child: accessibleScroll
+                  ? SingleChildScrollView(
+                      key: ValueKey('study_card_${card.id}'),
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          header,
+                          const SizedBox(height: UiSpacing.sm),
+                          SizedBox(height: 260, child: cardPanel),
+                          const SizedBox(height: UiSpacing.md),
+                          actions,
+                          const SizedBox(height: UiSpacing.sm),
+                        ],
+                      ),
+                    )
+                  : Column(
+                      key: ValueKey('study_card_${card.id}'),
+                      children: [
+                        header,
+                        const SizedBox(height: UiSpacing.sm),
+                        Expanded(child: cardPanel),
+                        const SizedBox(height: UiSpacing.md),
+                        actions,
+                        const SizedBox(height: UiSpacing.sm),
+                      ],
+                    ),
+            );
+          },
         );
         return Focus(
           autofocus: true,
@@ -356,50 +364,71 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final stackActions =
+              constraints.maxWidth < 360 ||
+              MediaQuery.textScalerOf(context).scale(1) > 1.3;
+          final heading = Text(
+            title,
+            maxLines: stackActions ? null : 1,
+            overflow: stackActions ? null : TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+            ),
+          );
+          final actions = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                key: const Key('recall_flag_dislike'),
+                tooltip: 'Don’t like it · hide until Sunday review',
+                icon: const Icon(Icons.thumb_down_outlined, size: 20),
+                onPressed: onDislike,
               ),
-            ),
-          ),
-          IconButton(
-            key: const Key('recall_flag_dislike'),
-            tooltip: 'Don’t like it · hide until Sunday review',
-            icon: const Icon(Icons.thumb_down_outlined, size: 20),
-            onPressed: onDislike,
-          ),
-          IconButton(
-            key: const Key('recall_flag_delete'),
-            tooltip: 'Flag for deletion',
-            icon: const Icon(Icons.delete_outline, size: 21),
-            onPressed: onDelete,
-          ),
-          // The undo slot is always reserved so the flag buttons never shift
-          // under a finger when undo appears after a hide or rating.
-          Visibility(
-            visible: onUndo != null,
-            maintainSize: true,
-            maintainAnimation: true,
-            maintainState: true,
-            child: IconButton(
-              tooltip: 'Undo',
-              icon: const Icon(Icons.undo, size: 20),
-              onPressed: onUndo,
-            ),
-          ),
-          IconButton(
-            tooltip: 'More options',
-            icon: const Icon(Icons.more_horiz, size: 22),
-            onPressed: onMore,
-          ),
-        ],
+              IconButton(
+                key: const Key('recall_flag_delete'),
+                tooltip: 'Flag for deletion',
+                icon: const Icon(Icons.delete_outline, size: 21),
+                onPressed: onDelete,
+              ),
+              // The undo slot is always reserved so the flag buttons never shift
+              // under a finger when undo appears after a hide or rating.
+              Visibility(
+                visible: onUndo != null,
+                maintainSize: true,
+                maintainAnimation: true,
+                maintainState: true,
+                child: IconButton(
+                  tooltip: 'Undo',
+                  icon: const Icon(Icons.undo, size: 20),
+                  onPressed: onUndo,
+                ),
+              ),
+              IconButton(
+                tooltip: 'More options',
+                icon: const Icon(Icons.more_horiz, size: 22),
+                onPressed: onMore,
+              ),
+            ],
+          );
+          if (stackActions) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                heading,
+                Align(alignment: Alignment.centerRight, child: actions),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: heading),
+              actions,
+            ],
+          );
+        },
       ),
       Row(
         key: const Key('recall_queue_strip'),
@@ -815,7 +844,8 @@ void _showFlagSheet(
               for (final option in _flagOptions)
                 ListTile(
                   dense: true,
-                  visualDensity: VisualDensity.compact,
+                  visualDensity: VisualDensity.standard,
+                  minTileHeight: 48,
                   leading: const Icon(
                     Icons.flag_outlined,
                     size: 20,
@@ -836,7 +866,8 @@ void _showFlagSheet(
                 ),
               ListTile(
                 dense: true,
-                visualDensity: VisualDensity.compact,
+                visualDensity: VisualDensity.standard,
+                minTileHeight: 48,
                 title: const Text(
                   'Cancel',
                   style: TextStyle(color: UiColors.textMuted),
@@ -874,38 +905,40 @@ class _Message extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(UiSpacing.lg),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: RecallHeroPanel(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, size: 38, color: UiColors.primary),
-                const SizedBox(height: UiSpacing.md),
-                Text(title, style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(height: UiSpacing.sm),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: UiColors.textMuted),
-                ),
-                if (action != null) ...[
-                  const SizedBox(height: UiSpacing.lg),
-                  FilledButton(onPressed: onAction, child: Text(action!)),
-                ],
-                if (secondaryAction != null) ...[
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(UiSpacing.lg),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: RecallHeroPanel(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(icon, size: 38, color: UiColors.primary),
+                  const SizedBox(height: UiSpacing.md),
+                  Text(title, style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: UiSpacing.sm),
-                  TextButton(
-                    onPressed: onSecondaryAction,
-                    child: Text(
-                      secondaryAction!,
-                      style: const TextStyle(color: UiColors.textMuted),
-                    ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: UiColors.textMuted),
                   ),
+                  if (action != null) ...[
+                    const SizedBox(height: UiSpacing.lg),
+                    FilledButton(onPressed: onAction, child: Text(action!)),
+                  ],
+                  if (secondaryAction != null) ...[
+                    const SizedBox(height: UiSpacing.sm),
+                    TextButton(
+                      onPressed: onSecondaryAction,
+                      child: Text(
+                        secondaryAction!,
+                        style: const TextStyle(color: UiColors.textMuted),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
