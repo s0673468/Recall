@@ -182,6 +182,13 @@ class RecallPrefsController extends ChangeNotifier {
           // write was in flight. Clear only the exact value the server accepted.
           await _withLocalLock(() async {
             if (prefs.get(pendingKey) == pendingRaw) {
+              // The original update may have persisted only the pending record.
+              // Repair the mirror before removing that durable recovery value.
+              await _setStringStrict(
+                prefs,
+                localKeyForOwner(ownerId),
+                jsonEncode(pending.toJson()),
+              );
               await _removeStrict(prefs, pendingKey);
             }
           });
