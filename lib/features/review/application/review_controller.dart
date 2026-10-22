@@ -497,6 +497,11 @@ class ReviewController extends ChangeNotifier {
     _catchUpProgressRevision++;
     _undo = null;
     _hideUndo = null;
+    _hiddenCardIds = const {};
+    _hidesInFlight.clear();
+    _aheadSession = false;
+    _flagNoticeTimer?.cancel();
+    _flagNotice = null;
   }
 
   String _authMessage(Object e) {
@@ -550,6 +555,9 @@ class ReviewController extends ChangeNotifier {
   /// True once at least one session-driven load() has run — gates prefs-change
   /// reloads so startup hydration doesn't reload before there's a session.
   bool _sessionLoaded = false;
+
+  // Bonus batches must not replace the ordinary offline snapshot.
+  bool _aheadSession = false;
 
   /// The full, outbox-filtered queue from the latest successful fetch. The
   /// active catch-up view slices this list; keeping it separate means an
@@ -650,6 +658,7 @@ class ReviewController extends ChangeNotifier {
     // NB: load() always applies [deckId] as the new filter (null = all decks),
     // so any difference from the current filter is a deck switch.
     final deckChanged = deckId != _state.deckFilter;
+    if (deckChanged) _aheadSession = false;
     _set(
       _state.copyWith(
         loading: true,
@@ -701,6 +710,7 @@ class ReviewController extends ChangeNotifier {
           canWrite: () => loadToken == _loadSequence,
         );
         if (loadToken != _loadSequence) return;
+        _aheadSession = false;
         _catchUpSourceQueue = queue;
         final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
@@ -735,9 +745,11 @@ class ReviewController extends ChangeNotifier {
     await _flushOutbox();
     // Flags have no bearing on the fetched queue, so drain them off the
     // critical path — never let a flag flush delay the load.
-    unawaited(_flushFlagOutbox());
+    _syncInBackground(_flushFlagOutbox());
 
     final generationAtFetch = _interactionGeneration;
+    final queueAtFetch = _state.queue;
+    final indexAtFetch = _state.index;
     try {
       // Independent round-trips — run them together instead of serially.
       // _refreshFsrsSettings never throws (it falls back to defaults).
@@ -809,7 +821,26 @@ class ReviewController extends ChangeNotifier {
       // queued locally, even if the server fetch still returns it.
       final pending = await store.outbox();
       if (loadToken != _loadSequence) return; // superseded by a newer load
-      final queue = _withoutPendingReviews(fetchedQueue, pending);
+      // The cached queue is studyable during this fetch. A rating delivered
+      // meanwhile may already have left the outbox, while this response still
+      // contains its old scheduling. Do not cache that consumed card again.
+      final consumedDuringFetch = identical(queueAtFetch, _state.queue) &&
+              _state.index > indexAtFetch
+          ? _state.queue
+              .skip(indexAtFetch)
+              .take(_state.index - indexAtFetch)
+              .map((card) => card.id)
+              .toSet()
+          : const <int>{};
+      final queue = _withoutPendingReviews(
+        consumedDuringFetch.isEmpty
+            ? fetchedQueue
+            : [
+                for (final card in fetchedQueue)
+                  if (!consumedDuringFetch.contains(card.id)) card,
+              ],
+        pending,
+      );
       final catchUp = await _buildCurrentCatchUpView(
         queue,
         recentReviews,
@@ -838,6 +869,7 @@ class ReviewController extends ChangeNotifier {
           ? fetchedDue.updatedAt
           : _state.globalDueUpdatedAt;
       if (sessionUnchanged) {
+        _aheadSession = false;
         _set(
           _state.copyWith(
             loading: false,
@@ -949,6 +981,7 @@ class ReviewController extends ChangeNotifier {
           canWrite: () => loadToken == _loadSequence,
         );
         if (loadToken != _loadSequence) return;
+        _aheadSession = false;
         _catchUpSourceQueue = queue;
         final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
@@ -1474,21 +1507,21 @@ class ReviewController extends ChangeNotifier {
     _previewForCardId = null;
     _previewAt = null;
 
-    await _flushOutbox();
-    if (loadToken != _loadSequence) return;
-    final queued = await store.outbox();
-    final parked = _parkedReviews[store.activeOwnerScope] ?? const {};
-    if (queued.any(
-      (entry) => !parked.contains(LocalReviewStore.reviewDeliveryId(entry)),
-    )) {
-      // Undelivered ratings — offline. Stay on the done screen; it explains
-      // that bonus cards need a connection. Refused reviews cannot block it.
-      if (loadToken != _loadSequence) return;
-      _set(_state.copyWith(loading: false, offline: true));
-      return;
-    }
-
     try {
+      await _flushOutbox();
+      if (loadToken != _loadSequence) return;
+      final queued = await store.outbox();
+      final parked = _parkedReviews[store.activeOwnerScope] ?? const {};
+      if (queued.any(
+        (entry) => !parked.contains(LocalReviewStore.reviewDeliveryId(entry)),
+      )) {
+        // Undelivered ratings — offline. Stay on the done screen; it explains
+        // that bonus cards need a connection. Refused reviews cannot block it.
+        if (loadToken != _loadSequence) return;
+        _set(_state.copyWith(loading: false, offline: true));
+        return;
+      }
+
       final queue = _withoutPendingReviews(
         await api.fetchAheadQueue(
           deckId: _state.deckFilter,
@@ -1499,6 +1532,7 @@ class ReviewController extends ChangeNotifier {
         queued,
       );
       if (loadToken != _loadSequence) return;
+      _aheadSession = true;
       _set(
         _state.copyWith(
           loading: false,
@@ -1523,6 +1557,17 @@ class ReviewController extends ChangeNotifier {
         ),
       );
     }
+  }
+
+  /// Local storage can fail before a sender reaches its transport catch.
+  /// Fire-and-forget work must retain its outbox without escaping as an
+  /// unhandled error. Awaited sync callers still receive failures for retry.
+  void _syncInBackground(Future<void> task) {
+    unawaited(
+      task.catchError((Object _) {
+        debugPrint('Recall: background sync deferred');
+      }),
+    );
   }
 
   /// Flush queued reviews AND queued flags without reloading the queue — safe
@@ -1743,6 +1788,9 @@ class ReviewController extends ChangeNotifier {
       canWrite: ratingCurrent,
     );
     if (!ratingCurrent() || catchUpBefore == null) return;
+    final updatesSnapshot =
+        !_aheadSession &&
+        (!card.contentRevalidationPending || rating != Rating.again);
     // A background load may refresh the upcoming source while this rating
     // awaits persistence. Remove only the rated card from that live source.
     _catchUpSourceQueue = [
@@ -1764,6 +1812,7 @@ class ReviewController extends ChangeNotifier {
             catchUpSourceQueue: catchUpBefore.source,
             previousLastReviewedAt: session.lastReviewedAt,
             previousReviewActivityKnown: session.reviewActivityKnown,
+            updatesSnapshot: updatesSnapshot,
           );
     _hideUndo = null;
     _clearFlagNotice();
@@ -1787,11 +1836,10 @@ class ReviewController extends ChangeNotifier {
     if (_state.isDone) {
       haptics.completion();
     }
-    if (card.contentRevalidationPending && rating != Rating.again) {
-      // The cloud review log remains authoritative, but the disposable
-      // snapshot must converge too. Otherwise a successful online review
-      // followed by an offline restart could repaint this validation card
-      // after its outbox entry had already been removed.
+    if (updatesSnapshot) {
+      // Once a review is delivered its outbox entry disappears. Prune the
+      // disposable queue too, or an offline restart can serve the old state
+      // again. A fresh server fetch still replaces this snapshot wholesale.
       unawaited(
         _saveSnapshotQuietly(
           loadToken: _loadSequence,
@@ -1803,7 +1851,7 @@ class ReviewController extends ChangeNotifier {
       );
     }
     // Sync behind the UI — the next card must never wait on the network.
-    if (!_state.offline) unawaited(_flushOutbox());
+    if (!_state.offline) _syncInBackground(_flushOutbox());
   }
 
   Future<({CatchUpView view, String? stream, List<ReviewCard> source})?>
@@ -2064,6 +2112,7 @@ class ReviewController extends ChangeNotifier {
       ]),
       previousLastReviewedAt: undo.previousLastReviewedAt,
       previousReviewActivityKnown: undo.previousReviewActivityKnown,
+      updatesSnapshot: undo.updatesSnapshot,
     );
   }
 
@@ -2107,7 +2156,14 @@ class ReviewController extends ChangeNotifier {
         hideReasons.contains(reason)) {
       return;
     }
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final sessionGeneration = _sessionSetupGeneration;
+    bool ownsSession() =>
+        sessionGeneration == _sessionSetupGeneration &&
+        _flushStillOwnsSession(ownerId, ownerScope);
     final clientId = await _flagClientId();
+    if (!ownsSession()) return;
     final entry = <String, dynamic>{
       'card_id': card.id,
       'guid': card.guid,
@@ -2124,22 +2180,23 @@ class ReviewController extends ChangeNotifier {
         saved = await _savedDespite(
           error,
           stackTrace,
-          () => store.settleUnknownFlag(clientId),
+          () => store.settleUnknownFlag(clientId, ownerScope: ownerScope),
         );
       } on StudyActionUnconfirmedException {
-        _unconfirmedFlagId = clientId;
-        _showFlagNotice(saveUnconfirmedNotice);
+        _unconfirmedFlag = (clientId: clientId, ownerScope: ownerScope);
+        if (ownsSession()) _showFlagNotice(saveUnconfirmedNotice);
         rethrow;
       }
       if (saved == null) {
-        _showFlagNotice(saveRefusedNotice);
+        if (ownsSession()) _showFlagNotice(saveRefusedNotice);
         _throwNotSaved(error, stackTrace);
       }
     }
+    if (!ownsSession()) return;
     _showFlagNotice('Flagged for the weekly review');
     // Send behind the UI; a failure (e.g. table not created yet) just leaves
     // the flag queued for the next flush.
-    unawaited(_flushFlagOutbox());
+    _syncInBackground(_flushFlagOutbox());
   }
 
   /// One-tap flag that also hides the card: it is queued durably like any
@@ -2157,6 +2214,12 @@ class ReviewController extends ChangeNotifier {
         _rateInFlight) {
       return;
     }
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final sessionGeneration = _sessionSetupGeneration;
+    bool ownsSession() =>
+        sessionGeneration == _sessionSetupGeneration &&
+        _flushStillOwnsSession(ownerId, ownerScope);
     _rateInFlight = true;
     // Mark the interaction and hide the card before any await, so a refresh
     // landing meanwhile keeps this session's queue and filters the card out.
@@ -2166,6 +2229,7 @@ class ReviewController extends ChangeNotifier {
     _hidesInFlight.add(card.id);
     notifyListeners();
     void restoreVisibility() {
+      if (!ownsSession()) return;
       // Nothing durable was recorded, so the card is not hidden.
       _hidesInFlight.remove(card.id);
       if (!wasHidden) {
@@ -2181,6 +2245,7 @@ class ReviewController extends ChangeNotifier {
         restoreVisibility();
         rethrow;
       }
+      if (!ownsSession()) return;
       try {
         await store.enqueueFlag(<String, dynamic>{
           'card_id': card.id,
@@ -2196,20 +2261,21 @@ class ReviewController extends ChangeNotifier {
           saved = await _savedDespite(
             error,
             stackTrace,
-            () => store.settleUnknownFlag(clientId),
+            () => store.settleUnknownFlag(clientId, ownerScope: ownerScope),
           );
         } on StudyActionUnconfirmedException {
           restoreVisibility();
-          _unconfirmedFlagId = clientId;
-          _showFlagNotice(saveUnconfirmedNotice);
+          _unconfirmedFlag = (clientId: clientId, ownerScope: ownerScope);
+          if (ownsSession()) _showFlagNotice(saveUnconfirmedNotice);
           rethrow;
         }
         if (saved == null) {
           restoreVisibility();
-          _showFlagNotice(saveRefusedNotice);
+          if (ownsSession()) _showFlagNotice(saveRefusedNotice);
           _throwNotSaved(error, stackTrace);
         }
       }
+      if (!ownsSession()) return;
       _hidesInFlight.remove(card.id);
       unawaited(_quietly(() => store.addHiddenCard(card.id)));
       if (_state.current?.id != card.id) {
@@ -2263,7 +2329,7 @@ class ReviewController extends ChangeNotifier {
       _rateInFlight = false;
       notifyListeners();
     }
-    unawaited(_flushFlagOutbox());
+    _syncInBackground(_flushFlagOutbox());
   }
 
   _HideUndoRecord? _hideUndo;
@@ -2326,7 +2392,7 @@ class ReviewController extends ChangeNotifier {
           ], ownerScope: ownerScope);
         });
       } else if (sending && ownsSession()) {
-        unawaited(_flushFlagOutbox()); // schedule that pass
+        _syncInBackground(_flushFlagOutbox()); // schedule that pass
       }
       unawaited(
         _quietly(
@@ -2535,7 +2601,7 @@ class ReviewController extends ChangeNotifier {
   ({int cardId, String clientId, String? ownerScope})? _unconfirmedReview;
 
   /// The flag counterpart of [_unconfirmedReview].
-  String? _unconfirmedFlagId;
+  ({String clientId, String? ownerScope})? _unconfirmedFlag;
 
   /// The id for a rating of [cardId]. The redo of an unconfirmed rating reuses
   /// its id, so a copy already stored stays the only one and the server can
@@ -2570,11 +2636,14 @@ class ReviewController extends ChangeNotifier {
   /// so its quarantine cannot block this one. A stored copy simply stays; a
   /// repeated report of a card is harmless, unlike a repeated rating.
   Future<String> _flagClientId() async {
-    final unconfirmed = _unconfirmedFlagId;
+    final unconfirmed = _unconfirmedFlag;
     if (unconfirmed != null) {
       try {
-        await store.settleUnknownFlag(unconfirmed);
-        if (_unconfirmedFlagId == unconfirmed) _unconfirmedFlagId = null;
+        await store.settleUnknownFlag(
+          unconfirmed.clientId,
+          ownerScope: unconfirmed.ownerScope,
+        );
+        if (identical(_unconfirmedFlag, unconfirmed)) _unconfirmedFlag = null;
       } catch (_) {
         // Still unreadable: keep it, so a later flag can settle it.
       }
@@ -2698,7 +2767,7 @@ class ReviewController extends ChangeNotifier {
       );
       // Listeners can synchronously replace the session during notification.
       if (!sessionOwned()) return;
-      if (u.card.contentRevalidationPending) {
+      if (u.updatesSnapshot) {
         unawaited(
           _saveSnapshotQuietly(
             loadToken: loadToken,
@@ -3081,6 +3150,7 @@ class _UndoRecord {
   final List<ReviewCard> catchUpSourceQueue;
   final DateTime? previousLastReviewedAt;
   final bool previousReviewActivityKnown;
+  final bool updatesSnapshot;
 
   _UndoRecord({
     required this.clientId,
@@ -3091,5 +3161,6 @@ class _UndoRecord {
     required this.catchUpSourceQueue,
     required this.previousLastReviewedAt,
     required this.previousReviewActivityKnown,
+    required this.updatesSnapshot,
   });
 }

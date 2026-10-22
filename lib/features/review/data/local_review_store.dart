@@ -729,8 +729,11 @@ class LocalReviewStore {
       _settleUnknown(_storageKey(_outboxKey, ownerScope: ownerScope), clientId);
 
   /// The flag counterpart of [settleUnknownReview].
-  Future<int?> settleUnknownFlag(Object clientId) =>
-      _settleUnknown(_storageKey(_flagOutboxKey), clientId);
+  Future<int?> settleUnknownFlag(Object clientId, {String? ownerScope}) =>
+      _settleUnknown(
+        _storageKey(_flagOutboxKey, ownerScope: ownerScope),
+        clientId,
+      );
 
   Future<int?> _settleUnknown(String key, Object clientId) {
     return _withOutboxLock(() async {
