@@ -497,6 +497,7 @@ class ReviewController extends ChangeNotifier {
     _catchUpProgressRevision++;
     _undo = null;
     _hideUndo = null;
+    _ratedCatchUpCardIds.clear();
     _hiddenCardIds = const {};
     _hidesInFlight.clear();
     _aheadSession = false;
@@ -564,6 +565,11 @@ class ReviewController extends ChangeNotifier {
   /// opt-in/out choice never needs a server round-trip or loses the remainder
   /// behind the daily cap.
   List<ReviewCard> _catchUpSourceQueue = const [];
+
+  /// Again-rated validations stay in the source for future offline sessions.
+  /// Local catch-up choices must not present those pre-rating objects again
+  /// after their delivered reviews have left the outbox.
+  final Set<int> _ratedCatchUpCardIds = {};
 
   /// Invalidates catch-up reads that started before a local rating finished
   /// saving progress. A refresh must rebuild from that saved progress rather
@@ -658,7 +664,10 @@ class ReviewController extends ChangeNotifier {
     // NB: load() always applies [deckId] as the new filter (null = all decks),
     // so any difference from the current filter is a deck switch.
     final deckChanged = deckId != _state.deckFilter;
-    if (deckChanged) _aheadSession = false;
+    if (deckChanged) {
+      _aheadSession = false;
+      _ratedCatchUpCardIds.clear();
+    }
     _set(
       _state.copyWith(
         loading: true,
@@ -712,6 +721,7 @@ class ReviewController extends ChangeNotifier {
         if (loadToken != _loadSequence) return;
         _aheadSession = false;
         _catchUpSourceQueue = queue;
+        _ratedCatchUpCardIds.clear();
         final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
           _state.copyWith(
@@ -870,6 +880,9 @@ class ReviewController extends ChangeNotifier {
           : _state.globalDueUpdatedAt;
       if (sessionUnchanged) {
         _aheadSession = false;
+        // A replacement queue starts a fresh session. A failed refresh or a
+        // metadata-only refresh retains the current session's exclusions.
+        _ratedCatchUpCardIds.clear();
         _set(
           _state.copyWith(
             loading: false,
@@ -983,6 +996,7 @@ class ReviewController extends ChangeNotifier {
         if (loadToken != _loadSequence) return;
         _aheadSession = false;
         _catchUpSourceQueue = queue;
+        _ratedCatchUpCardIds.clear();
         final pendingLastReviewedAt = _latestPendingReviewAt(pending);
         _set(
           _state.copyWith(
@@ -1447,8 +1461,12 @@ class ReviewController extends ChangeNotifier {
     // same safety boundary as every normal load.
     final pending = await store.outbox(ownerScope: ownerScope);
     if (!stillCurrent()) return;
-    final source = _withoutPendingReviews(_catchUpSourceQueue, pending);
-    _catchUpSourceQueue = source;
+    // Filter only the presentation: the source must retain unacknowledged
+    // validations for later offline snapshot writes, even while pending.
+    final source = [
+      for (final card in _withoutPendingReviews(_catchUpSourceQueue, pending))
+        if (!_ratedCatchUpCardIds.contains(card.id)) card,
+    ];
     final view = _bindCatchUpViewDay(
       _state.catchUp.copyWith(
         mode: mode,
@@ -1788,6 +1806,7 @@ class ReviewController extends ChangeNotifier {
     final preservesValidation =
         card.contentRevalidationPending && rating == Rating.again;
     final updatesSnapshot = !_aheadSession && !preservesValidation;
+    _ratedCatchUpCardIds.add(card.id);
     // A background load may refresh the upcoming source while this rating
     // awaits persistence. Remove only the rated card from that live source.
     // Again leaves validation unacknowledged: retain it for later snapshot
@@ -1950,7 +1969,9 @@ class ReviewController extends ChangeNotifier {
       final dueCount = source
           .where(
             (candidate) =>
-                candidate.id != card.id && _countsTowardsGlobalDue(candidate),
+                candidate.id != card.id &&
+                !_ratedCatchUpCardIds.contains(candidate.id) &&
+                _countsTowardsGlobalDue(candidate),
           )
           .length;
       var mode = current.isNone ? initial.mode : current.mode;
@@ -2754,6 +2775,7 @@ class ReviewController extends ChangeNotifier {
       if (!undoCurrent()) return;
       final reviewed = session.reviewedThisSession;
       final globalDueCount = session.globalDueCount;
+      _ratedCatchUpCardIds.remove(u.card.id);
       _catchUpSourceQueue = u.catchUpSourceQueue;
       _set(
         _state.copyWith(
