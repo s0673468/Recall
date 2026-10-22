@@ -174,7 +174,8 @@ class SyntheticNativeOfflineHttp extends SyntheticRecallHttp {
         headers: response.headers,
       );
     }
-    if (request.url.path.endsWith('/rpc/deck_counts')) {
+    if (request.url.path.endsWith('/rpc/deck_counts') &&
+        (jsonDecode(response.body) as List).isNotEmpty) {
       return http.Response(
         jsonEncode([
           {'deck_id': 1, 'due': cards.length - acceptedCards.length, 'new': 0},

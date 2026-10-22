@@ -368,6 +368,19 @@ def run(sb):
             "guid", stale
         ).execute()
 
+    # Deck identity survives renames/moves. A deck absent from this completed
+    # import must disappear from the picker, but keep its row and review history.
+    live_deck_ids = {d["deck_id"] for d in decks}
+    stale_deck_ids = [
+        d["deck_id"]
+        for d in _fetch_all(sb, "decks", "deck_id", user_id=USER_ID, deleted=False)
+        if d["deck_id"] not in live_deck_ids
+    ]
+    for start in range(0, len(stale_deck_ids), 500):
+        sb.table("decks").update({"deleted": True}).eq("user_id", USER_ID).in_(
+            "deck_id", stale_deck_ids[start : start + 500]
+        ).execute()
+
     seeded = len(new_rows) + len(reseed)
     print(
         f"decks={len(decks)} notes={len(notes)} cards_seeded={seeded} stale={len(stale)}"
