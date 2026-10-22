@@ -83,13 +83,13 @@ class RetentionPanel extends StatelessWidget {
                       _cohort(
                         context,
                         'Young',
-                        summary.youngRate,
+                        summary.youngPassed,
                         summary.youngTotal,
                       ),
                       _cohort(
                         context,
                         'Mature',
-                        summary.matureRate,
+                        summary.maturePassed,
                         summary.matureTotal,
                       ),
                     ];
@@ -131,7 +131,7 @@ class RetentionPanel extends StatelessWidget {
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
           child: Text(
-            '${(rate * 100).round()}%',
+            '${(summary.passed * 100 / summary.total).round()}%',
             style: TextStyle(
               color: UiColors.textPrimary,
               fontSize: hero ? 64 : 40,
@@ -162,7 +162,7 @@ class RetentionPanel extends StatelessWidget {
     );
   }
 
-  Widget _cohort(BuildContext context, String label, double? rate, int total) =>
+  Widget _cohort(BuildContext context, String label, int passed, int total) =>
       Padding(
         padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
         child: Column(
@@ -171,7 +171,7 @@ class RetentionPanel extends StatelessWidget {
             Text(label, style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: UiSpacing.xs),
             Text(
-              rate == null ? '—' : '${(rate * 100).round()}%',
+              total == 0 ? '—' : '${(passed * 100 / total).round()}%',
               style: Theme.of(context).textTheme.titleLarge,
             ),
             Text(

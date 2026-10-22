@@ -365,7 +365,9 @@ class StatsService {
       total++;
       if (r.rating >= 2) retained++;
     }
-    final recall = total == 0 ? '—' : '${(retained / total * 100).round()}%';
+    // Scale the integer count first: (57 / 200 * 100) is just below 28.5
+    // in floating point and would incorrectly round down to 28%.
+    final recall = total == 0 ? '—' : '${(retained * 100 / total).round()}%';
     return (recall: recall, reviews: total, streak: _streak(days, today));
   }
 
