@@ -28,7 +28,7 @@ const _patchSha = String.fromEnvironment('RECALL_PATCH_SHA256');
 const _fixtureSha = String.fromEnvironment('RECALL_FIXTURE_SHA256');
 const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
-const _storeBlob = '1ba1a9e8b25508eeaf6b50f79df174350505d968';
+const _storeBlob = 'f5b63f3eb8fff750993649791180ec41a8809eee';
 const _baselineControllerSha =
     '8a8e481360ec0cceac1d73f2bccf0dd714c8da0057aedbf930700594a9dca8b0';
 const _checkpointControllerSha =
