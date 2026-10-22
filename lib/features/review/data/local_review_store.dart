@@ -351,15 +351,24 @@ class LocalReviewStore {
   }
 
   /// Durably close the local Undo window before sending, including attempts
-  /// whose response may be lost. Serialized with removal so only one wins.
-  Future<bool> markReviewAttempted(Object clientId, {String? ownerScope}) {
+  /// whose response may be lost. Every copy shares one server identity, so
+  /// mark them together. Serialized with removal so only one wins.
+  Future<bool> markReviewAttempted(
+    Object clientId, {
+    String? ownerScope,
+  }) {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefsFor([key]);
       final list = _readOutbox(prefs, key);
-      final index = list.indexWhere((e) => e['client_id'] == clientId);
-      if (index < 0) return false;
-      list[index]['delivery_attempted'] = true;
+      var found = false;
+      for (final entry in list) {
+        if (entry['client_id'] == clientId) {
+          entry['delivery_attempted'] = true;
+          found = true;
+        }
+      }
+      if (!found) return false;
       await _writeList(prefs, key, list);
       _dropPendingId(key, clientId);
       return true;
@@ -699,6 +708,7 @@ class LocalReviewStore {
   /// Remove only a positively never-attempted queued review. Legacy entries
   /// without this marker are uncertain and remain deliverable. Returns the
   /// removal result and pending count; never drops an ambiguous server commit.
+  /// If any copy of the identity may have been sent, none can be undone.
   Future<({bool removed, int remaining})> removeEntry(
     Object clientId, {
     String? ownerScope,
@@ -707,6 +717,11 @@ class LocalReviewStore {
     return _withOutboxLock(() async {
       final prefs = await _prefsFor([key]);
       final list = _readOutbox(prefs, key);
+      if (list.any(
+        (e) => e['client_id'] == clientId && e['delivery_attempted'] != false,
+      )) {
+        return (removed: false, remaining: list.length);
+      }
       final before = list.length;
       list.removeWhere(
         (e) => e['client_id'] == clientId && e['delivery_attempted'] == false,
