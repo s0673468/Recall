@@ -116,3 +116,45 @@ in-memory preferences and invented transports. It does not prove Android process
 kill/radio acceptance or deployed PostgreSQL behavior. Snapshot writes retain
 the existing best-effort cache semantics; the durable outbox remains the write
 buffer and the server remains authoritative.
+
+## Review follow-up: failed validation lost from later snapshots
+
+The P2 finding was reproduced before changing production code. With validation
+card 91 followed by ordinary card 92, rating the validation Again removed it
+from the live snapshot source even though its immediate snapshot write was
+skipped. Rating card 92 then persisted a queue without the validation retry.
+The same loss occurred when Again was still pending during the second rating.
+
+`lib/features/review/application/review_controller.dart:1791` now retains an
+unacknowledged validation in the source used by subsequent snapshot writes.
+The visible session still advances, and pending outbox entries still suppress
+duplicates on reconstruction. Hard, Good and Easy continue to prune a completed
+validation. No content, scheduling, transport or backend contract changed.
+
+New coverage: `test/validation_snapshot_restart_test.dart:40` reconstructs the
+controller and store offline after validation and ordinary reviews are delivered,
+for each validation rating. `:78` checks pending Again, duplicate suppression,
+ordered replay and reconstruction after reconnect. The Hard/Good/Easy controls
+were checked and rejected as defects: they already removed acknowledged cards
+correctly. Existing snapshot, catch-up, Undo and scheduling tests also pass.
+
+Commands used the existing pinned repository-local SDK and writable caches:
+
+```bash
+export TMPDIR="$PWD/.dart_tool/hunt-tmp"
+export PUB_CACHE="$PWD/.pub-cache"
+export XDG_CONFIG_HOME="$PWD/.dart_tool/hunt-home/.config"
+export XDG_CACHE_HOME="$PWD/.dart_tool/hunt-home/.cache"
+export RECALL_FLUTTER_CACHE_ROOT="$PWD/.dart_tool/hunt-sdk"
+```
+
+| Exact command | Result |
+| --- | --- |
+| `./tool/flutterw test --no-pub --reporter=failures-only test/validation_snapshot_restart_test.dart` before the fix | Exit 1; two Again regressions failed, three successful-rating controls passed. |
+| `./tool/flutterw test --no-pub --reporter=failures-only test/validation_snapshot_restart_test.dart test/study_snapshot_restart_test.dart test/recall_review_controller_test.dart test/audit_catch_up_choice_session_test.dart test/review_scheduling_mutation_test.dart` after the fix | Exit 0; 67 passed. |
+| `./tool/flutterw analyze --no-pub` | Exit 0; no issues found. |
+| `./tool/flutterw test --no-pub --reporter=failures-only` | Exit 0; 1,256 passed, 32 skipped. Output: `.dart_tool/validation-snapshot-full.log`. |
+| `git diff --check` | Exit 0. |
+
+Git metadata remains read-only; the runner must commit these changes on the
+current branch. Suggested message: `Fix offline validation retries lost by later reviews`.

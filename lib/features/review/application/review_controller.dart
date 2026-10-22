@@ -1788,15 +1788,19 @@ class ReviewController extends ChangeNotifier {
       canWrite: ratingCurrent,
     );
     if (!ratingCurrent() || catchUpBefore == null) return;
-    final updatesSnapshot =
-        !_aheadSession &&
-        (!card.contentRevalidationPending || rating != Rating.again);
+    final preservesValidation =
+        card.contentRevalidationPending && rating == Rating.again;
+    final updatesSnapshot = !_aheadSession && !preservesValidation;
     // A background load may refresh the upcoming source while this rating
     // awaits persistence. Remove only the rated card from that live source.
-    _catchUpSourceQueue = [
-      for (final sourceCard in _catchUpSourceQueue)
-        if (sourceCard.id != card.id) sourceCard,
-    ];
+    // Again leaves validation unacknowledged: retain it for later snapshot
+    // writes too, so rating another card cannot erase the offline retry.
+    if (!preservesValidation) {
+      _catchUpSourceQueue = [
+        for (final sourceCard in _catchUpSourceQueue)
+          if (sourceCard.id != card.id) sourceCard,
+      ];
+    }
     // Reloads expire Undo even when they retained the same visible card.
     // A background refresh within the original load may have expanded the
     // source, so restore the live pre-progress backlog rather than the cache
