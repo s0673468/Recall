@@ -262,12 +262,34 @@ class StudyReminderController extends ChangeNotifier {
     // could misleadingly show as active. Ineligible enabled preferences are
     // retained while the pending request is cancelled.
     await _applyEligibility(settings: next, force: true, persistDisabled: true);
-    final prefs = await _prefsLoader();
-    await Future.wait([
-      prefs.setBool(_key(_enabledKey, ownerId), next.enabled),
-      prefs.setInt(_key(_hourKey, ownerId), next.hour),
-      prefs.setInt(_key(_minuteKey, ownerId), next.minute),
-    ]);
+    SharedPreferences? prefs;
+    try {
+      prefs = await _prefsLoader();
+      final saved = await Future.wait([
+        prefs.setBool(_key(_enabledKey, ownerId), next.enabled),
+        prefs.setInt(_key(_hourKey, ownerId), next.hour),
+        prefs.setInt(_key(_minuteKey, ownerId), next.minute),
+      ]);
+      if (saved.any((result) => !result)) {
+        throw StateError('Reminder settings were not saved.');
+      }
+    } catch (_) {
+      _lastAppliedSignature = null;
+      // Native apply already ran. A failed save must not leave an alarm for
+      // a change the caller will report as failed. Retry remains possible.
+      try {
+        await platform.cancel();
+      } catch (_) {
+        // Preserve the original storage error.
+      }
+      try {
+        // SharedPreferences caches even refused writes optimistically.
+        await prefs?.reload();
+      } catch (_) {
+        // Preserve the original storage error if readback is unavailable.
+      }
+      rethrow;
+    }
     _value = next;
     _armDayBoundaryTimer();
     notifyListeners();
