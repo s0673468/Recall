@@ -22,6 +22,7 @@ Dry run (no network, verifies parsing only):
 
 import os
 import re
+import math
 import sys
 import json
 import shutil
@@ -46,6 +47,10 @@ FSEP = "\x1f"  # Anki field separator inside notes.flds
 FSRS_PARAMETERS_FIELD = 6  # Packed 21-float vector in Anki deck_config.config.
 FSRS_PARAMETERS_COUNT = 21
 FSRS_SETTINGS_KEY = "fsrs_params"
+# The FSRS columns the importer seeds while the cloud has not reviewed a card.
+SCHEDULE_COLUMNS = (
+    "stability", "difficulty", "state", "due", "reps", "lapses", "last_review"
+)
 
 
 def _iso(epoch):
@@ -138,16 +143,36 @@ def build_payloads(con):
         for name, did in name_to_did.items()
     ]
 
+    # A card in a filtered deck keeps its home deck and real due date in
+    # odid/odue; `did`/`due` then name the filtered deck and a queue position.
     rows = con.execute(
         """
-        SELECT n.guid, c.did, n.mid, n.flds, n.tags, n.mod,
-               c.data, c.due, c.reps, c.lapses, c.type, c.queue
+        SELECT n.guid, CASE WHEN c.odid THEN c.odid ELSE c.did END, n.mid,
+               n.flds, n.tags, n.mod, c.data,
+               CASE WHEN c.odid AND c.odue THEN c.odue ELSE c.due END,
+               c.reps, c.lapses, c.type, c.queue, c.id
         FROM notes n JOIN cards c ON c.nid = n.id
         """
     ).fetchall()
+    # Older Anki versions keep FSRS memory state without `lrt`. FSRS reads a
+    # missing last review as "fully forgotten", so fall back to the newest
+    # review that moved the memory state. Like Anki's FSRS, skip manual and
+    # rescheduled entries (types 4/5, usually ease 0) and filtered-deck
+    # practice without rescheduling (type 3 with factor 0).
+    rated_at = dict(
+        con.execute(
+            """
+            SELECT cid, MAX(id) FROM revlog
+            WHERE ease > 0 AND type NOT IN (4, 5) AND NOT (type = 3 AND factor = 0)
+            GROUP BY cid
+            """
+        ).fetchall()
+    )
 
     notes, card_seed = [], {}
-    for guid, did, mid, flds, tags, mod, data, due, reps, lapses, ctype, queue in rows:
+    for (
+        guid, did, mid, flds, tags, mod, data, due, reps, lapses, ctype, queue, cid
+    ) in rows:
         parts = flds.split(FSEP)
         front = parts[0] if parts else ""
         back = parts[1] if len(parts) > 1 else ""
@@ -169,14 +194,16 @@ def build_payloads(con):
         # `due` units depend on card type:
         #   type 0 (new)         -> position int (no real due date)
         #   type 2 (review)      -> days since collection creation (col.crt)
-        #   type 1/3 (re/learning) -> unix epoch SECONDS for the next step
+        #   type 1/3 (re/learning) -> unix epoch SECONDS for the next step, or a
+        #     day number like type 2 for day-or-longer steps. Anki tells them
+        #     apart by magnitude, which also covers suspended/buried cards.
         if ctype == 0:
             state, due_abs = 0, None
         elif ctype == 2:
             state, due_abs = 2, _safe_iso(crt + due * 86400)
         else:
             state = 1 if ctype == 1 else 3
-            due_abs = _safe_iso(due)
+            due_abs = _safe_iso(due if due > 1_000_000_000 else crt + due * 86400)
         card_seed[guid] = {
             "user_id": USER_ID,
             "guid": guid,
@@ -186,7 +213,7 @@ def build_payloads(con):
             "due": due_abs,
             "reps": reps,
             "lapses": lapses,
-            "last_review": _iso(fsrs.get("lrt")),
+            "last_review": _iso(fsrs.get("lrt") or rated_at.get(cid)),
             # desktop suspension (queue == -1) -> Recall dormancy. Importer-owned
             # for ALL cards (like content), orthogonal to the FSRS columns.
             "suspended": queue == -1,
@@ -195,17 +222,54 @@ def build_payloads(con):
 
 
 def _fetch_all(sb, table_name, columns, **eq):
-    """Fetch ALL matching rows. PostgREST caps a single GET at 1000 rows, so page."""
-    rows, start = [], 0
+    """Fetch ALL matching rows. PostgREST caps a single GET, so page.
+
+    Keyset on `id`: unordered offset pages can skip a row the app updates
+    mid-read, and a skipped reviewed card would be reseeded. A server cap may
+    be below the requested page, so only an empty page ends the read.
+    """
+    if "id" not in columns.split(","):
+        columns = f"id,{columns}"
+    rows, after = [], None
     while True:
         q = sb.table(table_name).select(columns)
         for col, val in eq.items():
             q = q.eq(col, val)
-        chunk = q.range(start, start + 999).execute().data
-        rows.extend(chunk)
-        if len(chunk) < 1000:
+        if after is not None:
+            q = q.gt("id", after)
+        chunk = q.order("id").limit(1000).execute().data
+        if not chunk:
             return rows
-        start += 1000
+        if after is not None and chunk[-1]["id"] <= after:
+            raise RuntimeError(f"{table_name} pagination did not advance")
+        rows.extend(chunk)
+        after = chunk[-1]["id"]
+
+
+def _instant(value):
+    return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _same_schedule(row, schedule):
+    """True when a cloud row already holds `schedule`. PostgREST echoes `real`
+    columns at float32 precision and timestamps in its own format; anything
+    that cannot be compared counts as changed."""
+    for col in SCHEDULE_COLUMNS:
+        have, want = row.get(col), schedule[col]
+        if have is None or want is None:
+            same = have is None and want is None
+        elif col in ("stability", "difficulty"):
+            same = math.isclose(float(have), want, rel_tol=1e-6, abs_tol=1e-6)
+        elif col in ("due", "last_review"):
+            try:
+                same = _instant(have) == _instant(want)
+            except ValueError:
+                same = False
+        else:
+            same = have == want
+        if not same:
+            return False
+    return True
 
 
 def run(sb):
@@ -233,6 +297,16 @@ def run(sb):
         r["guid"]
         for r in _fetch_all(sb, "cards", "guid", user_id=USER_ID, cloud_seen=True)
     }
+    unseen = {
+        r["guid"]: r
+        for r in _fetch_all(
+            sb,
+            "cards",
+            ",".join(("guid",) + SCHEDULE_COLUMNS),
+            user_id=USER_ID,
+            cloud_seen=False,
+        )
+    }
 
     # `suspended` shipped in migration 002; probe so a not-yet-migrated cloud
     # (e.g. the autosync job racing the migration) degrades to the old payload
@@ -244,10 +318,13 @@ def run(sb):
         has_suspended = False
         print("note: cards.suspended column absent — skipping suspension sync")
 
-    # Two homogeneous upserts: PostgREST derives the column list from the payload,
+    # Homogeneous writes: PostgREST derives the column list from the payload,
     # so mixing full rows with base-only rows either nulls out scheduling on seen
     # cards or inserts new ones without it (NOT NULL violation on `stability`).
-    seed_rows, link_rows = [], []
+    # THE GUARD: scheduling is only ever written where the cloud has not
+    # reviewed the card, and that is enforced by the write itself, because a
+    # first phone review can land after the reads above.
+    new_rows, link_rows, reseed = [], [], []
     for guid, seed in card_seed.items():
         base = {
             "user_id": USER_ID,
@@ -257,23 +334,29 @@ def run(sb):
         }
         if has_suspended:
             base["suspended"] = seed["suspended"]
-        if guid not in seen:  # THE GUARD: only seed unreviewed cards
-            base.update(
-                {
-                    k: v
-                    for k, v in seed.items()
-                    if k not in ("user_id", "guid", "suspended")
-                }
-            )
-            if not has_suspended:
-                base.pop("suspended", None)
-            seed_rows.append(base)
-        else:
+        schedule = {k: seed[k] for k in SCHEDULE_COLUMNS}
+        if guid in seen:
             link_rows.append(base)
-    if seed_rows:
-        sb.table("cards").upsert(seed_rows, on_conflict="user_id,guid").execute()
+        elif guid in unseen:
+            link_rows.append(base)
+            if not _same_schedule(unseen[guid], schedule):
+                reseed.append((guid, schedule))
+        else:
+            new_rows.append({**base, **schedule})
+    if new_rows:
+        # Insert only: a row created since the read is left untouched.
+        sb.table("cards").upsert(
+            new_rows, on_conflict="user_id,guid", ignore_duplicates=True
+        ).execute()
     if link_rows:
         sb.table("cards").upsert(link_rows, on_conflict="user_id,guid").execute()
+    for guid, schedule in reseed:
+        # apply_review holds the row lock while it sets cloud_seen, and
+        # PostgreSQL rechecks this filter after the lock, so a review that
+        # commits first wins and the reseed becomes a no-op.
+        sb.table("cards").update(schedule).eq("user_id", USER_ID).eq(
+            "guid", guid
+        ).eq("cloud_seen", False).execute()
 
     live = {n["guid"] for n in notes}
     stale = [g for g in note_ids if g not in live]
@@ -285,7 +368,7 @@ def run(sb):
             "guid", stale
         ).execute()
 
-    seeded = sum(1 for g in card_seed if g not in seen)
+    seeded = len(new_rows) + len(reseed)
     print(
         f"decks={len(decks)} notes={len(notes)} cards_seeded={seeded} stale={len(stale)}"
     )
