@@ -30,11 +30,11 @@ const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
 const _storeBlob = '1ba1a9e8b25508eeaf6b50f79df174350505d968';
 const _baselineControllerSha =
-    '19261c0fb264ccdd73438aecf2e4e9253263e8f07b341e371ec8448e8f9f1718';
+    'a28db414e3af4fa7c12469b662b020f4413254eab6bd534a3e946652f9ee3dd3';
 const _checkpointControllerSha =
-    '75310a20d3d611979c069e936074937fa23ce325182904b6c9fbeba04f30a4c6';
+    '643543d77933e7890ff12b8a3d866a5840e55c342e4bffb7f48aa3158ca05e9c';
 const _checkpointPatchSha =
-    '0e86e56d778c35b00e743dda28bb2a441c7a0cb8c45c12f757b859f675a0bc5e';
+    'a9926485223b74582a2e2847103d51c72bbe398f77b048cd0d2413a36e5aeb0b';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');

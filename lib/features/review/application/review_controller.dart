@@ -1202,17 +1202,14 @@ class ReviewController extends ChangeNotifier {
         if (!card.contentRevalidationPending) card,
     ];
     if (!catchUp.isActive) return [...revalidations, ...ordinary];
-    final due = [
-      for (final card in ordinary)
-        if (!card.isNew) card,
-    ];
-    final ordered = BacklogCatchUp.orderDue(due, engine, now: clock());
     // New cards stay behind the existing due-card gate while a catch-up plan
     // is active; no new-card limit or server query is changed.
     return [
       ...revalidations,
-      ...BacklogCatchUp.takeForToday(
-        ordered,
+      ...BacklogCatchUp.takeDueForToday(
+        ordinary,
+        engine,
+        now: clock(),
         completedToday: catchUp.completedToday,
       ),
     ];
