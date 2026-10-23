@@ -203,7 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (OSError, ValueError, EOFError):
             failure = "runtime_update_unavailable"
         if failure:
-            print(f"runtime update refused: {failure}; runtime was not advanced", file=sys.stderr)
+            print(f"runtime update refused: {failure}; check recovery status before retrying", file=sys.stderr)
         else:
             print(f"runtime update: {status}")
         try:

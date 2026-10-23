@@ -174,6 +174,17 @@ def run_once(
         except BlockingIOError:
             return 0
 
+        # A checkout interrupted before committing its index/HEAD may leave
+        # mixed source. Check under the shared lock, before configuration,
+        # source reads or child execution. The updater owns recovery.
+        if os.path.lexists(runtime_dir / ".runtime-update.json"):
+            append_event(log_path, _event(
+                operation="update_runtime", outcome="failed",
+                cause_code="runtime_update_recovery_required", retryable=True,
+                run_id=str(uuid.uuid4()),
+            ))
+            return 1
+
         if settle_seconds:
             time.sleep(settle_seconds)
         run_id = str(uuid.uuid4())

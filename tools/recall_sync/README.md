@@ -94,16 +94,34 @@ continue to use synthetic fixtures and mocked services. Missing tests, test
 failures/timeouts, copy/fetch failures or newly dirty source prevent checkout.
 After both suites pass, it rechecks the original clean HEAD and uses
 `git checkout --detach --no-overwrite-ignore <tested-sha>` without forcing.
+Before touching live source, it durably writes an owner-only
+`.runtime-update.json` recovery record beside the existing runtime lock. Failed
+checkout restores the previous commit and removes files partially added by that
+update. The recovery record is removed only after verifying a clean result.
+Autosync checks for this record under the same lock and refuses to load private
+configuration, read sync sources or execute children while recovery is pending.
+
+After an interrupted update, the next `--update` restores the recorded previous
+commit **before** checking dirtiness or fetching, and reports `recovered`. Run
+`--update` again to attempt the new main. If disk space, a stale Git lock or
+another error prevents rollback, the record stays and both jobs report
+`runtime_update_recovery_required`; autosync stays paused. HQ must resolve the
+underlying problem and rerun the updater from an intact merged checkout if the
+runtime's updater itself was damaged. Never delete the recovery record to resume
+sync against a partially written tree. Invalid records or a runtime moved outside
+the recorded commits require HQ inspection without automatic source changes.
 
 No branch or other checkout is moved. Git's shared `origin/main` tracking ref
 and fetched objects can advance even if validation fails; the runtime HEAD
-remains on its previous commit. `.env`, `.venv`, sync stamps and private source
+remains on its previous commit after successful rollback. Recovery resets only
+the dedicated runtime's tracked source and index for the recorded update; it
+never performs a general clean. `.env`, `.venv`, sync stamps and private source
 files stay in their existing locations. The updater never reads cards or runs
 an import. No dependency installation occurs during updates: a future dependency
 change that the existing virtualenv cannot satisfy fails validation and requires
 HQ maintenance.
 
-The command reports `updated`, `current`, `busy`, or a closed refusal reason and
+The command reports `updated`, `current`, `recovered`, `busy`, or a closed refusal reason and
 exits 1 on refusal. The same bounded canonical receipt log below records
 `operation: update_runtime`, without Git or test output. Inspect it locally for
 reasons such as `dirty_runtime`, `non_fast_forward`, `git_command_failed` or

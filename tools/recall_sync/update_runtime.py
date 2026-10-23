@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -12,6 +14,7 @@ from pathlib import Path
 
 TIMEOUT = 20 * 60
 SUITES = ("tools/recall_sync/tests", "tools/anki_revision/tests")
+RECOVERY_MARKER = ".runtime-update.json"
 
 
 class UpdateError(RuntimeError):
@@ -35,16 +38,76 @@ def _git(repo: Path, *arguments: str) -> str:
     return result.stdout.decode("utf-8").strip()
 
 
-def _clean_detached_head(repo: Path) -> str:
+def _detached_head(repo: Path) -> str:
     if not (repo / ".git").is_file():
         raise UpdateError("linked_worktree_required")
     if Path(_git(repo, "rev-parse", "--show-toplevel")).resolve() != repo:
         raise UpdateError("worktree_root_required")
     if _git(repo, "rev-parse", "--abbrev-ref", "HEAD") != "HEAD":
         raise UpdateError("detached_head_required")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _clean_detached_head(repo: Path) -> str:
+    head = _detached_head(repo)
     if _git(repo, "status", "--porcelain", "--untracked-files=all"):
         raise UpdateError("dirty_runtime")
-    return _git(repo, "rev-parse", "HEAD")
+    return head
+
+
+def _sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _begin_checkout(repo: Path, marker: Path, previous: str, candidate: str) -> None:
+    # Rollback seeds the index with the candidate to remove any partially added
+    # files. Refuse collisions first, including ignored files Git calls clean,
+    # so that rollback can only remove paths owned by this update.
+    additions = _git(repo, "diff", "--raw", "-z", "--no-renames", "--diff-filter=A",
+                     previous, candidate).split("\0")[1::2]
+    if any(os.path.lexists(repo / path) for path in additions):
+        raise UpdateError("git_command_failed")
+    descriptor, name = tempfile.mkstemp(prefix=".runtime-update-", dir=marker.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"repo": str(repo), "previous": previous, "candidate": candidate}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+    # No live file is touched until the recovery record is durable.
+    _sync_directory(marker.parent)
+
+
+def _recover_checkout(repo: Path, marker: Path) -> None:
+    try:
+        record = json.loads(marker.read_text(encoding="utf-8"))
+        if (not isinstance(record, dict) or record.get("repo") != str(repo)
+                or any(not isinstance(record.get(key), str)
+                       or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", record[key])
+                       for key in ("previous", "candidate"))):
+            raise ValueError("invalid recovery record")
+        previous, candidate = record["previous"], record["candidate"]
+        if _detached_head(repo) not in (previous, candidate):
+            raise ValueError("runtime moved outside the recorded update")
+        _git(repo, "merge-base", "--is-ancestor", previous, candidate)
+        # Checkout can fail before committing its index or HEAD. Seed only this
+        # worktree's index with the candidate so reset also removes newly added
+        # files, then restore the recorded clean source. Never clean other files.
+        _git(repo, "read-tree", "--reset", candidate)
+        _git(repo, "reset", "--hard", previous)
+        if _clean_detached_head(repo) != previous:
+            raise ValueError("rollback verification failed")
+        marker.unlink()
+        _sync_directory(marker.parent)
+    except (OSError, ValueError, UpdateError) as exc:
+        raise UpdateError("runtime_update_recovery_required") from exc
 
 
 def _test_candidate(repo: Path, candidate: str, python: Path) -> None:
@@ -104,6 +167,12 @@ def update_runtime(*, repo_root: Path, runtime_dir: Path) -> str:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return "busy"
+        marker = runtime / RECOVERY_MARKER
+        if os.path.lexists(marker):
+            # Recovery precedes the dirty check and fetch. A crash may have left
+            # mixed files with either HEAD; do not retry an update in this run.
+            _recover_checkout(repo, marker)
+            return "recovered"
         previous = _clean_detached_head(repo)
         _git(repo, "fetch", "--no-tags", "--no-prune", "--no-recurse-submodules", "--no-auto-gc",
              "--no-write-fetch-head", "origin",
@@ -120,5 +189,14 @@ def update_runtime(*, repo_root: Path, runtime_dir: Path) -> str:
             raise UpdateError("runtime_changed_during_tests")
         # Never force, overwrite ignored local files, recurse into submodules,
         # run checkout hooks, or resolve a moving ref after validation.
-        _git(repo, "checkout", "--detach", "--no-overwrite-ignore", candidate)
+        _begin_checkout(repo, marker, previous, candidate)
+        try:
+            _git(repo, "checkout", "--detach", "--no-overwrite-ignore", candidate)
+            if _clean_detached_head(repo) != candidate:
+                raise UpdateError("runtime_changed_during_checkout")
+        except (UpdateError, OSError):
+            _recover_checkout(repo, marker)
+            raise UpdateError("runtime_checkout_failed") from None
+        marker.unlink()
+        _sync_directory(marker.parent)
         return "updated"
