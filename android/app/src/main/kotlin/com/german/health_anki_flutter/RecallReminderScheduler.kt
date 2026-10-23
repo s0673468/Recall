@@ -29,14 +29,14 @@ object RecallReminderScheduler {
         settings: RecallReminderSettings,
         nowMillis: Long = System.currentTimeMillis(),
     ) {
-        cancelAlarm(context)
         val eligible = settings.enabled &&
             (settings.dueCount ?: 0) > 0 &&
             !settings.studiedToday
         if (!eligible) {
-            preferences(context).edit().clear().apply()
+            cancel(context)
             return
         }
+        cancelAlarm(context)
         val prefs = preferences(context)
         val pendingTriggerAt = if (prefs.getBoolean(activeKey, false)) {
             prefs.getLong(triggerAtKey, 0L).takeIf { it > 0L }
@@ -52,6 +52,7 @@ object RecallReminderScheduler {
     }
 
     fun cancel(context: Context) {
+        RecallReminderNotifications.dismiss(context)
         cancelAlarm(context)
         preferences(context).edit().clear().apply()
     }

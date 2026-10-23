@@ -45,6 +45,12 @@ internal enum class RecallNotificationSettingsTarget {
 
 internal object RecallReminderNotifications {
     const val channelId = "recall_study_reminders"
+    const val notificationId = 5104
+
+    fun dismiss(context: Context) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(notificationId)
+    }
 
     fun ensureChannel(context: Context): NotificationManager {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
