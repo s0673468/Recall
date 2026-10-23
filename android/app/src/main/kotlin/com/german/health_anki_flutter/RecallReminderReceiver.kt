@@ -43,11 +43,10 @@ class RecallReminderReceiver : BroadcastReceiver() {
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_REMINDER)
             .build()
-        manager.notify(notificationId, notification)
+        manager.notify(RecallReminderNotifications.notificationId, notification)
     }
 
     private companion object {
-        const val notificationId = 5104
         const val notificationRequestCode = 5105
     }
 }

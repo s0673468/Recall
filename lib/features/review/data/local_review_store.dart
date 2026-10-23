@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'catch_up_state.dart';
+import 'deck_count_snapshot.dart';
 import 'local_review_preferences.dart';
 import 'models.dart';
 
@@ -28,6 +29,7 @@ import 'models.dart';
 /// note_flags table not existing yet) can never stall the review sync.
 class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
+  static const _deckCountsKey = 'recall_deck_counts_v1';
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
   static const _hiddenCardsKey = 'recall_hidden_cards_v1';
@@ -39,6 +41,7 @@ class LocalReviewStore {
   static const maxDailyRemediations = 3;
 
   Future<void> _outboxTail = Future.value();
+  int _deckCountsRevision = 0;
   static Future<void>? _ownerMigrationTail;
   Future<SharedPreferences>? _prefsFuture;
   // A false native result or a proven quota refusal is a definite refusal; a
@@ -332,6 +335,117 @@ class LocalReviewStore {
     return deckId == null ? base : '$base:deck:$deckId';
   }
 
+  /// Capture both local inputs without making a parked review block refresh.
+  /// An aggregate cannot tell whether an attempted review reached the server.
+  Future<({String? baseline, String? outbox, int revision})?>
+  deckCountsRefreshBoundary({required String? ownerScope}) {
+    final key = _storageKey(_deckCountsKey, ownerScope: ownerScope);
+    final outboxKey = _storageKey(_outboxKey, ownerScope: ownerScope);
+    final revision = _deckCountsRevision;
+    return _withOutboxLock(() async {
+      final prefs = await _prefsFor([key, outboxKey]);
+      if (revision != _deckCountsRevision) return null;
+      return (
+        baseline: prefs.getString(key),
+        outbox: prefs.getString(outboxKey),
+        revision: revision,
+      );
+    });
+  }
+
+  /// Accept aggregates only if no review crossed the network read. The token
+  /// also detects ACKs from another Store when a persisted baseline exists.
+  Future<Map<int, ({int due, int neu})>?> saveDeckCounts(
+    Map<int, ({int due, int neu})> counts, {
+    required DateTime fetchedAt,
+    required String? ownerScope,
+    required bool Function() canWrite,
+    required ({String? baseline, String? outbox, int revision}) boundary,
+  }) {
+    final key = _storageKey(_deckCountsKey, ownerScope: ownerScope);
+    final outboxKey = _storageKey(_outboxKey, ownerScope: ownerScope);
+    return _withOutboxLock(() async {
+      final prefs = await _prefsFor([key, outboxKey]);
+      if (!canWrite() ||
+          boundary.revision != _deckCountsRevision ||
+          boundary.baseline != prefs.getString(key) ||
+          boundary.outbox != prefs.getString(outboxKey)) {
+        return null;
+      }
+      final pending = _readOutbox(prefs, outboxKey);
+      final uniqueIds = uniqueDeliveryIds(pending, legacyReviews: true);
+      final snapshot = DeckCountSnapshot(
+        Map.of(counts),
+        fetchedAt,
+        uncertain: {
+          // Only a unique, never-sent review is certainly absent from the server
+          // response. Attempted reviews (including parked refusals) and stuck
+          // identities must not subtract from fresh truth. Their later ACK must
+          // invalidate this uncertain baseline instead of claiming coverage.
+          for (final entry in pending)
+            if ((entry['delivery_attempted'] != false ||
+                    !uniqueIds.contains(reviewDeliveryId(entry))) &&
+                entry['card_id'] is int)
+              entry['card_id'] as int,
+        },
+      );
+      // Persist the server baseline and exclusions, leaving the unsent overlay
+      // reversible by Undo. A failed disposable write cannot hide fresh truth.
+      try {
+        await prefs.setString(key, snapshot.encode());
+      } catch (_) {
+        /* Disposable cache. */
+      }
+      snapshot.subtract(pending);
+      return snapshot.counts;
+    });
+  }
+
+  /// Read the baseline and pending overlay in the same local lock. Settled
+  /// cards are already reflected in the baseline, even if an ACK removal failed.
+  Future<({Map<int, ({int due, int neu})> counts, DateTime fetchedAt})?>
+  loadDeckCounts({required String? ownerScope}) {
+    final key = _storageKey(_deckCountsKey, ownerScope: ownerScope);
+    final outboxKey = _storageKey(_outboxKey, ownerScope: ownerScope);
+    return _withOutboxLock(() async {
+      final prefs = await _prefsFor([key, outboxKey]);
+      final snapshot = DeckCountSnapshot.decode(prefs.getString(key));
+      if (snapshot == null) return null;
+      snapshot.subtract(_readOutbox(prefs, outboxKey));
+      return (counts: snapshot.counts, fetchedAt: snapshot.fetchedAt);
+    });
+  }
+
+  /// Preserve offline count coverage when possible, independently of the
+  /// durable ACK removal. If settlement fails, discard the disposable baseline
+  /// rather than retaining confirmed reviews or restoring their old counts.
+  Future<void> _settleDeckCounts(
+    Iterable<Map<String, dynamic>> acknowledged, {
+    required String key,
+  }) async {
+    _deckCountsRevision++;
+    try {
+      final prefs = await _prefsFor([key]);
+      final snapshot = DeckCountSnapshot.decode(prefs.getString(key));
+      if (snapshot == null) return;
+      // The aggregate cannot prove whether these reviews landed before or
+      // after it was fetched. Neither skipping nor subtracting is safe now.
+      if (!acknowledged.any(
+        (entry) => snapshot.uncertain.contains(entry['card_id']),
+      )) {
+        snapshot.subtract(acknowledged);
+        if (await prefs.setString(key, snapshot.encode())) return;
+      }
+    } catch (_) {
+      /* Count storage cannot hold up an outbox ACK. */
+    }
+    try {
+      await LocalReviewPreferences.writeOnly(await _writerPrefs).remove(key);
+    } catch (_) {
+      /* Best-effort invalidation of disposable storage. */
+    }
+  }
+
   /// Append one review; returns the new pending count so the caller can
   /// update its badge without re-reading + re-decoding the whole outbox.
   Future<int> enqueueReview(
@@ -346,6 +460,7 @@ class LocalReviewStore {
       // A producer may lose its session while waiting for another local write.
       // Cancel only before append; an already durable event is never removed.
       if (canWrite != null && !canWrite()) return list.length;
+      _deckCountsRevision++;
       return _appendProducer(prefs, key, list, {
         ...entry,
         'delivery_attempted': entry['delivery_attempted'] ?? false,
@@ -367,10 +482,7 @@ class LocalReviewStore {
   /// Durably close the local Undo window before sending, including attempts
   /// whose response may be lost. Every copy shares one server identity, so
   /// mark them together. Serialized with removal so only one wins.
-  Future<bool> markReviewAttempted(
-    Object clientId, {
-    String? ownerScope,
-  }) {
+  Future<bool> markReviewAttempted(Object clientId, {String? ownerScope}) {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
     return _withOutboxLock(() async {
       final prefs = await _prefsFor([key]);
@@ -432,6 +544,7 @@ class LocalReviewStore {
     _storageKey(_outboxKey, ownerScope: ownerScope),
     acknowledged,
     legacyReviews: true,
+    deckCountsKey: _storageKey(_deckCountsKey, ownerScope: ownerScope),
   );
 
   /// Flag delivery uses the same identity guard in its separate owner outbox.
@@ -447,6 +560,7 @@ class LocalReviewStore {
     String key,
     Iterable<Map<String, dynamic>> acknowledged, {
     bool legacyReviews = false,
+    String? deckCountsKey,
   }) {
     final captured = [
       for (final entry in acknowledged) Map<String, dynamic>.from(entry),
@@ -503,9 +617,7 @@ class LocalReviewStore {
           // A definite refusal never committed: even a stale shared-cache copy
           // must not be merged into native truth, or a fresh-ID retry would
           // later submit both ratings for the same card.
-          if (_refusedIds[key]?.contains(
-                _deliveryId(entry, legacyReviews),
-              ) !=
+          if (_refusedIds[key]?.contains(_deliveryId(entry, legacyReviews)) !=
               true)
             entry,
       ];
@@ -520,6 +632,19 @@ class LocalReviewStore {
       // refusal tombstone alone never writes.
       if (nativeRemaining.length != native.length ||
           cachedAcknowledged.length != cached.length) {
+        if (deckCountsKey != null) {
+          final retainedNative = nativeRemaining.toSet();
+          final settledCards = {
+            for (final entry in native)
+              if (!retainedNative.contains(entry)) entry['card_id'],
+          };
+          await _settleDeckCounts(
+            // Use each card's earliest pending metadata, even when a later
+            // review of that same card is the one acknowledged this pass.
+            native.where((entry) => settledCards.contains(entry['card_id'])),
+            key: deckCountsKey,
+          );
+        }
         await _writeList(nativeView, key, remaining);
         _refusedFlagWithdrawals.remove(key);
       }
@@ -701,6 +826,7 @@ class LocalReviewStore {
   /// appended after that prefix, so they survive untouched.
   Future<int> removeFirst(int count, {String? ownerScope}) {
     final key = _storageKey(_outboxKey, ownerScope: ownerScope);
+    final countsKey = _storageKey(_deckCountsKey, ownerScope: ownerScope);
     if (count <= 0) {
       return _withOutboxLock(() async {
         final prefs = await _prefsFor([key]);
@@ -713,6 +839,7 @@ class LocalReviewStore {
       final remaining = list.length <= count
           ? <Map<String, dynamic>>[]
           : list.sublist(count);
+      await _settleDeckCounts(list.take(count), key: countsKey);
       await _writeList(prefs, key, remaining);
       _dropDrainedIds(key, list.take(count));
       return remaining.length;
@@ -1107,6 +1234,7 @@ class LocalReviewStore {
       await prefs.remove(catchUpStorageKey);
       await prefs.remove(remediationStorageKey);
       await prefs.remove(hiddenStorageKey);
+      await prefs.remove(_storageKey(_deckCountsKey, ownerScope: ownerScope));
     });
   }
 
