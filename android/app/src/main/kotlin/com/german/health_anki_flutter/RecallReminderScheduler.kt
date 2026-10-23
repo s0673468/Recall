@@ -21,9 +21,14 @@ object RecallReminderScheduler {
     private const val activeKey = "active"
     private const val hourKey = "hour"
     private const val minuteKey = "minute"
+    private const val triggerAtKey = "trigger_at_ms"
     private const val requestCode = 5103
 
-    fun apply(context: Context, settings: RecallReminderSettings) {
+    fun apply(
+        context: Context,
+        settings: RecallReminderSettings,
+        nowMillis: Long = System.currentTimeMillis(),
+    ) {
         cancelAlarm(context)
         val eligible = settings.enabled &&
             (settings.dueCount ?: 0) > 0 &&
@@ -32,12 +37,18 @@ object RecallReminderScheduler {
             preferences(context).edit().clear().apply()
             return
         }
-        preferences(context).edit()
+        val prefs = preferences(context)
+        val pendingTriggerAt = if (prefs.getBoolean(activeKey, false)) {
+            prefs.getLong(triggerAtKey, 0L).takeIf { it > 0L }
+        } else {
+            null
+        }
+        prefs.edit()
             .putBoolean(activeKey, true)
             .putInt(hourKey, settings.hour)
             .putInt(minuteKey, settings.minute)
             .apply()
-        schedule(context, settings.hour, settings.minute)
+        schedule(context, settings.hour, settings.minute, nowMillis, pendingTriggerAt)
     }
 
     fun cancel(context: Context) {
@@ -45,13 +56,14 @@ object RecallReminderScheduler {
         preferences(context).edit().clear().apply()
     }
 
-    fun restore(context: Context) {
+    fun restore(context: Context, nowMillis: Long = System.currentTimeMillis()) {
         val prefs = preferences(context)
         if (!prefs.getBoolean(activeKey, false)) return
         schedule(
             context,
             prefs.getInt(hourKey, 19).coerceIn(0, 23),
             prefs.getInt(minuteKey, 0).coerceIn(0, 59),
+            nowMillis,
         )
     }
 
@@ -68,18 +80,26 @@ object RecallReminderScheduler {
         )
     }
 
-    private fun schedule(context: Context, hour: Int, minute: Int) {
+    private fun schedule(
+        context: Context,
+        hour: Int,
+        minute: Int,
+        nowMillis: Long,
+        pendingTriggerAtMillis: Long? = null,
+    ) {
         val manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val triggerAt = RecallReminderTime.nextTriggerAtMillis(
             hour = hour,
             minute = minute,
-            nowMillis = System.currentTimeMillis(),
+            nowMillis = nowMillis,
+            pendingTriggerAtMillis = pendingTriggerAtMillis,
         )
         manager.setAndAllowWhileIdle(
             AlarmManager.RTC_WAKEUP,
             triggerAt,
             pendingIntent(context),
         )
+        preferences(context).edit().putLong(triggerAtKey, triggerAt).apply()
     }
 
     private fun cancelAlarm(context: Context) {
