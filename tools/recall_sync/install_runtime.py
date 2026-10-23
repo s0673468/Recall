@@ -7,13 +7,33 @@ import argparse
 import os
 import plistlib
 import shutil
+import sys
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
 
 LABEL = "com.german.recall-autosync"
+UPDATE_LABEL = "com.german.recall-runtime-update"
+
+
+def build_update_plist(
+    *, python: Path, repo_root: Path, runtime_dir: Path, log_path: Path
+) -> dict[str, object]:
+    return {
+        "Label": UPDATE_LABEL,
+        "ProgramArguments": [
+            str(python), str(repo_root / "tools/recall_sync/install_runtime.py"),
+            "--update", "--repo-root", str(repo_root),
+            "--runtime-dir", str(runtime_dir), "--log", str(log_path),
+        ],
+        "StartInterval": 24 * 60 * 60,
+        "RunAtLoad": True,
+        "StandardOutPath": "/dev/null",
+        "StandardErrorPath": "/dev/null",
+    }
 
 
 def effective_concepts_path(*, runtime_dir: Path, configured: Path) -> Path:
@@ -137,8 +157,10 @@ def install(
 def _parser() -> argparse.ArgumentParser:
     home = Path.home()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true", help="write the launchd files")
-    parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[2])
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="write both launchd jobs")
+    mode.add_argument("--update", action="store_true", help="test and fast-forward the runtime")
+    parser.add_argument("--repo-root", type=Path, default=home / "Code/_runtime/recall-src")
     parser.add_argument(
         "--runtime-dir", type=Path, default=home / "Code/_runtime/recall-anki-sync"
     )
@@ -167,6 +189,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     repo_root = args.repo_root.expanduser().resolve()
     runtime_dir = args.runtime_dir.expanduser().resolve()
+    log_path = args.log.expanduser().resolve()
+    if args.update:
+        # This path never loads the private .env or reads sync sources.
+        from update_runtime import UpdateError, update_runtime
+        from run_autosync import _event, append_event
+
+        failure = None
+        try:
+            status = update_runtime(repo_root=repo_root, runtime_dir=runtime_dir)
+        except UpdateError as exc:
+            failure = str(exc)
+        except (OSError, ValueError, EOFError):
+            failure = "runtime_update_unavailable"
+        if failure:
+            print(f"runtime update refused: {failure}; runtime was not advanced", file=sys.stderr)
+        else:
+            print(f"runtime update: {status}")
+        try:
+            append_event(log_path, _event(
+                operation="update_runtime", outcome="failed" if failure else "succeeded",
+                cause_code=failure or status, retryable=bool(failure) or status == "busy",
+                run_id=str(uuid.uuid4()),
+            ))
+        except OSError:
+            print("runtime update receipt unavailable", file=sys.stderr)
+            return 1
+        return 1 if failure else 0
     concepts = effective_concepts_path(
         runtime_dir=runtime_dir,
         configured=args.concepts,
@@ -182,6 +231,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     if not args.apply:
         print(plistlib.dumps(payload, sort_keys=True).decode("utf-8"), end="")
+        print(plistlib.dumps(build_update_plist(
+            python=runtime_dir / ".venv/bin/python", repo_root=repo_root,
+            runtime_dir=runtime_dir, log_path=log_path,
+        ), sort_keys=True).decode("utf-8"), end="")
         return 0
     backup = install(
         repo_root=repo_root,
@@ -192,6 +245,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         launch_agent=args.launch_agent.expanduser().resolve(),
     )
     print(f"installed {args.launch_agent.expanduser().resolve()}")
+    update_agent = args.launch_agent.expanduser().resolve().with_name(f"{UPDATE_LABEL}.plist")
+    _atomic_plist(update_agent, build_update_plist(
+        python=runtime_dir / ".venv/bin/python", repo_root=repo_root,
+        runtime_dir=runtime_dir, log_path=log_path,
+    ))
+    print(f"installed {update_agent}")
     if backup is not None:
         print(f"preserved legacy log at {backup}")
     return 0

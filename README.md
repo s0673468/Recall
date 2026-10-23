@@ -192,6 +192,9 @@ the Android application sandbox. There is no network telemetry path.
 
 ## Local commands
 
+The Mac-local Anki autosync uses a dedicated runtime worktree and a daily,
+test-gated update job. See the [runtime installation and update instructions](tools/recall_sync/README.md).
+
 Recall's application platforms are **Android and web**. Android is built,
 tested and released from this repository; web review uses Recall Hub. iOS is
 not maintained (see [Platforms](#platforms)).
