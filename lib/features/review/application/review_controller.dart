@@ -752,7 +752,24 @@ class ReviewController extends ChangeNotifier {
     // Push queued reviews before fetching so the fetched queue excludes them.
     // The snapshot (if any) is already on screen, so this no longer delays
     // first paint the way it used to.
-    await _flushOutbox();
+    try {
+      await _flushOutbox();
+    } on LocalOutboxCorruptException {
+      rethrow; // Keep the existing fail-closed recovery for damaged records.
+    } catch (_) {
+      if (loadToken != _loadSequence) return;
+      // A local read/attempt/ACK write can fail even after the server accepted
+      // a review. Keep its durable event for replay and offer Retry instead of
+      // letting startup escape with loading still true. This is not evidence
+      // that the network is offline.
+      _set(
+        _state.copyWith(
+          loading: false,
+          error: 'Recall could not sync the pending study actions. Try again.',
+        ),
+      );
+      return;
+    }
     // Flags have no bearing on the fetched queue, so drain them off the
     // critical path — never let a flag flush delay the load.
     _syncInBackground(_flushFlagOutbox());
@@ -1721,13 +1738,33 @@ class ReviewController extends ChangeNotifier {
         identical(card, _state.current);
     bool canAppend() => loadToken == _loadSequence && ratingCurrent();
 
-    final reviewedAt = clock().toUtc();
-    final outcome = engine.review(card, rating, now: reviewedAt);
+    final unconfirmed = _unconfirmedReview;
+    final retry =
+        unconfirmed != null &&
+            unconfirmed.cardId == card.id &&
+            unconfirmed.ownerScope == ownerScope
+        ? unconfirmed
+        : null;
+    // A reused delivery identity denotes the original tap, including its
+    // rating, timestamp and FSRS result. Native storage may already hold it,
+    // or a reconnect may even have delivered it while its save was uncertain.
+    // Recomputing here could disagree with that durable review and consume a
+    // failed validation as though it had passed.
+    if (retry != null) rating = retry.rating;
+    final reviewedAt = retry == null
+        ? clock().toUtc()
+        : DateTime.parse(retry.entry['last_review'] as String);
     final shownAt = _cardShownAt;
     final elapsedMs = shownAt == null
         ? null
         : clock().difference(shownAt).inMilliseconds.clamp(0, maxElapsedMs);
-    final entry = api.reviewEntry(card, outcome, elapsedMs: elapsedMs);
+    final entry = retry == null
+        ? api.reviewEntry(
+            card,
+            engine.review(card, rating, now: reviewedAt),
+            elapsedMs: elapsedMs,
+          )
+        : Map<String, dynamic>.from(retry.entry);
     final remediationNodeIds = entry['lapsed'] == true
         ? ConceptAttribution.nodeTags(card.tags)
         : const <String>[];
@@ -1744,6 +1781,14 @@ class ReviewController extends ChangeNotifier {
     // RecallApi.applyReview sends — so a repeat would make the server discard a
     // genuine review as a replay. See [LocalReviewStore.newEventId].
     entry['client_id'] = clientId;
+    // Reconnect may have sent and drained this uncertain save while the
+    // gesture still showed its original card. Re-enqueue only as attempted:
+    // a local Undo must never pretend to undo the already-committed review.
+    final latestUnconfirmed = _unconfirmedReview;
+    if (latestUnconfirmed?.clientId == clientId &&
+        latestUnconfirmed?.entry['delivery_attempted'] == true) {
+      entry['delivery_attempted'] = true;
+    }
     // enqueueReview is local storage (fast, and it must land before the next
     // card so the review can never be lost); it also returns the new pending
     // count so advancing doesn't re-read + re-decode the whole outbox.
@@ -1773,6 +1818,8 @@ class ReviewController extends ChangeNotifier {
           cardId: card.id,
           clientId: clientId,
           ownerScope: ownerScope,
+          entry: Map<String, dynamic>.unmodifiable(entry),
+          rating: rating,
         );
         if (sessionCurrent()) _showFlagNotice(saveUnconfirmedNotice);
         rethrow;
@@ -1838,7 +1885,7 @@ class ReviewController extends ChangeNotifier {
     // A background refresh within the original load may have expanded the
     // source, so restore the live pre-progress backlog rather than the cache
     // captured before enqueue waited for its native acknowledgement.
-    _undo = loadToken != _loadSequence
+    _undo = loadToken != _loadSequence || entry['delivery_attempted'] == true
         ? null
         : _UndoRecord(
             clientId: clientId,
@@ -2641,7 +2688,14 @@ class ReviewController extends ChangeNotifier {
   }
 
   /// A rating whose thrown write could not be checked against native truth.
-  ({int cardId, String clientId, String? ownerScope})? _unconfirmedReview;
+  ({
+    int cardId,
+    String clientId,
+    String? ownerScope,
+    Map<String, dynamic> entry,
+    Rating rating,
+  })?
+  _unconfirmedReview;
 
   /// The flag counterpart of [_unconfirmedReview].
   ({String clientId, String? ownerScope})? _unconfirmedFlag;
@@ -2925,6 +2979,21 @@ class ReviewController extends ChangeNotifier {
           break;
         }
         if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
+        final unconfirmed = _unconfirmedReview;
+        if (unconfirmed != null &&
+            unconfirmed.clientId == eventId &&
+            unconfirmed.ownerScope == ownerScope) {
+          _unconfirmedReview = (
+            cardId: unconfirmed.cardId,
+            clientId: unconfirmed.clientId,
+            ownerScope: unconfirmed.ownerScope,
+            entry: Map<String, dynamic>.unmodifiable({
+              ...unconfirmed.entry,
+              'delivery_attempted': true,
+            }),
+            rating: unconfirmed.rating,
+          );
+        }
         final u = _undo;
         if (u != null && u.clientId == eventId) {
           _undo = null;
