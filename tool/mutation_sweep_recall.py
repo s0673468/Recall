@@ -101,7 +101,9 @@ MUTATIONS = [
     Mutation('Q15', 'queue_edges', API, 'newOrderDaySeed(now, deckId));\n    }\n    return [...ahead', 'newOrderDaySeed(_localNow(), deckId));\n    }\n    return [...ahead'),
     Mutation('C01', 'controller_edges', CONTROLLER, '!due.isAfter(clock().toUtc())', 'due.isBefore(clock().toUtc())'),
     Mutation('C02', 'controller_edges', CONTROLLER, '_preview = engine.preview(card, now: _previewAt);', '_preview = engine.preview(card);'),
-    Mutation('C03', 'controller_edges', CONTROLLER, 'final outcome = engine.review(card, rating, now: reviewedAt);', 'final outcome = engine.review(card, rating);'),
+    # Killed in --phase after by the existing controller tap-instant test in
+    # review_scheduling_mutation_test.dart (the engine clock deliberately differs).
+    Mutation('C03', 'controller_edges', CONTROLLER, 'engine.review(card, rating, now: reviewedAt)', 'engine.review(card, rating)'),
     Mutation('C04', 'controller_edges', CONTROLLER, 'if (_previewForCardId != card.id) {', 'if (true) {'),
     Mutation('C05', 'controller_edges', CONTROLLER, 'if (review.at.isBefore(since)) continue;', 'if (!review.at.isAfter(since)) continue;'),
     Mutation('S01', 'schedule', ENGINE, 'reps: c.reps + 1,', 'reps: c.reps,'),
