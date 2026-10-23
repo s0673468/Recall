@@ -9,6 +9,7 @@ object RecallReminderTime {
         minute: Int,
         nowMillis: Long,
         timeZone: TimeZone = TimeZone.getDefault(),
+        pendingTriggerAtMillis: Long? = null,
     ): Long {
         require(hour in 0..23 && minute in 0..59)
         val next = Calendar.getInstance(timeZone).apply {
@@ -17,7 +18,10 @@ object RecallReminderTime {
             set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-            if (timeInMillis <= nowMillis) {
+            // Reconciliation must not skip an inexact alarm still awaiting
+            // delivery today. Matching the computed wall-time target also
+            // invalidates old targets after a time/date/zone setting change.
+            if (timeInMillis <= nowMillis && timeInMillis != pendingTriggerAtMillis) {
                 add(Calendar.DAY_OF_YEAR, 1)
                 // Today's DST gap may have normalized the requested time.
                 // Tomorrow must start from the user's wall time again.

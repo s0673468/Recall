@@ -21,7 +21,7 @@ import time
 
 PACKAGE = 'com.german.recall.syntheticbenchmark'
 ORIGINAL_PACKAGE = 'com.german.health_anki_flutter'
-BASE_GRADLE_SHA = '729f278b435614cb6c6060000a3cec7ab9ca1de31d42098a5b693921951beb5d'
+BASE_GRADLE_SHA = 'ea553273c9ddc2a8870cc6ba411a55eef3976d74a6662da35896ca8ddcd73277'
 BASE_PUBSPEC_SHA = '026f14092a53baaf2c92539964c18c03f9f43b7416615093b67d2b12daf6222a'
 SENTINEL = 'RECALL_ANDROID_BENCH_JSON '
 SCHEMA = 'recall-synthetic-android/v1'
