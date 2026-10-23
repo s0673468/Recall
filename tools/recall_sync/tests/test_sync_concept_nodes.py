@@ -354,7 +354,7 @@ class RequestTests(unittest.TestCase):
         with mock.patch.object(
             sync,
             "_request",
-            side_effect=[first_page, second_page],
+            side_effect=[first_page, second_page, []],
         ) as request:
             rows = sync._fetch_existing_rows(
                 "https://example.invalid",
@@ -373,6 +373,8 @@ class RequestTests(unittest.TestCase):
             },
         )
         self.assertEqual(calls[1].kwargs["params"]["offset"], "1000")
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[2].kwargs["params"]["offset"], "1001")
 
 
 if __name__ == "__main__":

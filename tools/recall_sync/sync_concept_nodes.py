@@ -112,7 +112,11 @@ def _fetch_existing_rows(
     url: str,
     key: str,
 ) -> dict[str, dict[str, object]]:
-    """Fetch every cloud row in stable order and reject duplicate IDs."""
+    """Fetch every cloud row in stable order and reject duplicate IDs.
+
+    The server may cap responses below PAGE_SIZE. Advance by the actual row
+    count and read until an empty response proves exhaustion.
+    """
     rows: dict[str, dict[str, object]] = {}
     offset = 0
     while True:
@@ -135,9 +139,9 @@ def _fetch_existing_rows(
                     f"duplicate cloud concept node id {node_id!r}"
                 )
             rows[node_id] = row
-        if len(page) < PAGE_SIZE:
+        if not page:
             return rows
-        offset += PAGE_SIZE
+        offset += len(page)
 
 
 def run(url: str, key: str) -> dict[str, int]:
