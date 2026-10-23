@@ -1,15 +1,21 @@
 import 'dart:convert';
 
 /// A server baseline plus cards already covered by local reconciliation.
-/// Coverage includes ACKs and uncertain/stuck reviews deferred to server truth;
-/// it survives a failed refresh and prevents a later ACK subtracting twice.
+/// Confirmed coverage survives a failed refresh. Uncertain/stuck reviews are
+/// deferred to server truth without claiming that the baseline covers an ACK.
 class DeckCountSnapshot {
-  DeckCountSnapshot(this.counts, this.fetchedAt, [Set<int>? settled])
-    : settled = settled ?? <int>{};
+  DeckCountSnapshot(
+    this.counts,
+    this.fetchedAt, {
+    Set<int>? settled,
+    Set<int>? uncertain,
+  }) : settled = settled ?? <int>{},
+       uncertain = uncertain ?? <int>{};
 
   final Map<int, ({int due, int neu})> counts;
   final DateTime fetchedAt;
   final Set<int> settled;
+  final Set<int> uncertain;
 
   static DeckCountSnapshot? decode(String? raw) {
     if (raw == null) return null;
@@ -27,7 +33,8 @@ class DeckCountSnapshot {
             ),
         },
         DateTime.parse(data['fetchedAt'] as String),
-        {...(data['settled'] as List? ?? const []).cast<int>()},
+        settled: {...(data['settled'] as List? ?? const []).cast<int>()},
+        uncertain: {...(data['uncertain'] as List? ?? const []).cast<int>()},
       );
     } catch (_) {
       return null;
@@ -42,6 +49,7 @@ class DeckCountSnapshot {
         '${entry.key}': {'due': entry.value.due, 'new': entry.value.neu},
     },
     'settled': settled.toList()..sort(),
+    'uncertain': uncertain.toList()..sort(),
   });
 
   /// Apply each card once, using its original bucket at the baseline's time.
@@ -51,7 +59,12 @@ class DeckCountSnapshot {
       final cardId = entry['card_id'];
       final deckId = entry['deck_id'];
       final state = entry['previous_state'];
-      if (cardId is! int || deckId is! int || state is! int) continue;
+      if (cardId is! int ||
+          deckId is! int ||
+          state is! int ||
+          uncertain.contains(cardId)) {
+        continue;
+      }
       final count = counts[deckId];
       if (count == null || !settled.add(cardId)) continue;
       final rawDue = entry['previous_due'];

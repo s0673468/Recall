@@ -374,16 +374,21 @@ class LocalReviewStore {
       }
       final pending = _readOutbox(prefs, outboxKey);
       final uniqueIds = uniqueDeliveryIds(pending, legacyReviews: true);
-      final snapshot = DeckCountSnapshot(Map.of(counts), fetchedAt, {
-        // Only a unique, never-sent review is certainly absent from the server
-        // response. Attempted reviews (including parked refusals) and stuck
-        // identities must not subtract from fresh truth or a later ACK twice.
-        for (final entry in pending)
-          if ((entry['delivery_attempted'] != false ||
-                  !uniqueIds.contains(reviewDeliveryId(entry))) &&
-              entry['card_id'] is int)
-            entry['card_id'] as int,
-      });
+      final snapshot = DeckCountSnapshot(
+        Map.of(counts),
+        fetchedAt,
+        uncertain: {
+          // Only a unique, never-sent review is certainly absent from the server
+          // response. Attempted reviews (including parked refusals) and stuck
+          // identities must not subtract from fresh truth. Their later ACK must
+          // invalidate this uncertain baseline instead of claiming coverage.
+          for (final entry in pending)
+            if ((entry['delivery_attempted'] != false ||
+                    !uniqueIds.contains(reviewDeliveryId(entry))) &&
+                entry['card_id'] is int)
+              entry['card_id'] as int,
+        },
+      );
       // Persist the server baseline and exclusions, leaving the unsent overlay
       // reversible by Undo. A failed disposable write cannot hide fresh truth.
       try {
@@ -423,8 +428,14 @@ class LocalReviewStore {
       final prefs = await _prefsFor([key]);
       final snapshot = DeckCountSnapshot.decode(prefs.getString(key));
       if (snapshot == null) return;
-      snapshot.subtract(acknowledged);
-      if (await prefs.setString(key, snapshot.encode())) return;
+      // The aggregate cannot prove whether these reviews landed before or
+      // after it was fetched. Neither skipping nor subtracting is safe now.
+      if (!acknowledged.any(
+        (entry) => snapshot.uncertain.contains(entry['card_id']),
+      )) {
+        snapshot.subtract(acknowledged);
+        if (await prefs.setString(key, snapshot.encode())) return;
+      }
     } catch (_) {
       /* Count storage cannot hold up an outbox ACK. */
     }
