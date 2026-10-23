@@ -26,8 +26,13 @@ import math
 import sys
 import json
 import struct
+import shutil
+import sqlite3
+import tempfile
+import time
 import datetime as dt
 from contextlib import closing
+from pathlib import Path
 
 # The importer and Anki schema helpers are versioned together. Production may
 # invoke this file from a thin runtime wrapper, but it never imports mutable
@@ -50,6 +55,7 @@ FSRS_SETTINGS_KEY = "fsrs_params"
 SCHEDULE_COLUMNS = (
     "stability", "difficulty", "state", "due", "reps", "lapses", "last_review"
 )
+SNAPSHOT_ATTEMPTS = 3
 
 
 def _iso(epoch):
@@ -271,19 +277,61 @@ def _same_schedule(row, schedule):
     return True
 
 
-def _read_payloads():
-    """Read one consistent SQLite snapshot, including committed WAL frames.
+def _snapshot_file_state(path):
+    """Detect writes, replacement, and appearance/disappearance of a WAL."""
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
 
-    A filesystem copy can omit WAL commits or mix database pages from different
-    transactions. SQLite's backup API includes the WAL and leaves no persistent
-    copy of the collection behind. Both entry points parse this same snapshot.
+
+def _read_payloads():
+    """Parse a validated private copy without taking SQLite locks on Anki.
+
+    Anki holds an exclusive WAL lock while open, so even SQLite's read-only
+    backup API can hang on the live collection. Copy both files with ordinary
+    reads, rejecting any copy whose sources changed. Only the private copy is
+    opened by SQLite, which recovers its WAL, checks it, and checkpoints it into
+    one database before parsing. Never copy Anki's process-local WAL index.
     """
-    with (
-        closing(connect(LIVE_DB, ro=True)) as source,
-        closing(connect(":memory:")) as snapshot,
-    ):
-        source.backup(snapshot)
-        return build_payloads(snapshot)
+    source = Path(LIVE_DB)
+    files = (source, Path(f"{source}-wal"))
+    for attempt in range(SNAPSHOT_ATTEMPTS):
+        # A fresh private directory per attempt also discards any stale WAL or
+        # SQLite recovery files from a rejected copy, including on exceptions.
+        with tempfile.TemporaryDirectory(prefix="recall-anki-snapshot-") as directory:
+            snapshot_path = Path(directory) / "collection.anki2"
+            try:
+                before = tuple(_snapshot_file_state(path) for path in files)
+                if before[0] is None:
+                    raise OSError("Anki collection is missing")
+                shutil.copyfile(source, snapshot_path)
+                if before[1] is not None:
+                    shutil.copyfile(files[1], Path(f"{snapshot_path}-wal"))
+                after = tuple(_snapshot_file_state(path) for path in files)
+                if before != after:
+                    raise OSError("Anki collection or WAL changed during copying")
+                with closing(connect(str(snapshot_path))) as snapshot:
+                    if snapshot.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                        raise sqlite3.DatabaseError("Anki snapshot failed quick_check")
+                    checkpoint = snapshot.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                    if checkpoint[0] != 0:
+                        raise sqlite3.DatabaseError("Anki snapshot checkpoint was busy")
+                    if snapshot.execute("PRAGMA journal_mode=DELETE").fetchone() != ("delete",):
+                        raise sqlite3.DatabaseError("Anki snapshot could not leave WAL mode")
+            except (OSError, sqlite3.DatabaseError) as error:
+                last_error = error
+            else:
+                with closing(connect(str(snapshot_path), ro=True)) as snapshot:
+                    return build_payloads(snapshot)
+        if attempt + 1 < SNAPSHOT_ATTEMPTS:
+            time.sleep(0.05)
+    raise RuntimeError(
+        f"Could not create a consistent Anki snapshot after {SNAPSHOT_ATTEMPTS} attempts; "
+        "the collection or WAL kept changing, was unreadable, or failed validation. "
+        "Retry when Anki is idle."
+    ) from last_error
 
 
 def run(sb):
