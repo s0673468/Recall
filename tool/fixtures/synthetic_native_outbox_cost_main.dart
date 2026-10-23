@@ -28,7 +28,7 @@ const _patchSha = String.fromEnvironment('RECALL_PATCH_SHA256');
 const _fixtureSha = String.fromEnvironment('RECALL_FIXTURE_SHA256');
 const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
-const _storeBlob = '434b4f83aac7383fb1330504e1446956354c0a6e';
+const _storeBlob = 'f7c51c9672270293016cc2d20fcf1bf33ee1832b';
 const _baselineControllerSha =
     '22e0f2ca4335c5275616757f2ecfdb5ef30113cbd858ef5253f1ecaa903db515';
 const _checkpointControllerSha =
@@ -355,7 +355,7 @@ Future<void> main() async {
   try {
     _require(_enabled && kDebugMode && Platform.isAndroid);
     _require(RegExp(r'^[0-9a-f]{40}$').hasMatch(_sourceCommit));
-    _require(_baseCommit == '295d397af7210fc2bc7b5af8eb0302729c82317f');
+    _require(_baseCommit == '34fc5786ea432090a09d62249f731b8488bec809');
     _require(RegExp(r'^[0-9a-f]{64}$').hasMatch(_fixtureSha));
     _require(
       (_variant == 'baseline' &&
