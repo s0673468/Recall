@@ -68,8 +68,7 @@ class RecallWidgetPublisher {
 
   int? _lastDueCount;
   DateTime? _lastUpdatedAt;
-  RecallWidgetSnapshot? _queuedSnapshot;
-  int? _queuedGeneration;
+  _WidgetPublication? _queuedPublication;
   String? _ownerId;
   int _sessionGeneration = 0;
   bool _cleared = false;
@@ -106,7 +105,11 @@ class RecallWidgetPublisher {
     final dueCount = state.globalDueCount;
     final updatedAt = state.globalDueUpdatedAt;
     if (dueCount == null || updatedAt == null) return _pending;
-    if (_lastDueCount == dueCount && _lastUpdatedAt == updatedAt) {
+    // A different queued write will replace the last committed count. A
+    // return to that count (e.g. rate then Undo) must follow it to native.
+    if (_queuedPublication == null &&
+        _lastDueCount == dueCount &&
+        _lastUpdatedAt == updatedAt) {
       return _pending;
     }
     final snapshot = RecallWidgetSnapshot(
@@ -114,18 +117,18 @@ class RecallWidgetPublisher {
       updatedAt: updatedAt.toUtc(),
     );
     final generation = _sessionGeneration;
-    if (_queuedSnapshot == snapshot && _queuedGeneration == generation) {
+    final queued = _queuedPublication;
+    if (queued?.snapshot == snapshot && queued?.generation == generation) {
       return _pending;
     }
-    _queuedSnapshot = snapshot;
-    _queuedGeneration = generation;
-    return _publishSnapshot(snapshot, generation);
+    final publication = _WidgetPublication(snapshot, generation);
+    _queuedPublication = publication;
+    return _publishSnapshot(publication);
   }
 
-  Future<void> _publishSnapshot(
-    RecallWidgetSnapshot snapshot,
-    int generation,
-  ) async {
+  Future<void> _publishSnapshot(_WidgetPublication publication) async {
+    final snapshot = publication.snapshot;
+    final generation = publication.generation;
     try {
       await _enqueue(() => store.update(snapshot));
       if (_signedIn && _sessionGeneration == generation) {
@@ -133,9 +136,10 @@ class RecallWidgetPublisher {
         _lastUpdatedAt = snapshot.updatedAt;
       }
     } finally {
-      if (_queuedSnapshot == snapshot && _queuedGeneration == generation) {
-        _queuedSnapshot = null;
-        _queuedGeneration = null;
+      // Equal snapshots can occur on both sides of an intervening update.
+      // Only the latest operation owns its pending deduplication marker.
+      if (identical(_queuedPublication, publication)) {
+        _queuedPublication = null;
       }
     }
   }
@@ -160,6 +164,13 @@ class RecallWidgetPublisher {
     _pending = next.then<void>((_) {}, onError: (_, _) {});
     return next;
   }
+}
+
+class _WidgetPublication {
+  final RecallWidgetSnapshot snapshot;
+  final int generation;
+
+  const _WidgetPublication(this.snapshot, this.generation);
 }
 
 /// Keeps native widgets current for network and offline/cached queue changes.

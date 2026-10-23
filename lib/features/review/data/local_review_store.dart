@@ -75,19 +75,33 @@ class LocalReviewStore {
   /// same single native read, so a failed read surfaces exactly as before,
   /// but never ships unrelated values (such as card snapshots) to Dart.
   Future<LocalReviewPreferences> _prefsFor(Iterable<String> keys) async {
-    final writer = await (_prefsFuture ??= SharedPreferences.getInstance());
+    final writer = await _writerPrefs;
     return LocalReviewPreferences.readSnapshot(writer, keys: keys);
   }
 
   /// Read every native preference. Only [clear] needs this, to find the
   /// per-deck snapshot keys it removes.
   Future<LocalReviewPreferences> get _allPrefs async {
-    final writer = await (_prefsFuture ??= SharedPreferences.getInstance());
+    final writer = await _writerPrefs;
     return LocalReviewPreferences.readSnapshot(writer);
   }
 
-  Future<SharedPreferences> get _writerPrefs =>
-      _prefsFuture ??= SharedPreferences.getInstance();
+  Future<SharedPreferences> get _writerPrefs {
+    final cached = _prefsFuture;
+    if (cached != null) return cached;
+    final pending = SharedPreferences.getInstance();
+    _prefsFuture = pending;
+    pending.then<void>(
+      (_) {},
+      onError: (Object _) {
+        // The plugin permits retrying initialization after a native read
+        // failure. Retain successful/in-flight instances, but don't pin this
+        // store to a failed Future for the rest of the app process.
+        if (identical(_prefsFuture, pending)) _prefsFuture = null;
+      },
+    );
+    return pending;
+  }
 
   /// Random source for durable ids. `Random.secure()` can be unavailable on
   /// some embedders; uniqueness (not unpredictability) is what matters here,
