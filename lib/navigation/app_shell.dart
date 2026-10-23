@@ -155,6 +155,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     ),
     DecksScreen(
       key: _decksKey,
+      store: widget.controller.store,
       controller: widget.controller,
       api: widget.api,
       onStudyDeck: (deckId) {

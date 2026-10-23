@@ -752,6 +752,11 @@ class RecallApi implements ReviewReplayGateway {
   }) => {
     'card_id': card.id,
     'guid': card.guid,
+    // Local-only metadata survives queue pruning and offline restarts.
+    // Replay sends explicit server fields, so these never leave the outbox.
+    'deck_id': card.deckId,
+    'previous_state': card.state,
+    'previous_due': card.due?.toIso8601String(),
     'stability': o.stability,
     'difficulty': o.difficulty,
     'due': o.due.toIso8601String(),

@@ -8,7 +8,9 @@ import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../theme/ui_tokens.dart';
 import '../../application/review_controller.dart';
+import '../../data/local_review_store.dart';
 import '../../data/models.dart';
+import '../../data/offline_deck_counts.dart';
 import '../../data/recall_api.dart';
 
 /// Open the automatic stream or one explicit deck, with per-deck due/new
@@ -16,12 +18,14 @@ import '../../data/recall_api.dart';
 class DecksScreen extends StatefulWidget {
   final ReviewController controller;
   final RecallApi api;
+  final LocalReviewStore? store;
   final void Function(int? deckId) onStudyDeck;
 
   const DecksScreen({
     super.key,
     required this.controller,
     required this.api,
+    this.store,
     required this.onStudyDeck,
   });
 
@@ -33,6 +37,18 @@ class DecksScreenState extends State<DecksScreen> {
   late Future<Map<int, ({int due, int neu})>> _counts;
   late List<DeckRow> _countDecks;
   late int _pendingSync;
+  OfflineDeckCounts? _offlineCounts;
+
+  void _bindCounts() {
+    final store = widget.store;
+    _offlineCounts = store == null
+        ? null
+        : OfflineDeckCounts(api: widget.api, store: store);
+  }
+
+  Future<Map<int, ({int due, int neu})>> _loadCounts({bool tryServer = false}) =>
+      _offlineCounts?.load(offline: widget.controller.state.offline && !tryServer) ??
+      widget.api.fetchDeckCounts();
   final _searchController = TextEditingController();
   String _query = '';
   bool _optionalExpanded = false;
@@ -40,7 +56,8 @@ class DecksScreenState extends State<DecksScreen> {
   @override
   void initState() {
     super.initState();
-    _counts = widget.api.fetchDeckCounts();
+    _bindCounts();
+    _counts = _loadCounts();
     _countDecks = widget.controller.state.decks;
     _pendingSync = widget.controller.state.pendingSync;
     widget.controller.addListener(_onDecksChanged);
@@ -53,7 +70,11 @@ class DecksScreenState extends State<DecksScreen> {
       oldWidget.controller.removeListener(_onDecksChanged);
       widget.controller.addListener(_onDecksChanged);
     }
+    if (oldWidget.api != widget.api || oldWidget.store != widget.store) {
+      _bindCounts();
+    }
     if (oldWidget.controller != widget.controller ||
+        oldWidget.store != widget.store ||
         oldWidget.api != widget.api ||
         !identical(_countDecks, widget.controller.state.decks)) {
       _onDecksChanged(force: true);
@@ -64,14 +85,22 @@ class DecksScreenState extends State<DecksScreen> {
     final state = widget.controller.state;
     final decks = state.decks;
     final drained = state.pendingSync < _pendingSync;
+    final localChange =
+        widget.store != null && state.pendingSync != _pendingSync;
     _pendingSync = state.pendingSync;
-    if (!force && !drained && identical(_countDecks, decks)) return;
+    if (!force && !drained && !localChange && identical(_countDecks, decks)) {
+      return;
+    }
+    final decksChanged = !identical(_countDecks, decks);
     _countDecks = decks;
-    // Loads publish a refreshed deck list; outbox drains can change counts
-    // without replacing it. Refresh both while unrelated ticks stay free.
+    // Loads publish a refreshed deck list; local reviews and outbox drains
+    // change counts too, including while the server is unavailable.
+    // Refresh these while unrelated ticks stay free.
     // FutureBuilder presents failures, so this notification listener must also
     // consume reload's error rather than leaking an unhandled async failure.
-    unawaited(reload().catchError((Object _) {}));
+    unawaited(
+      reload(tryServer: drained || force || decksChanged).catchError((Object _) {}),
+    );
   }
 
   @override
@@ -81,9 +110,9 @@ class DecksScreenState extends State<DecksScreen> {
     super.dispose();
   }
 
-  Future<void> reload() async {
+  Future<void> reload({bool tryServer = true}) async {
     setState(() {
-      _counts = widget.api.fetchDeckCounts();
+      _counts = _loadCounts(tryServer: tryServer);
     });
     await _counts;
   }
@@ -369,7 +398,7 @@ class DecksScreenState extends State<DecksScreen> {
 
   void _retry() {
     setState(() {
-      _counts = widget.api.fetchDeckCounts();
+      _counts = _loadCounts(tryServer: true);
     });
   }
 }

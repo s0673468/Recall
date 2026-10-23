@@ -28,6 +28,7 @@ import 'models.dart';
 /// note_flags table not existing yet) can never stall the review sync.
 class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
+  static const _deckCountsKey = 'recall_deck_counts_v1';
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
   static const _hiddenCardsKey = 'recall_hidden_cards_v1';
@@ -330,6 +331,55 @@ class LocalReviewStore {
   String _snapshotStorageKey(int? deckId, {String? ownerScope}) {
     final base = _storageKey(_snapshotKey, ownerScope: ownerScope);
     return deckId == null ? base : '$base:deck:$deckId';
+  }
+
+  /// Disposable server aggregates, scoped like the study snapshot. Never cache
+  /// an adjusted count: pending reviews are overlaid afresh on each read.
+  Future<void> saveDeckCounts(
+    Map<int, ({int due, int neu})> counts, {
+    required DateTime fetchedAt,
+    required String? ownerScope,
+    required bool Function() canWrite,
+  }) {
+    final key = _storageKey(_deckCountsKey, ownerScope: ownerScope);
+    return _withOutboxLock(() async {
+      final prefs = await _prefsFor(const []);
+      if (!canWrite()) return;
+      await prefs.setString(
+        key,
+        jsonEncode({
+          'fetchedAt': fetchedAt.toUtc().toIso8601String(),
+          'counts': {
+            for (final entry in counts.entries)
+              '${entry.key}': {'due': entry.value.due, 'new': entry.value.neu},
+          },
+        }),
+      );
+    });
+  }
+
+  Future<({Map<int, ({int due, int neu})> counts, DateTime fetchedAt})?>
+  loadDeckCounts({required String? ownerScope}) async {
+    final key = _storageKey(_deckCountsKey, ownerScope: ownerScope);
+    final prefs = await _prefsFor([key]);
+    final raw = prefs.getString(key);
+    if (raw == null) return null;
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final rows = data['counts'] as Map<String, dynamic>;
+      return (
+        fetchedAt: DateTime.parse(data['fetchedAt'] as String),
+        counts: {
+          for (final entry in rows.entries)
+            int.parse(entry.key): (
+              due: (entry.value['due'] as num).toInt(),
+              neu: (entry.value['new'] as num).toInt(),
+            ),
+        },
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Append one review; returns the new pending count so the caller can
@@ -1107,6 +1157,7 @@ class LocalReviewStore {
       await prefs.remove(catchUpStorageKey);
       await prefs.remove(remediationStorageKey);
       await prefs.remove(hiddenStorageKey);
+      await prefs.remove(_storageKey(_deckCountsKey, ownerScope: ownerScope));
     });
   }
 
