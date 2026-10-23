@@ -413,6 +413,8 @@ def dry_run():
         params = fsrs_settings["settings_value"]["parameters"]
         print(f"fsrs_params={len(params)} first={params[0]} last={params[-1]}")
     print("decks:", [d["name"] for d in decks])
+    if not notes:
+        return
     g0 = notes[0]["guid"]
     print(
         "sample note:",
