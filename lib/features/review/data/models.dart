@@ -1,5 +1,8 @@
 // Plain data rows mirroring the Supabase schema (see ANKI_WEB_PLAN.md §3).
 
+import 'package:fsrs/fsrs.dart'
+    show lowerBoundsParameters, upperBoundsParameters;
+
 class DeckRow {
   final int deckId;
   final String name;
@@ -86,9 +89,17 @@ class FsrsOptimizerResult {
       return null;
     }
     final parameters = <double>[];
-    for (final raw in rawParameters) {
+    for (var i = 0; i < rawParameters.length; i++) {
+      final raw = rawParameters[i];
       if (raw is! num || !raw.toDouble().isFinite) return null;
-      parameters.add(raw.toDouble());
+      final parameter = raw.toDouble();
+      // Match tools/fsrs_optimize's FSRS-6 compatibility gate before an
+      // accepted report can write a fit the scheduler would reject on load.
+      if (parameter < lowerBoundsParameters[i] ||
+          parameter > upperBoundsParameters[i]) {
+        return null;
+      }
+      parameters.add(parameter);
     }
     final desiredRetention = rawRetention.toDouble();
     if (!desiredRetention.isFinite ||
@@ -130,8 +141,16 @@ class FsrsSettings {
         data['requestRetention'];
     final parameters = <double>[];
     for (final v in rawParameters) {
-      if (v is! num) return null;
+      if (v is! num || !v.toDouble().isFinite) return null;
       parameters.add(v.toDouble());
+    }
+    final desiredRetention = rawRetention is num
+        ? rawRetention.toDouble()
+        : 0.9;
+    if (!desiredRetention.isFinite ||
+        desiredRetention <= 0 ||
+        desiredRetention >= 1) {
+      return null;
     }
     final optimizerStatus = FsrsConfigurationStatus.fromWire(
       data['optimizer_status'] ?? data['status'],
@@ -139,7 +158,7 @@ class FsrsSettings {
     if (optimizerStatus == null) return null;
     return FsrsSettings(
       parameters: parameters,
-      desiredRetention: rawRetention is num ? rawRetention.toDouble() : 0.9,
+      desiredRetention: desiredRetention,
       optimizerStatus: optimizerStatus,
       fittedAt: _parseDate(data['fitted_at'] ?? data['fit_date']),
       appliedAt: _parseDate(data['applied_at']),

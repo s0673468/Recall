@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fsrs/fsrs.dart';
 
 import '../data/models.dart';
@@ -64,11 +66,17 @@ class FsrsEngine {
     required List<double> parameters,
     required double desiredRetention,
   }) {
-    _parameters = List<double>.unmodifiable(parameters);
-    _desiredRetention = desiredRetention;
-    _scheduler = Scheduler(
-      parameters: _parameters,
-      desiredRetention: _desiredRetention,
+    if (!desiredRetention.isFinite ||
+        desiredRetention <= 0 ||
+        desiredRetention >= 1) {
+      throw ArgumentError('desiredRetention must be between 0 and 1');
+    }
+    // Validate the complete replacement before publishing any of its fields.
+    // A rejected fit must not poison a later retention edit or reconstruction.
+    final nextParameters = List<double>.unmodifiable(parameters);
+    final nextScheduler = Scheduler(
+      parameters: nextParameters,
+      desiredRetention: desiredRetention,
       // Recall calculates the four button previews separately, then schedules
       // the selected rating in a later call. Random fuzz therefore produced
       // five independent answers: labels could collapse or invert, and the
@@ -76,6 +84,9 @@ class FsrsEngine {
       // FSRS intervals keep the choices ordered and make the preview truthful.
       enableFuzzing: false,
     );
+    _parameters = nextParameters;
+    _desiredRetention = desiredRetention;
+    _scheduler = nextScheduler;
   }
 
   static State _stateFromInt(int s) => switch (s) {
@@ -151,12 +162,7 @@ class FsrsEngine {
 
   ReviewOutcome review(ReviewCard c, Rating rating, {DateTime? now}) {
     final when = (now ?? _clock()).toUtc();
-    final result = _scheduler.reviewCard(
-      _build(c, when),
-      rating,
-      reviewDateTime: when,
-    );
-    final card = result.card;
+    final card = _reviewCard(c, rating, when);
     final wasReviewish = c.state == 2 || c.state == 3;
     final lapsed = rating == Rating.again && wasReviewish;
     return ReviewOutcome(
@@ -169,6 +175,34 @@ class FsrsEngine {
       reviewedAt: when,
       rating: rating.value,
     );
+  }
+
+  Card _reviewCard(ReviewCard c, Rating rating, DateTime when) {
+    final result = _scheduler.reviewCard(
+      _build(c, when),
+      rating,
+      reviewDateTime: when,
+    );
+    final card = result.card;
+    if (card.state == State.review) {
+      // tools/fsrs_optimize/README.md pins the official Python fsrs 6.1.1
+      // reference. Its _next_interval uses round-to-even; Dart fsrs 2.0.1
+      // rounds half days upward (2.5 -> 3 instead of 2). Match the reference
+      // at ties, retaining its one-day minimum and maximum interval.
+      final decay = -_parameters[20];
+      final factor = math.pow(0.9, 1 / decay) - 1;
+      final interval =
+          (card.stability! / factor) *
+          (math.pow(_desiredRetention, 1 / decay) - 1);
+      final lower = interval.floor();
+      final days = interval - lower == 0.5 && lower.isEven
+          ? lower
+          : interval.round();
+      card.due = when.add(
+        Duration(days: days.clamp(1, _scheduler.maximumInterval)),
+      );
+    }
+    return card;
   }
 
   /// Current FSRS retrievability for presentation-only queue ranking. This
@@ -186,12 +220,7 @@ class FsrsEngine {
   Map<Rating, DateTime> preview(ReviewCard c, {DateTime? now}) {
     final when = (now ?? _clock()).toUtc();
     return {
-      for (final r in Rating.values)
-        r: _scheduler
-            .reviewCard(_build(c, when), r, reviewDateTime: when)
-            .card
-            .due
-            .toUtc(),
+      for (final r in Rating.values) r: _reviewCard(c, r, when).due.toUtc(),
     };
   }
 }
