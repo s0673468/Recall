@@ -130,6 +130,7 @@ class StudyScreen extends StatelessWidget {
                   icon: Icons.pause_circle_outline,
                   title: 'Session complete',
                   subtitle: n > 0 ? reviewedLine : 'You’re done for now.',
+                  announceSubtitle: true,
                   action: 'Reload',
                   onAction: controller.refresh,
                   secondaryAction: undoable ? 'Undo last rating' : null,
@@ -154,6 +155,7 @@ class StudyScreen extends StatelessWidget {
                     icon: Icons.check_circle_outline,
                     title: 'All caught up',
                     subtitle: reviewedLine,
+                    announceSubtitle: true,
                     action: canKeepGoing ? 'Keep going' : 'Reload',
                     onAction: canKeepGoing
                         ? controller.keepGoing
@@ -448,7 +450,7 @@ class _Header extends StatelessWidget {
                   ),
                   style: TextButton.styleFrom(
                     foregroundColor: UiColors.textSecondary,
-                    minimumSize: const Size(0, 44),
+                    minimumSize: const Size(0, 48),
                     padding: const EdgeInsets.symmetric(
                       vertical: 8,
                       horizontal: 2,
@@ -466,7 +468,13 @@ class _Header extends StatelessWidget {
               duration: RecallMotion.quick,
               child: Semantics(
                 key: ValueKey(notice ?? 'session'),
-                liveRegion: notice != null,
+                // Announce committed ratings and undo, including keyboard
+                // actions, through Android's live-region semantics.
+                liveRegion: true,
+                label:
+                    notice ??
+                    '$session ${session == 1 ? 'card' : 'cards'} reviewed this session',
+                excludeSemantics: true,
                 child: Text(
                   notice ?? '$session done',
                   style: TextStyle(
@@ -887,6 +895,7 @@ class _Message extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
+  final bool announceSubtitle;
   final String? action;
   final VoidCallback? onAction;
   final String? secondaryAction;
@@ -896,6 +905,7 @@ class _Message extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.announceSubtitle = false,
     this.action,
     this.onAction,
     this.secondaryAction,
@@ -919,9 +929,12 @@ class _Message extends StatelessWidget {
                   const SizedBox(height: UiSpacing.md),
                   Text(title, style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: UiSpacing.sm),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(color: UiColors.textMuted),
+                  Semantics(
+                    liveRegion: announceSubtitle,
+                    child: Text(
+                      subtitle,
+                      style: const TextStyle(color: UiColors.textMuted),
+                    ),
                   ),
                   if (action != null) ...[
                     const SizedBox(height: UiSpacing.lg),

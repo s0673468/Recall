@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
@@ -46,22 +47,43 @@ class ReviewHeatmap extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 for (var w = 0; w < weeks; w++)
-                  Padding(
-                    padding: const EdgeInsets.only(right: _gap),
-                    child: Column(
-                      children: [
-                        for (var r = 0; r < 7; r++) _dayCell(w * 7 + r),
-                      ],
+                  Semantics(
+                    image: true,
+                    // One stop per week avoids hundreds of tiny tooltip stops
+                    // while preserving every day's count in reading order.
+                    label: _weekDescription(w),
+                    excludeSemantics: true,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: _gap),
+                      child: Column(
+                        children: [
+                          for (var r = 0; r < 7; r++) _dayCell(w * 7 + r),
+                        ],
+                      ),
                     ),
                   ),
               ],
             ),
           ),
           const SizedBox(height: UiSpacing.sm),
-          _legend(),
+          ExcludeSemantics(child: _legend()),
         ],
       ),
     );
+  }
+
+  String _weekDescription(int week) {
+    final start = DateFormat.yMMMd().format(days[week * 7].date);
+    final counts = days
+        .skip(week * 7)
+        .take(7)
+        .map((day) {
+          final date = DateFormat.yMMMd().format(day.date);
+          final unit = day.count == 1 ? 'review' : 'reviews';
+          return '$date: ${day.count} $unit';
+        })
+        .join('; ');
+    return 'Review activity, week of $start. $counts.';
   }
 
   Widget _dayCell(int index) {
