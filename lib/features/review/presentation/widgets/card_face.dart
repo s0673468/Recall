@@ -12,8 +12,9 @@ import '../../domain/inline_html.dart';
 /// deletions and inline LaTeX delimited by `\( … \)`. The pipeline is:
 ///
 ///   1. split Anki cloze markup (`{{cN::…}}`) out first ([parseCloze]);
-///   2. for each non-cloze segment, parse the supported inline-HTML subset
-///      ([parseInlineHtml]) into styled spans (bold/italic/colour/lists/…);
+///   2. protect math from HTML tag scanning, then parse the supported
+///      inline-HTML subset ([parseInlineHtml]) into styled spans
+///      (bold/italic/colour/lists/…);
 ///   3. extract inline `\( … \)` math out of each text run and render it with
 ///      flutter_math_fork;
 ///   4. compose everything into a single `SelectableText.rich`.
@@ -153,11 +154,22 @@ class CardFace extends StatefulWidget {
     bool trimEdges = true,
     TextStyle? baseStyle,
   }) {
+    // TeX inequalities can look like HTML tags (e.g. `<b, c>`). Escape their
+    // angle brackets before tag scanning; the parser decodes these entities
+    // back into the same text run for math extraction below. Leave existing
+    // entities alone so HTML-encoded math still decodes exactly once.
+    final protectedHtml = html.contains('<')
+        ? html.replaceAllMapped(
+            _mathRe,
+            (match) =>
+                match.group(0)!.replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+          )
+        : html;
     // Cloze sub-segments (trimEdges:false) keep boundary breaks and aren't
     // cached; the whole-face non-cloze path caches with trimmed edges.
     final nodes = trimEdges
-        ? parseInlineHtmlCached(html, cacheKey: cacheKey)
-        : parseInlineHtml(html, trimEdges: false);
+        ? parseInlineHtmlCached(protectedHtml, cacheKey: cacheKey)
+        : parseInlineHtml(protectedHtml, trimEdges: false);
     var prevMath = previousWasMath;
     for (final node in nodes) {
       switch (node) {

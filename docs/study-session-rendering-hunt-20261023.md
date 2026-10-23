@@ -107,3 +107,54 @@ attempt exited 1 because its Unix socket path exceeded the platform limit;
 shortening TMPDIR within this checkout fixed it. The first Android compile could
 not write a Kotlin daemon marker outside the checkout and successfully used the
 compiler's in-process fallback. No source workaround or test weakening was used.
+
+## Review follow-up: inequality content in math hints
+
+Confirmed the P2 finding with synthetic `{{c1::synthetic answer::\(a<b, c>d\)}}`:
+HTML tag scanning consumed `<b, c>` before math extraction. The same shared
+pipeline also lost this expression on plain faces and in revealed deletions.
+`CardFace._appendHtmlSpans` now escapes angle brackets within recognized math
+delimiters before HTML parsing. Entity decoding restores the expression as one
+text run for the existing math renderer; surrounding HTML keeps its styling.
+Existing encoded inequalities are left to decode once, as before.
+
+Added `test/card_face_math_html_regression_test.dart` without changing existing
+tests. Its seven cases compare rendered syntax trees with complete expected TeX
+trees and check all three supported delimiters, mixed HTML/multiple expressions,
+entity decoding, pill color/brackets, cached reveal, plain faces and revealed
+answers. Before the fix, six cases failed and the encoded-inequality control
+passed. All seven pass with the fix.
+
+Reused the copied Flutter 3.47.1 SDK and repository-local environment documented
+above. Native checks additionally keep Java and XDG data inside this checkout:
+
+```sh
+export XDG_DATA_HOME="$PWD/build/tool-data"
+export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$TMPDIR -Duser.home=$PWD/build/java-home -XX:-UsePerfData"
+```
+
+| Exact follow-up command | Result |
+| --- | --- |
+| `./tool/flutterw test --no-pub --reporter=failures-only --exclude-tags apple-mobile test/card_face_math_html_regression_test.dart` before the fix | Exit 1; 6 failed, 1 passed. |
+| `./tool/flutterw test --no-pub --reporter=failures-only --exclude-tags apple-mobile test/card_face_math_html_regression_test.dart test/study_math_cloze_regression_test.dart test/card_face_test.dart test/cloze_test.dart` | Exit 0; 76 passed. |
+| `./tool/flutterw analyze --no-pub` | Exit 0; no issues found. |
+| `./tool/flutterw test --no-pub --reporter=failures-only --exclude-tags apple-mobile` | Exit 0; 1,461 passed, 4 skipped. |
+| `TMPDIR="$PWD/build/t" CHROME_EXECUTABLE=/home/ger/.local/share/fleet-toolchains/hq-surf-chrome-154.0.8037.92/chrome-linux64/chrome ./tool/flutterw test --no-pub --platform chrome --concurrency=1 --exclude-tags apple-mobile test/local_review_quota_classifier_web_test.dart` | Exit 0; 4 passed. |
+| `python3 -m unittest discover -s tool/tests -p 'test_*.py'` | Exit 0; 178 run, 1 skipped. |
+| `python3 -m unittest discover -s tool/tests -p 'test_benchmark_source_pins.py'` | Exit 0; both passed. Pinned inputs and pin-test code match local main; no pin refresh needed. |
+| `python3 -m unittest discover -s tools/anki_revision/tests -p 'test_*.py'` | Exit 0; 29 passed. |
+| `python3 -m unittest discover -s tools/semantic_review/tests -p 'test_*.py'` | Exit 0; 35 passed. |
+| `python3 -m unittest discover -s scripts/tests -p 'test_*.py'` | Exit 0; 30 passed. |
+| `build/test-venv/bin/python -m unittest discover -s tools/recall_sync/tests` | Exit 0; 25 passed. |
+| `build/test-venv/bin/python -m unittest discover -s tools/flag_report/tests -p 'test_*.py'` | Exit 0; 11 passed. |
+| `build/test-venv/bin/python -m unittest discover -s tools/fsrs_optimize/tests -p 'test_*.py'` | Exit 0; 8 passed. |
+| `cd android && ./gradlew --no-daemon --max-workers=2 -Pkotlin.compiler.execution.strategy=in-process :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest` | Exit 0; 12 unit tests, no failures/errors/skips; lint passed; instrumentation APK compiled. |
+| `./tool/flutterw build apk --debug --no-pub` | Exit 0; debug APK compiled without runtime configuration. No installation. |
+| `python3 tool/check_android_release_policy.py` | Exit 0; all four policy probes passed. |
+| `git diff --check` | Exit 0. |
+
+No held controller/deck/reminder files, dependencies or existing tests changed.
+Acceptance is synthetic widget rendering and compilation; no device test or live
+Recall Hub/backend comparison was performed.
+Git metadata remains read-only; the runner must commit the patch. Suggested
+message: `Preserve inequalities in study card math hints`.
