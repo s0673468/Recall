@@ -335,32 +335,32 @@ class LocalReviewStore {
     return deckId == null ? base : '$base:deck:$deckId';
   }
 
-  /// Capture a refresh boundary only when no local review is unresolved.
-  /// Aggregates cannot tell whether an attempted review reached the server.
-  Future<({String? baseline, int revision})?> deckCountsRefreshBoundary({
-    required String? ownerScope,
-  }) {
+  /// Capture both local inputs without making a parked review block refresh.
+  /// An aggregate cannot tell whether an attempted review reached the server.
+  Future<({String? baseline, String? outbox, int revision})?>
+  deckCountsRefreshBoundary({required String? ownerScope}) {
     final key = _storageKey(_deckCountsKey, ownerScope: ownerScope);
     final outboxKey = _storageKey(_outboxKey, ownerScope: ownerScope);
     final revision = _deckCountsRevision;
     return _withOutboxLock(() async {
       final prefs = await _prefsFor([key, outboxKey]);
-      if (revision != _deckCountsRevision ||
-          _readOutbox(prefs, outboxKey).isNotEmpty) {
-        return null;
-      }
-      return (baseline: prefs.getString(key), revision: revision);
+      if (revision != _deckCountsRevision) return null;
+      return (
+        baseline: prefs.getString(key),
+        outbox: prefs.getString(outboxKey),
+        revision: revision,
+      );
     });
   }
 
   /// Accept aggregates only if no review crossed the network read. The token
   /// also detects ACKs from another Store when a persisted baseline exists.
-  Future<bool> saveDeckCounts(
+  Future<Map<int, ({int due, int neu})>?> saveDeckCounts(
     Map<int, ({int due, int neu})> counts, {
     required DateTime fetchedAt,
     required String? ownerScope,
     required bool Function() canWrite,
-    required ({String? baseline, int revision}) boundary,
+    required ({String? baseline, String? outbox, int revision}) boundary,
   }) {
     final key = _storageKey(_deckCountsKey, ownerScope: ownerScope);
     final outboxKey = _storageKey(_outboxKey, ownerScope: ownerScope);
@@ -369,19 +369,30 @@ class LocalReviewStore {
       if (!canWrite() ||
           boundary.revision != _deckCountsRevision ||
           boundary.baseline != prefs.getString(key) ||
-          _readOutbox(prefs, outboxKey).isNotEmpty) {
-        return false;
+          boundary.outbox != prefs.getString(outboxKey)) {
+        return null;
       }
-      // The response is safe to display even if the disposable write fails.
+      final pending = _readOutbox(prefs, outboxKey);
+      final uniqueIds = uniqueDeliveryIds(pending, legacyReviews: true);
+      final snapshot = DeckCountSnapshot(Map.of(counts), fetchedAt, {
+        // Only a unique, never-sent review is certainly absent from the server
+        // response. Attempted reviews (including parked refusals) and stuck
+        // identities must not subtract from fresh truth or a later ACK twice.
+        for (final entry in pending)
+          if ((entry['delivery_attempted'] != false ||
+                  !uniqueIds.contains(reviewDeliveryId(entry))) &&
+              entry['card_id'] is int)
+            entry['card_id'] as int,
+      });
+      // Persist the server baseline and exclusions, leaving the unsent overlay
+      // reversible by Undo. A failed disposable write cannot hide fresh truth.
       try {
-        await prefs.setString(
-          key,
-          DeckCountSnapshot(Map.of(counts), fetchedAt).encode(),
-        );
+        await prefs.setString(key, snapshot.encode());
       } catch (_) {
         /* Disposable cache. */
       }
-      return true;
+      snapshot.subtract(pending);
+      return snapshot.counts;
     });
   }
 
@@ -400,20 +411,27 @@ class LocalReviewStore {
     });
   }
 
-  /// Commit count coverage before deleting acknowledged reviews. If either
-  /// write fails, replay remains safe: coverage is idempotent by card and the
-  /// outbox keeps its server delivery identities. Undo never calls this path.
+  /// Preserve offline count coverage when possible, independently of the
+  /// durable ACK removal. If settlement fails, discard the disposable baseline
+  /// rather than retaining confirmed reviews or restoring their old counts.
   Future<void> _settleDeckCounts(
     Iterable<Map<String, dynamic>> acknowledged, {
     required String key,
   }) async {
     _deckCountsRevision++;
-    final prefs = await _prefsFor([key]);
-    final snapshot = DeckCountSnapshot.decode(prefs.getString(key));
-    if (snapshot == null) return;
-    snapshot.subtract(acknowledged);
-    if (!await prefs.setString(key, snapshot.encode())) {
-      throw LocalOutboxWriteException(key);
+    try {
+      final prefs = await _prefsFor([key]);
+      final snapshot = DeckCountSnapshot.decode(prefs.getString(key));
+      if (snapshot == null) return;
+      snapshot.subtract(acknowledged);
+      if (await prefs.setString(key, snapshot.encode())) return;
+    } catch (_) {
+      /* Count storage cannot hold up an outbox ACK. */
+    }
+    try {
+      await LocalReviewPreferences.writeOnly(await _writerPrefs).remove(key);
+    } catch (_) {
+      /* Best-effort invalidation of disposable storage. */
     }
   }
 

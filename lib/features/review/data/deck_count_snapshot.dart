@@ -1,7 +1,8 @@
 import 'dart:convert';
 
-/// A server baseline plus the cards whose acknowledged reviews it now covers.
-/// Coverage survives a failed refresh and prevents an ACK retry subtracting twice.
+/// A server baseline plus cards already covered by local reconciliation.
+/// Coverage includes ACKs and uncertain/stuck reviews deferred to server truth;
+/// it survives a failed refresh and prevents a later ACK subtracting twice.
 class DeckCountSnapshot {
   DeckCountSnapshot(this.counts, this.fetchedAt, [Set<int>? settled])
     : settled = settled ?? <int>{};

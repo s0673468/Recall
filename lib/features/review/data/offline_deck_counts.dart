@@ -3,8 +3,8 @@ import 'dart:async';
 import 'local_review_store.dart';
 import 'recall_api.dart';
 
-/// Keep a stable baseline until pending reviews settle: an aggregate cannot
-/// reveal whether a timed-out upload is already included in the server count.
+/// Prefer fresh server counts online, overlaying only certainly unsent reviews.
+/// Offline reads use the last accepted baseline and its local review coverage.
 class OfflineDeckCounts {
   OfflineDeckCounts({
     required this.api,
@@ -27,15 +27,15 @@ class OfflineDeckCounts {
         ownerScope: ownerScope,
       );
       final response = api.fetchDeckCounts();
-      // A pending review can make this response unusable; still consume errors.
+      // A concurrent mutation can invalidate the boundary; still consume errors.
       unawaited(response.then<void>((_) {}, onError: (Object _) {}));
       final boundary = await boundaryFuture;
       if (!current()) throw StateError('Deck count request expired');
-      if (boundary != null) {
+      try {
         final fetchedAt = clock().toUtc();
-        try {
-          final counts = await response;
-          if (!current()) throw StateError('Deck count request expired');
+        final counts = await response;
+        if (!current()) throw StateError('Deck count request expired');
+        if (boundary != null) {
           final accepted = await store.saveDeckCounts(
             counts,
             fetchedAt: fetchedAt,
@@ -44,14 +44,19 @@ class OfflineDeckCounts {
             boundary: boundary,
           );
           if (!current()) throw StateError('Deck count request expired');
-          if (accepted) return counts;
-        } catch (_) {
-          if (!current()) rethrow;
-          final snapshot = await store.loadDeckCounts(ownerScope: ownerScope);
-          if (!current()) throw StateError('Deck count request expired');
-          if (snapshot == null) rethrow;
-          return snapshot.counts;
+          if (accepted != null) return accepted;
         }
+        // Prefer local reconciliation if a review crossed this fetch, but a
+        // missing/legacy cache must never make a successful online read fail.
+        final snapshot = await store.loadDeckCounts(ownerScope: ownerScope);
+        if (!current()) throw StateError('Deck count request expired');
+        return snapshot?.counts ?? counts;
+      } catch (_) {
+        if (!current()) rethrow;
+        final snapshot = await store.loadDeckCounts(ownerScope: ownerScope);
+        if (!current()) throw StateError('Deck count request expired');
+        if (snapshot == null) rethrow;
+        return snapshot.counts;
       }
     }
     final snapshot = await store.loadDeckCounts(ownerScope: ownerScope);

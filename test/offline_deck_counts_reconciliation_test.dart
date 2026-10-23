@@ -86,14 +86,15 @@ void main() {
     },
   );
 
-  test('an unaccepted pending upload still subtracts once', () async {
+  test('an attempted upload defers to fresh server truth', () async {
     await counts.load(offline: false);
     final review = _review(1);
     await store.enqueueReview(review);
     await store.markReviewAttempted(review['client_id']);
-    // Same outbox state, but this time the upload never reached the server.
-    expect(await counts.load(offline: false), {41: (due: 1, neu: 2)});
-    expect(await restart().load(offline: true), {41: (due: 1, neu: 2)});
+    // The aggregate cannot distinguish an unaccepted upload from a lost ACK.
+    // Accept server truth rather than subtracting an uncertain event twice.
+    expect(await counts.load(offline: false), api.deckCounts);
+    expect(await restart().load(offline: true), api.deckCounts);
   });
 
   for (final isNew in [false, true]) {
@@ -184,23 +185,20 @@ void main() {
     },
   );
 
-  test(
-    'without a baseline unresolved delivery leaves counts unavailable',
-    () async {
-      final review = _review(1);
-      await store.enqueueReview(review);
-      await store.markReviewAttempted(review['client_id']);
-      await expectLater(counts.load(offline: false), throwsStateError);
-      await expectLater(restart().load(offline: true), throwsStateError);
-      await store.removeAcknowledgedReviews([review]);
-      api.deckCounts = {41: (due: 1, neu: 2)};
-      expect(await counts.load(offline: false), api.deckCounts);
-    },
-  );
+  test('without a baseline online counts use fresh server truth', () async {
+    final review = _review(1);
+    await store.enqueueReview(review);
+    await store.markReviewAttempted(review['client_id']);
+    expect(await counts.load(offline: false), api.deckCounts);
+    expect(await restart().load(offline: true), api.deckCounts);
+    await store.removeAcknowledgedReviews([review]);
+    api.deckCounts = {41: (due: 1, neu: 2)};
+    expect(await counts.load(offline: false), api.deckCounts);
+  });
 
   for (final failure in ['cache refusal', 'outbox refusal', 'lost cache ACK']) {
     test(
-      '$failure keeps count settlement restart-safe and retryable',
+      '$failure preserves restart-safe counts without blocking durable ACK removal',
       () async {
         final previous = SharedPreferencesStorePlatform.instance;
         SharedPreferences.resetStatic();
@@ -220,16 +218,27 @@ void main() {
               ? 'recall_deck_counts_v1'
               : 'recall_outbox_v1';
         }
-        await expectLater(
-          store.removeAcknowledgedReviews([review]),
-          throwsA(anything),
-        );
-        expect(await store.outbox(), hasLength(1));
-        expect(await restart().load(offline: true), {41: (due: 1, neu: 2)});
+        if (failure == 'outbox refusal') {
+          await expectLater(
+            store.removeAcknowledgedReviews([review]),
+            throwsA(anything),
+          );
+          expect(await store.outbox(), hasLength(1));
+          expect(await restart().load(offline: true), {41: (due: 1, neu: 2)});
+        } else {
+          expect(await store.removeAcknowledgedReviews([review]), 0);
+          expect(await store.outbox(), isEmpty);
+          // Failed settlement discards the cache; it cannot retain the ACK.
+          await expectLater(restart().load(offline: true), throwsStateError);
+        }
         native
           ..refuseSuffix = null
           ..throwAfterCommitSuffix = null;
         expect(await store.removeAcknowledgedReviews([review]), 0);
+        if (failure != 'outbox refusal') {
+          api.deckCounts = {41: (due: 1, neu: 2)};
+          expect(await counts.load(offline: false), api.deckCounts);
+        }
         api.failDeckCounts = true;
         expect(await counts.load(offline: false), {41: (due: 1, neu: 2)});
         expect(await restart().load(offline: true), {41: (due: 1, neu: 2)});
@@ -270,7 +279,7 @@ void main() {
   );
 
   test(
-    'old ambiguous cache is discarded until pending reviews settle',
+    'old ambiguous cache is discarded and replaced by online counts',
     () async {
       SharedPreferences.setMockInitialValues({
         'recall_deck_counts_v1': jsonEncode({
@@ -283,7 +292,7 @@ void main() {
       final review = _review(1);
       await store.enqueueReview(review);
       await expectLater(counts.load(offline: true), throwsStateError);
-      await expectLater(counts.load(offline: false), throwsStateError);
+      expect(await counts.load(offline: false), {41: (due: 1, neu: 2)});
       await store.removeAcknowledgedReviews([review]);
       api.deckCounts = {41: (due: 1, neu: 2)};
       expect(await counts.load(offline: false), api.deckCounts);
