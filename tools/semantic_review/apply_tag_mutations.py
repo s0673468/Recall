@@ -297,7 +297,8 @@ def apply_mutations(
                     "VALUES (?,-1,0,NULL)",
                     (tag,),
                 )
-        connection.execute("UPDATE col SET mod=?", (int(time.time() * 1000),))
+        if changed:
+            connection.execute("UPDATE col SET mod=?", (int(time.time() * 1000),))
 
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":

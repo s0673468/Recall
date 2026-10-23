@@ -212,6 +212,15 @@ def run_once(
                 f"{collection.stat().st_mtime_ns}:"
                 f"{effective_concepts.stat().st_mtime_ns}"
             )
+            # Anki can commit entirely to WAL without touching the main file.
+            # Keep that source pending until both children have succeeded.
+            wal_path = Path(f"{collection}-wal")
+            try:
+                wal_stat = wal_path.stat()
+            except FileNotFoundError:
+                pass
+            else:
+                source_revision += f":wal:{wal_stat.st_mtime_ns}:{wal_stat.st_size}"
         except OSError:
             append_event(
                 log_path,
@@ -231,6 +240,7 @@ def run_once(
 
         child_env = dict(os.environ)
         child_env.update(runtime_values)
+        child_env["ANKI_COLLECTION"] = str(collection.expanduser().resolve())
         child_env["METIS_CONCEPTS_YAML"] = str(effective_concepts)
         commands: Sequence[tuple[str, Path]] = (
             ("import_collection", repo_root / "tools/anki_revision/import_to_supabase.py"),

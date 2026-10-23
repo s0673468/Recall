@@ -25,10 +25,9 @@ import re
 import math
 import sys
 import json
-import shutil
 import struct
-import tempfile
 import datetime as dt
+from contextlib import closing
 
 # The importer and Anki schema helpers are versioned together. Production may
 # invoke this file from a thin runtime wrapper, but it never imports mutable
@@ -272,6 +271,21 @@ def _same_schedule(row, schedule):
     return True
 
 
+def _read_payloads():
+    """Read one consistent SQLite snapshot, including committed WAL frames.
+
+    A filesystem copy can omit WAL commits or mix database pages from different
+    transactions. SQLite's backup API includes the WAL and leaves no persistent
+    copy of the collection behind. Both entry points parse this same snapshot.
+    """
+    with (
+        closing(connect(LIVE_DB, ro=True)) as source,
+        closing(connect(":memory:")) as snapshot,
+    ):
+        source.backup(snapshot)
+        return build_payloads(snapshot)
+
+
 def run(sb):
     """Do the one-way upsert against an already-built Supabase client."""
     # Capture possible removals before the local snapshot. Decks published by
@@ -279,10 +293,7 @@ def run(sb):
     previous_decks = _fetch_all(
         sb, "decks", "deck_id,updated_at", user_id=USER_ID, deleted=False
     )
-    tmp = os.path.join(tempfile.gettempdir(), "anki_import_copy.anki2")
-    shutil.copy2(LIVE_DB, tmp)  # snapshot so an open Anki can't torn-read us
-    con = connect(tmp, ro=True)
-    decks, notes, card_seed, fsrs_settings = build_payloads(con)
+    decks, notes, card_seed, fsrs_settings = _read_payloads()
 
     sb.table("decks").upsert(decks, on_conflict="user_id,deck_id").execute()
     sb.table("notes").upsert(notes, on_conflict="user_id,guid").execute()
@@ -391,8 +402,7 @@ def run(sb):
 
 def dry_run():
     """Parse the collection and report counts + a sample, without any network."""
-    con = connect(LIVE_DB, ro=True)
-    decks, notes, card_seed, fsrs_settings = build_payloads(con)
+    decks, notes, card_seed, fsrs_settings = _read_payloads()
     latex = sum(1 for n in notes if n["has_latex"])
     review = sum(1 for c in card_seed.values() if c["state"] == 2)
     print(
