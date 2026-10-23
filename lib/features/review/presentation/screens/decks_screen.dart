@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/widgets/listenable_selector.dart';
@@ -29,6 +31,8 @@ class DecksScreen extends StatefulWidget {
 
 class DecksScreenState extends State<DecksScreen> {
   late Future<Map<int, ({int due, int neu})>> _counts;
+  late List<DeckRow> _countDecks;
+  late int _pendingSync;
   final _searchController = TextEditingController();
   String _query = '';
   bool _optionalExpanded = false;
@@ -37,10 +41,42 @@ class DecksScreenState extends State<DecksScreen> {
   void initState() {
     super.initState();
     _counts = widget.api.fetchDeckCounts();
+    _countDecks = widget.controller.state.decks;
+    _pendingSync = widget.controller.state.pendingSync;
+    widget.controller.addListener(_onDecksChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant DecksScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onDecksChanged);
+      widget.controller.addListener(_onDecksChanged);
+    }
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.api != widget.api ||
+        !identical(_countDecks, widget.controller.state.decks)) {
+      _onDecksChanged(force: true);
+    }
+  }
+
+  void _onDecksChanged({bool force = false}) {
+    final state = widget.controller.state;
+    final decks = state.decks;
+    final drained = state.pendingSync < _pendingSync;
+    _pendingSync = state.pendingSync;
+    if (!force && !drained && identical(_countDecks, decks)) return;
+    _countDecks = decks;
+    // Loads publish a refreshed deck list; outbox drains can change counts
+    // without replacing it. Refresh both while unrelated ticks stay free.
+    // FutureBuilder presents failures, so this notification listener must also
+    // consume reload's error rather than leaking an unhandled async failure.
+    unawaited(reload().catchError((Object _) {}));
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_onDecksChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -54,8 +90,8 @@ class DecksScreenState extends State<DecksScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Only the deck list matters here; it is replaced wholesale on each load,
-    // so rating, sync, and notice ticks never rebuild this (often hidden) tab.
+    // The outer selector rebuilds only for deck-list replacements. Counts
+    // refresh independently after loads and outbox drains.
     return ListenableSelector<List<DeckRow>>(
       listenable: widget.controller,
       selector: () => widget.controller.state.decks,
@@ -272,8 +308,8 @@ class DecksScreenState extends State<DecksScreen> {
               ),
               child: _tile(
                 label: deck.name.replaceAll('::', '  ›  '),
-                due: counts?[deck.deckId]?.due,
-                neu: counts?[deck.deckId]?.neu,
+                due: counts == null ? null : counts[deck.deckId]?.due ?? 0,
+                neu: counts == null ? null : counts[deck.deckId]?.neu ?? 0,
                 onTap: () => widget.onStudyDeck(deck.deckId),
               ),
             );
