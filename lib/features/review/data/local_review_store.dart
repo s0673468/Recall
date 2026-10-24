@@ -10,6 +10,7 @@ import '../domain/study_day.dart';
 import 'catch_up_state.dart';
 import 'deck_count_snapshot.dart';
 import 'local_review_preferences.dart';
+import 'local_review_lock.dart';
 import 'models.dart';
 
 /// On-device persistence so Recall opens instantly and works offline:
@@ -43,7 +44,6 @@ class LocalReviewStore {
   static const _ownerMigrationKey = 'recall_local_state_migrated_v1';
   static const maxDailyRemediations = 3;
 
-  Future<void> _outboxTail = Future.value();
   int _deckCountsRevision = 0;
   static Future<void>? _ownerMigrationTail;
   Future<SharedPreferences>? _prefsFuture;
@@ -168,12 +168,8 @@ class LocalReviewStore {
     ]);
   }
 
-  Future<T> _withOutboxLock<T>(Future<T> Function() action) {
-    final run = _outboxTail.then((_) => action());
-    // Keep the chain alive past failures so one error can't wedge the lock.
-    _outboxTail = run.then((_) {}, onError: (_) {});
-    return run;
-  }
+  Future<T> _withOutboxLock<T>(Future<T> Function() action) async =>
+      withLocalReviewLock(await _writerPrefs, action);
 
   static Future<T> _withOwnerMigrationLock<T>(Future<T> Function() action) {
     // Create the idle starting point in this caller's Zone. A completed static

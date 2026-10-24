@@ -1504,18 +1504,48 @@ class ReviewController extends ChangeNotifier {
   /// same recovery message instead of escaping from the button's callback.
   Future<void> refresh() => _loadSafely(deckId: _state.deckFilter);
 
-  /// Refreshes a stale aggregate after foregrounding without displacing an
-  /// active card. The outbox is flushed by [load] before the cloud count is
-  /// fetched, so the widget and queue reflect all locally completed reviews.
+  ({int token, Future<void> future})? _foregroundDailyRefresh;
+
+  /// Foreground history must refresh even while a card is active or the due
+  /// aggregate is fresh. Only a stale, idle queue needs a complete reload.
   Future<void> refreshIfIdle({Duration maxAge = const Duration(minutes: 15)}) {
-    if (_state.loading || _state.current != null || api.currentUser == null) {
+    if (_state.loading || api.currentUser == null) {
       return Future<void>.value();
     }
     final updatedAt = _state.globalDueUpdatedAt;
-    if (updatedAt != null && clock().toUtc().difference(updatedAt) < maxAge) {
-      return Future<void>.value();
+    if (_state.current == null &&
+        (updatedAt == null ||
+            clock().toUtc().difference(updatedAt) >= maxAge)) {
+      return _loadSafely(deckId: _state.deckFilter);
     }
-    return _loadSafely(deckId: _state.deckFilter);
+    final token = _loadSequence;
+    final running = _foregroundDailyRefresh;
+    if (running != null && running.token == token) return running.future;
+    final ownerId = api.currentUser!.id;
+    final generation = _sessionSetupGeneration;
+    final task = () async {
+      try {
+        final reviews = await api.fetchReviewLog(days: _reviewActivityDays);
+        if (token != _loadSequence ||
+            generation != _sessionSetupGeneration ||
+            ownerId != api.currentUser?.id ||
+            _disposed) {
+          return;
+        }
+        await _refreshDailyEvents(loadToken: token, cloud: reviews);
+      } catch (_) {
+        // An offline/history failure retains the durable count and active card.
+        debugPrint('Recall: foreground review history unavailable');
+      }
+    }();
+    late final Future<void> completed;
+    completed = task.whenComplete(() {
+      if (identical(_foregroundDailyRefresh?.future, completed)) {
+        _foregroundDailyRefresh = null;
+      }
+    });
+    _foregroundDailyRefresh = (token: token, future: completed);
+    return completed;
   }
 
   /// Deck switching also uses the recovery path, so a corrupt outbox shows the
