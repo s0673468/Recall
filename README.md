@@ -92,6 +92,20 @@ second scheduling authority. See
 [`docs/content-revalidation.md`](docs/content-revalidation.md) for the exact
 authoring, offline, and convergence contract.
 
+### Daily study count
+
+The Study header's “N done” counts rated reviews, including Again, from the
+shared `review_log` plus this device's durable unsynced review outbox. Events
+are deduplicated by `client_event_id`; likes, dislikes and deletion flags do not
+count. Undo of an unsent rating removes it from the count. Accepted review
+identities are cached per account for offline restarts; an offline device cannot
+see another device's reviews until it reconnects and refreshes.
+
+Study days and daily new-card budgets reset at **midnight America/Sao_Paulo**
+(currently UTC−03:00, or 03:00 UTC), regardless of the device timezone. The
+shared rule lives in `lib/features/review/domain/study_day.dart` and is also the
+contract for Recall Hub. There is no user-configured rollover hour or timezone.
+
 ### Multi-device review conflicts
 
 Two devices can each rate the same card while offline and flush in either

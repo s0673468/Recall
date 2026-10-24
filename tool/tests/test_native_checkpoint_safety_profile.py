@@ -12,8 +12,9 @@ from test_native_checkpoint_cost import receipt, source_proof
 
 
 class SafetyProfileTests(unittest.TestCase):
-    def test_checkpoint_additions_and_removal_preserve_the_original_experiment(self):
+    def test_checkpoint_additions_and_removal_preserve_the_daily_count_experiment(self):
         # Bind the experiment independently of hunk offsets and source pins.
+        # Daily-count receipts must now persist before each checkpoint drain.
         patch = (TOOL / 'fixtures/checkpoint-drain-only.patch').read_bytes()
         delta = b''.join(
             line for line in patch.splitlines(keepends=True)
@@ -21,7 +22,7 @@ class SafetyProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             hashlib.sha256(delta).hexdigest(),
-            '7eae2085de826d9b6b62b15371778eda26e8969c2c438181ab7330c6a07c5f06',
+            '36ef148788d1b9b427e40386aa511d24a8c516afd0c6ce25d8139f3e8e448f59',
         )
 
     def test_pre_safety_profile_pins_are_individually_refused(self):

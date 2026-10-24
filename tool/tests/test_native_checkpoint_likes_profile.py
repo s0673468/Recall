@@ -92,11 +92,28 @@ class LikesProfileTests(unittest.TestCase):
 +  static const int _reviewFlushCheckpointSize = 32;
 +
 +    var cacheInvalidated = false;
-+      }
 +      if (acknowledged.length >= _reviewFlushCheckpointSize) {
 +        if (!cacheInvalidated) {
 +          RecallReadCache.of(api).reviewsChanged();
 +          cacheInvalidated = true;
++        }
++        // Persist accepted identities before removing their only durable local
++        // copy. A failed cache write leaves the idempotent review queued for retry.
++        if (acknowledged.isNotEmpty) {
++          await store.dailyReviewEvents(
++            now: clock(),
++            ownerScope: ownerScope,
++            requirePersistence: true,
++            includePending: false,
++            merge: acknowledged
++                .map(DailyReviewEvent.fromPending)
++                .whereType<DailyReviewEvent>()
++                .map((event) => event.receipt),
++          );
++          if (_flushStillOwnsSession(ownerId, ownerScope)) {
++            _dailyEventsRevision++;
++            _mergeDailyEvents(acknowledged.map(DailyReviewEvent.fromPending));
++          }
 +        }
 +        // A failed native acknowledgement stops this pass; it never licenses
 +        // draining a later event in place of this captured identity batch.
@@ -105,6 +122,7 @@ class LikesProfileTests(unittest.TestCase):
 +          ownerScope: ownerScope,
 +        );
 +        acknowledged.clear();
++      }
 -    if (acknowledged.isNotEmpty) RecallReadCache.of(api).reviewsChanged();
 +    if (acknowledged.isNotEmpty && !cacheInvalidated) {
 +      RecallReadCache.of(api).reviewsChanged();

@@ -61,7 +61,7 @@ class RecallDependencies {
 
       final api = RecallApi(
         client,
-        localNow: clock,
+        clock: clock,
         persistSession: secureSessionStorage?.persistSessionStrict,
         removePersistedSession:
             secureSessionStorage?.removePersistedSessionStrict,

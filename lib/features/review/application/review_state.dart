@@ -14,6 +14,7 @@ class ReviewState {
   final List<DeckRow> decks;
   final int? deckFilter;
   final int reviewedThisSession;
+  final int reviewedToday;
   final bool offline;
 
   /// With [offline] or [error], the last load failed because Recall's server
@@ -50,6 +51,7 @@ class ReviewState {
     this.decks = const [],
     this.deckFilter,
     this.reviewedThisSession = 0,
+    this.reviewedToday = 0,
     this.offline = false,
     this.serverError = false,
     this.pendingSync = 0,
@@ -83,6 +85,7 @@ class ReviewState {
     List<DeckRow>? decks,
     Object? deckFilter = _unset,
     int? reviewedThisSession,
+    int? reviewedToday,
     bool? offline,
     bool? serverError,
     int? pendingSync,
@@ -106,6 +109,7 @@ class ReviewState {
           ? this.deckFilter
           : deckFilter as int?,
       reviewedThisSession: reviewedThisSession ?? this.reviewedThisSession,
+      reviewedToday: reviewedToday ?? this.reviewedToday,
       offline: offline ?? this.offline,
       serverError: serverError ?? this.serverError,
       pendingSync: pendingSync ?? this.pendingSync,

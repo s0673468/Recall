@@ -393,6 +393,11 @@ def main() -> int:
             )
             if flags is None:
                 flags = cloud_flags
+            if quality_scores and flags is None:
+                raise GardenError(
+                    "current like flags unavailable; supply --flags-file or "
+                    "explicitly use --no-cloud with current offline inputs"
+                )
         connection = ac.connect(str(args.db), ro=True)
         try:
             notes = []

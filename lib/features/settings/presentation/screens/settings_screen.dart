@@ -8,6 +8,7 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
 import '../../../../theme/ui_tokens.dart';
 import '../../../review/application/fsrs_engine.dart';
 import '../../../review/data/models.dart';
+import '../../../review/domain/study_day.dart';
 import '../../../review/application/review_controller.dart';
 import '../../../reminders/application/study_reminder_controller.dart';
 import '../../application/recall_prefs_controller.dart';
@@ -217,6 +218,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             label: 'New cards / day',
             value: _prefs.newLimitDefault,
             onChanged: (v) => _apply(_prefs.copyWith(newLimitDefault: v)),
+          ),
+          const Text(
+            StudyDay.resetDescription,
+            style: TextStyle(color: UiColors.textMuted, fontSize: 12),
           ),
           const SizedBox(height: UiSpacing.md),
           const Text(

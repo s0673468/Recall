@@ -24,6 +24,8 @@ import '../data/recall_api.dart';
 import '../data/recall_read_cache.dart';
 import '../domain/concept_attribution.dart';
 import '../domain/stats_models.dart';
+import '../domain/study_day.dart';
+import '../domain/daily_review_event.dart';
 import 'backlog_catch_up.dart';
 import 'fsrs_engine.dart';
 import 'review_haptics.dart';
@@ -199,7 +201,87 @@ class ReviewController extends ChangeNotifier {
   }
 
   ReviewState _state = const ReviewState(loading: false);
-  ReviewState get state => _state;
+  final Map<String, DailyReviewEvent> _dailyEvents = {};
+  int _dailyEventsRevision = 0;
+  Timer? _studyDayTimer;
+  int get _reviewedToday {
+    final now = clock();
+    final start = StudyDay.start(now);
+    final end = StudyDay.end(now);
+    return _dailyEvents.values
+        .where((event) => !event.at.isBefore(start) && event.at.isBefore(end))
+        .length;
+  }
+
+  ReviewState get state {
+    final count = _reviewedToday;
+    return _state.reviewedToday == count
+        ? _state
+        : _state.copyWith(reviewedToday: count);
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    super.addListener(listener);
+    if (_studyDayTimer == null) _scheduleStudyDayReset();
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    super.removeListener(listener);
+    if (!hasListeners) {
+      _studyDayTimer?.cancel();
+      _studyDayTimer = null;
+    }
+  }
+
+  void _scheduleStudyDayReset() {
+    _studyDayTimer?.cancel();
+    final now = clock();
+    _studyDayTimer = Timer(StudyDay.end(now).difference(now), () {
+      _set(_state);
+      if (hasListeners) _scheduleStudyDayReset();
+    });
+  }
+
+  void _mergeDailyEvents(Iterable<DailyReviewEvent?> events) {
+    for (final event in events) {
+      if (event != null) {
+        _dailyEvents[event.key] = event;
+      }
+    }
+  }
+
+  Future<void> _refreshDailyEvents({
+    required int loadToken,
+    List<ReviewLogEntry>? cloud,
+  }) async {
+    try {
+      var replacement = cloud;
+      while (loadToken == _loadSequence) {
+        final revision = _dailyEventsRevision;
+        final events = await store.dailyReviewEvents(
+          now: clock(),
+          replaceCloud: replacement != null,
+          merge:
+              replacement
+                  ?.map(DailyReviewEvent.fromLog)
+                  .whereType<DailyReviewEvent>() ??
+              const [],
+        );
+        replacement = null;
+        if (loadToken != _loadSequence) return;
+        // A rating/Undo may have committed while the read was returning.
+        if (revision != _dailyEventsRevision) continue;
+        _dailyEvents.clear();
+        _mergeDailyEvents(events);
+        _set(_state);
+        return;
+      }
+    } catch (_) {
+      debugPrint('Recall: daily review cache unavailable');
+    }
+  }
 
   User? get currentUser => api.currentUser;
 
@@ -218,7 +300,7 @@ class ReviewController extends ChangeNotifier {
       _timedCardId = current?.id;
       _cardShownAt = current == null ? null : clock();
     }
-    _state = next;
+    _state = next.copyWith(reviewedToday: _reviewedToday);
     notifyListeners();
   }
 
@@ -495,6 +577,8 @@ class ReviewController extends ChangeNotifier {
     _interactionGeneration++;
     _catchUpRatingProgress = null;
     _catchUpProgressRevision++;
+    _dailyEvents.clear();
+    _dailyEventsRevision++;
     _undo = null;
     _hideUndo = null;
     _ratedCatchUpCardIds.clear();
@@ -707,6 +791,8 @@ class ReviewController extends ChangeNotifier {
       return;
     }
     _hiddenCardIds = {...cachedHidden, ..._hidesInFlight};
+    await _refreshDailyEvents(loadToken: loadToken);
+    if (loadToken != _loadSequence) return;
     await _loadLikedFlags();
     if (loadToken != _loadSequence) return;
     var snapshotPainted = false;
@@ -885,6 +971,11 @@ class ReviewController extends ChangeNotifier {
         queue,
         recentReviews,
         canWrite: () => loadToken == _loadSequence,
+      );
+      if (loadToken != _loadSequence) return;
+      await _refreshDailyEvents(
+        loadToken: loadToken,
+        cloud: fetchedActivity.available ? recentReviews : null,
       );
       if (loadToken != _loadSequence) return;
       final presentedQueue = _presentedQueue(queue, catchUp);
@@ -1426,18 +1517,48 @@ class ReviewController extends ChangeNotifier {
   /// same recovery message instead of escaping from the button's callback.
   Future<void> refresh() => _loadSafely(deckId: _state.deckFilter);
 
-  /// Refreshes a stale aggregate after foregrounding without displacing an
-  /// active card. The outbox is flushed by [load] before the cloud count is
-  /// fetched, so the widget and queue reflect all locally completed reviews.
+  ({int token, Future<void> future})? _foregroundDailyRefresh;
+
+  /// Foreground history must refresh even while a card is active or the due
+  /// aggregate is fresh. Only a stale, idle queue needs a complete reload.
   Future<void> refreshIfIdle({Duration maxAge = const Duration(minutes: 15)}) {
-    if (_state.loading || _state.current != null || api.currentUser == null) {
+    if (_state.loading || api.currentUser == null) {
       return Future<void>.value();
     }
     final updatedAt = _state.globalDueUpdatedAt;
-    if (updatedAt != null && clock().toUtc().difference(updatedAt) < maxAge) {
-      return Future<void>.value();
+    if (_state.current == null &&
+        (updatedAt == null ||
+            clock().toUtc().difference(updatedAt) >= maxAge)) {
+      return _loadSafely(deckId: _state.deckFilter);
     }
-    return _loadSafely(deckId: _state.deckFilter);
+    final token = _loadSequence;
+    final running = _foregroundDailyRefresh;
+    if (running != null && running.token == token) return running.future;
+    final ownerId = api.currentUser!.id;
+    final generation = _sessionSetupGeneration;
+    final task = () async {
+      try {
+        final reviews = await api.fetchReviewLog(days: _reviewActivityDays);
+        if (token != _loadSequence ||
+            generation != _sessionSetupGeneration ||
+            ownerId != api.currentUser?.id ||
+            _disposed) {
+          return;
+        }
+        await _refreshDailyEvents(loadToken: token, cloud: reviews);
+      } catch (_) {
+        // An offline/history failure retains the durable count and active card.
+        debugPrint('Recall: foreground review history unavailable');
+      }
+    }();
+    late final Future<void> completed;
+    completed = task.whenComplete(() {
+      if (identical(_foregroundDailyRefresh?.future, completed)) {
+        _foregroundDailyRefresh = null;
+      }
+    });
+    _foregroundDailyRefresh = (token: token, future: completed);
+    return completed;
   }
 
   /// Deck switching also uses the recovery path, so a corrupt outbox shows the
@@ -1917,6 +2038,8 @@ class ReviewController extends ChangeNotifier {
     _clearFlagNotice();
     if (!ratingCurrent()) return;
     haptics.rating();
+    _dailyEventsRevision++;
+    _mergeDailyEvents([DailyReviewEvent.fromPending(entry)]);
     final globalDueCount = _state.globalDueCount;
     _set(
       _state.copyWith(
@@ -3018,6 +3141,8 @@ class ReviewController extends ChangeNotifier {
         canWrite: undoCurrent,
       );
       if (!undoCurrent()) return;
+      _dailyEventsRevision++;
+      _dailyEvents.remove('event:${u.clientId}');
       final reviewed = session.reviewedThisSession;
       final globalDueCount = session.globalDueCount;
       _ratedCatchUpCardIds.remove(u.card.id);
@@ -3205,6 +3330,24 @@ class ReviewController extends ChangeNotifier {
     }
     // Delivered reviews changed the server's log and due dates.
     if (acknowledged.isNotEmpty) RecallReadCache.of(api).reviewsChanged();
+    // Persist accepted identities before removing their only durable local
+    // copy. A failed cache write leaves the idempotent review queued for retry.
+    if (acknowledged.isNotEmpty) {
+      await store.dailyReviewEvents(
+        now: clock(),
+        ownerScope: ownerScope,
+        requirePersistence: true,
+        includePending: false,
+        merge: acknowledged
+            .map(DailyReviewEvent.fromPending)
+            .whereType<DailyReviewEvent>()
+            .map((event) => event.receipt),
+      );
+      if (_flushStillOwnsSession(ownerId, ownerScope)) {
+        _dailyEventsRevision++;
+        _mergeDailyEvents(acknowledged.map(DailyReviewEvent.fromPending));
+      }
+    }
     final remaining = await store.removeAcknowledgedReviews(
       acknowledged,
       ownerScope: ownerScope,
@@ -3407,6 +3550,7 @@ class ReviewController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _studyDayTimer?.cancel();
     _disposed = true;
     _flagNoticeTimer?.cancel();
     _authSub?.cancel();
