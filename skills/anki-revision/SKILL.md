@@ -67,5 +67,23 @@ come first; mature Again rate, lapses, slow answers, failed post-edit validation
 and due `volatile` claims supply the remaining evidence. Resolve flags only
 after exact local and cloud readback. Keep the existing dislike/delete flow.
 
+Optional local card-quality assistance: follow `docs/card-quality.md`. Phase 1
+uses synthetic decks only; HQ runs a separately authorized offline `--real-data`
+pass on ger-z later. Never read real card content, review rows or flags merely
+to develop or test the model. When a private scores file and its matching cloud
+card ID/local note ID map exist, pass `--quality-scores` and `--quality-card-map`
+to `anki_garden_score.py`. Low quality and high forget scores increase priority;
+corrective flags remain first and liked cards never enter the model-assisted
+revise queue. Without these files, keep the existing routine. Regenerate both
+from the same weekly snapshot; do not assume cloud and Anki IDs match.
+
+Use `python3 -m tools.card_quality explain --model PRIVATE_MODEL.json` for the
+content-free global summary. Shared liked-card shape traits guide suggested
+rewrites of other cards alongside the golden standard; behaviour associations
+are evidence, not wording instructions. State which traits informed the rewrite,
+and report no shared traits when the model has none. Never copy raw training
+examples into reports, rewrite liked cards because of model scores, or resolve
+likes. This optional analysis does not authorize content or scheduling writes.
+
 The versioned importer is the production source. Installed skill copies contain
 this skill file only; they must not become a second source of executable tools.
