@@ -440,14 +440,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 TextButton(
                   onPressed: () => onSet(null),
-                  child: const Text('Use default'),
+                  child: Text(
+                    'Use default',
+                    semanticsLabel: 'Use default new-card limit for $name',
+                  ),
                 ),
               ],
             )
           else
             TextButton(
               onPressed: () => onSet(_prefs.newLimitDefault),
-              child: const Text('Set override'),
+              child: Text(
+                'Set override',
+                semanticsLabel: 'Set new-card limit for $name',
+              ),
             ),
         ],
       ),
