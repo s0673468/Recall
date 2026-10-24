@@ -6,6 +6,9 @@ library;
 /// One review, enriched beyond the old (at, rating) pair with the post-review
 /// state and the scheduled next-due (for interval/maturity math).
 class ReviewLogEntry {
+  final int? id;
+  final String? clientEventId;
+  final String? device;
   final int? cardId;
   final String? guid; // note guid, for node-tag attribution (null on old rows)
   final DateTime at; // local
@@ -14,6 +17,9 @@ class ReviewLogEntry {
   final DateTime? dueAfter; // local
 
   const ReviewLogEntry({
+    this.id,
+    this.clientEventId,
+    this.device,
     this.cardId,
     this.guid,
     required this.at,

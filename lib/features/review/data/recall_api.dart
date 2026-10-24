@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../settings/domain/recall_prefs.dart';
 import '../domain/stats_models.dart';
+import '../domain/study_day.dart';
 import '../domain/content_revalidation.dart';
 import 'models.dart';
 import 'review_replay.dart';
@@ -20,9 +21,11 @@ class RecallApi implements ReviewReplayGateway {
   final Future<void> Function(String)? _persistSession;
   final Future<void> Function()? _removePersistedSession;
 
-  /// Shared wall clock for queue cutoffs, daily budgets and review history.
-  /// The calendar seam lets tests cover DST in any host time zone.
+  /// Shared instant for queue cutoffs, daily budgets and review history.
+  /// `clock` preserves the study zone; the legacy local calendar seams allow
+  /// existing date/DST transport tests to explicitly override that zone.
   final DateTime Function() _localNow;
+  final bool _useStudyDay;
   final DateTime Function(int year, int month, int day) _localMidnight;
 
   /// The exact confirmation phrase required before a DIR-1b optimizer result
@@ -34,11 +37,14 @@ class RecallApi implements ReviewReplayGateway {
     this.client, {
     Future<void> Function(String)? persistSession,
     Future<void> Function()? removePersistedSession,
+    DateTime Function()? clock,
     DateTime Function()? localNow,
     DateTime Function(int year, int month, int day)? localMidnight,
   }) : _persistSession = persistSession,
        _removePersistedSession = removePersistedSession,
-       _localNow = localNow ?? DateTime.now,
+       _localNow = clock ?? localNow ?? DateTime.now,
+       // Explicit legacy calendar injection is retained for date/DST tests.
+       _useStudyDay = localNow == null && localMidnight == null,
        _localMidnight = localMidnight ?? DateTime.new;
 
   static const _cardSelect =
@@ -575,7 +581,7 @@ class RecallApi implements ReviewReplayGateway {
   }
 
   /// Count distinct cards whose first-ever review was recorded during the
-  /// current local day. The setting is a daily introduction budget, not a
+  /// current study day. The setting is a daily introduction budget, not a
   /// per-fetch page size. Repeated reviews of a card already present in the
   /// pre-day history do not consume another new-card slot.
   Future<int> _newCardsIntroducedToday({
@@ -585,10 +591,14 @@ class RecallApi implements ReviewReplayGateway {
   }) async {
     final included = deckId == null ? includedDeckIds : null;
     if (included != null && included.isEmpty) return 0;
-    final localStart = _localMidnight(now.year, now.month, now.day);
-    // The day ends at the next local midnight, not 24 hours later: a
-    // daylight-saving day lasts 23 or 25 hours.
-    final localEnd = _localMidnight(now.year, now.month, now.day + 1);
+    final localStart = _useStudyDay
+        ? StudyDay.start(now)
+        : _localMidnight(now.year, now.month, now.day);
+    // Production uses the shared Sao Paulo day; calendar-injected tests retain
+    // their explicit next-midnight seam for 23/25-hour DST days.
+    final localEnd = _useStudyDay
+        ? StudyDay.end(now)
+        : _localMidnight(now.year, now.month, now.day + 1);
     final startIso = localStart.toUtc().toIso8601String();
     final endIso = localEnd.toUtc().toIso8601String();
 
@@ -1113,7 +1123,9 @@ class RecallApi implements ReviewReplayGateway {
     while (true) {
       var query = client
           .from('review_log')
-          .select('id,card_id,guid,rating_at,rating,state_after,due_after')
+          .select(
+            'id,client_event_id,device,card_id,guid,rating_at,rating,state_after,due_after',
+          )
           .gte('rating_at', since);
       if (afterRatingAt != null && afterId != null) {
         final at = afterRatingAt.toUtc().toIso8601String();
@@ -1143,6 +1155,9 @@ class RecallApi implements ReviewReplayGateway {
     return [
       for (final r in rows)
         ReviewLogEntry(
+          id: (r['id'] as num).toInt(),
+          clientEventId: r['client_event_id'] as String?,
+          device: r['device'] as String?,
           cardId: (r['card_id'] as num?)?.toInt(),
           guid: r['guid'] as String?,
           at: DateTime.parse(r['rating_at'] as String).toLocal(),

@@ -200,6 +200,7 @@ class StudyScreen extends StatelessWidget {
           due: s.dueRemaining,
           neu: s.newRemaining,
           session: s.reviewedThisSession,
+          today: s.reviewedToday,
           offline: s.offline,
           serverError: s.serverError,
           pendingSync: s.pendingSync,
@@ -320,6 +321,7 @@ class _Header extends StatelessWidget {
   final int due;
   final int neu;
   final int session;
+  final int today;
   final bool offline;
 
   /// With [offline]: the server answered with an error, so the saved queue is
@@ -338,6 +340,7 @@ class _Header extends StatelessWidget {
     required this.due,
     required this.neu,
     required this.session,
+    required this.today,
     required this.offline,
     required this.pendingSync,
     required this.onMore,
@@ -468,20 +471,27 @@ class _Header extends StatelessWidget {
               duration: RecallMotion.quick,
               child: Semantics(
                 key: ValueKey(notice ?? 'session'),
-                // Announce committed ratings and undo, including keyboard
-                // actions, through Android's live-region semantics.
+                // Preserve session feedback for ratings/Undo; expose the
+                // durable daily total as its own accessible metric below.
                 liveRegion: true,
                 label:
                     notice ??
                     '$session ${session == 1 ? 'card' : 'cards'} reviewed this session',
-                excludeSemantics: true,
-                child: Text(
-                  notice ?? '$session done',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: notice == null
-                        ? UiColors.textMuted
-                        : UiColors.textSecondary,
+                container: true,
+                explicitChildNodes: true,
+                child: Semantics(
+                  label: notice == null
+                      ? '$today ${today == 1 ? 'card' : 'cards'} reviewed today'
+                      : '',
+                  excludeSemantics: true,
+                  child: Text(
+                    notice ?? '$today done',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: notice == null
+                          ? UiColors.textMuted
+                          : UiColors.textSecondary,
+                    ),
                   ),
                 ),
               ),
