@@ -15,6 +15,9 @@ class ReviewState {
   final int? deckFilter;
   final int reviewedThisSession;
   final int reviewedToday;
+
+  /// Whether the session's Undo restores a hidden card instead of a rating.
+  final bool undoRestoresHiddenCard;
   final bool offline;
 
   /// With [offline] or [error], the last load failed because Recall's server
@@ -52,6 +55,7 @@ class ReviewState {
     this.deckFilter,
     this.reviewedThisSession = 0,
     this.reviewedToday = 0,
+    this.undoRestoresHiddenCard = false,
     this.offline = false,
     this.serverError = false,
     this.pendingSync = 0,
@@ -86,6 +90,7 @@ class ReviewState {
     Object? deckFilter = _unset,
     int? reviewedThisSession,
     int? reviewedToday,
+    bool? undoRestoresHiddenCard,
     bool? offline,
     bool? serverError,
     int? pendingSync,
@@ -110,6 +115,8 @@ class ReviewState {
           : deckFilter as int?,
       reviewedThisSession: reviewedThisSession ?? this.reviewedThisSession,
       reviewedToday: reviewedToday ?? this.reviewedToday,
+      undoRestoresHiddenCard:
+          undoRestoresHiddenCard ?? this.undoRestoresHiddenCard,
       offline: offline ?? this.offline,
       serverError: serverError ?? this.serverError,
       pendingSync: pendingSync ?? this.pendingSync,

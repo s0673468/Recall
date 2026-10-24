@@ -57,6 +57,42 @@ Tests that drive a 503 or an offline transport through postgrest wrap the call
 in `withInstantRetryBackoff` (`test/support/instant_retry_backoff.dart`). Every
 retry still runs; only the real 1 s + 2 s + 4 s backoff sleep is skipped.
 
+## Study flow in a browser
+
+After preparing the pinned Flutter SDK and dependencies, run this fixture-only
+acceptance in headless Chrome (set `CHROME_EXECUTABLE` if Chrome is not on PATH):
+
+```sh
+mkdir -p build/t
+TMPDIR=build/t timeout --signal=INT --kill-after=10s 180s \
+  ./tool/flutterw test --no-pub --platform chrome --concurrency=1 \
+  --reporter=expanded --timeout=20s test/study_flow_browser_acceptance_test.dart
+```
+
+The 180-second budget includes browser compilation/startup. The relative
+checkout-local temporary directory also keeps Chromium's Unix socket paths short
+in deeply nested worker checkouts. Flutter currently ignores `--concurrency` for
+web tests; this command runs one test file in one browser.
+
+The 12 cases exercise the production StudyScreen, controller, durable store and
+browser Web Locks with synthetic cards, in-memory preferences and a fake API.
+They check Space reveal, second Space = Good, each 1–4 rating (ignored before
+reveal), an unrevealed next card, Like/unlike, dislike, and restoration with Undo.
+Both ordinary completion and catch-up completion say **Undo hide** after dislike
+or a deletion flag, including after the transient notice expires. A rating after
+restoration still says **Undo last rating** and its Undo removes the pending
+rating and daily count.
+
+The previous Chrome attempt used the native widget fixtures in
+`study_flow_polish_test.dart` and stalled on storage. Browser promise callbacks
+need the real event loop; awaiting Web Locks inside Flutter's fake async clock
+can park setup or an action indefinitely. This dedicated acceptance uses
+`tester.runAsync` for setup, actions and storage assertions, with a five-second
+bound on action completion. It keeps production locking and existing tests
+unchanged. No account, production configuration, real card/article content or
+external test service is used. This checks this checkout's preserved Flutter
+Study surface; Recall Hub acceptance belongs to its own repository.
+
 ## Coverage boundaries
 
 - Flutter tests exercise scheduling, replay/idempotency, auth, owner isolation,
