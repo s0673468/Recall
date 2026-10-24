@@ -85,3 +85,17 @@ expiry in both standalone and embedded Reading. All three fail with the original
 system-clock reads restored and pass with the injectable clocks. The final full
 suite compares all 51 existing after PNGs exactly. The three Activity PNGs were
 opened again and inspected; their populated Saturday columns remain unchanged.
+
+## Hosted CI fix: missing golden assets
+
+At `d3ad2cb39a96`, the Git tree contained none of the 51 `after/` PNGs
+referenced by the new visual test. All three viewport tests failed on their
+first capture with “Could not be compared against non-existent file”. This
+is a missing test-fixture failure introduced by this branch; the visual test
+does not exist on its `origin/main` base.
+
+Added the missing PNGs using the unchanged synthetic harness and pinned Flutter
+3.47.1 on Linux: 17 scenes at each of 360×800, 412×915 and 1280×800.
+Inspected contact sheets for all 51 captures, then compared every image without
+`--update-goldens`. No application source, existing test or assertion changed.
+See the hosted-CI fix results appended to `validation.txt`.

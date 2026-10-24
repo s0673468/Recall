@@ -72,3 +72,50 @@ Result: No whitespace errors.
 No iOS build/test, network test service, personal data, credentials, push, PR,
 remote change or Git metadata write. Disposable validation caches were removed.
 Suggested runner commit: Fix date-dependent visual acceptance goldens
+
+Hosted-CI fix validation — missing golden assets
+
+Root cause: d3ad2cb39a96 contains the golden test but no referenced PNGs.
+The unchanged test reproduced all three missing-file failures (exit 1).
+Added 51 synthetic baselines under after/; no existing tests were edited.
+
+Used a copied Flutter 3.47.1 SDK and package cache inside the checkout.
+Dependencies: ./tool/flutterw pub get --offline --enforce-lockfile (exit 0).
+All commands below used umask 077 and TMPDIR=/tmp, outside any Git checkout.
+RECALL_FLUTTER_ROOT="$PWD/.tools/flutter-3.47.1"
+PUB_CACHE="$PWD/.pub-cache"
+XDG_CONFIG_HOME="$PWD/.tools/config"
+XDG_CACHE_HOME="$PWD/.tools/cache"
+DART="$RECALL_FLUTTER_ROOT/bin/dart"
+PATH="$RECALL_FLUTTER_ROOT/bin:$PATH"
+CI=true FLUTTER_SUPPRESS_ANALYTICS=true DART_SUPPRESS_ANALYTICS=true
+
+Command: ./tool/flutterw test --no-pub test/reading_visual_acceptance_test.dart --update-goldens --reporter expanded
+Exit: 0. All 3 tests passed; 51 PNGs generated and visually inspected.
+
+Command: ./tool/flutterw test --no-pub test/reading_visual_acceptance_test.dart --reporter expanded
+Exit: 0. All 3 tests passed; all 51 PNGs matched without updating baselines.
+
+Final documented Flutter gate:
+Command: ./tool/flutterw analyze --no-pub
+Exit: 0. No issues found! (ran in 18.9s)
+Command: ./tool/flutterw test --no-pub --reporter=failures-only --exclude-tags apple-mobile
+Exit: 0. +1570 ~4: All other tests passed!
+
+Command: python3 -m unittest discover -s tool/tests -p 'test_*.py'
+Exit: 0. Ran 197 tests in 10.703s. OK (skipped=1).
+
+Command: git diff --check
+Exit: 0. No whitespace errors.
+
+Hosted CI, browser execution and Android builds were not run in this lane.
+No iOS build/test, personal data, external test services or Git metadata writes.
+The runner owns the commit; include all 51 new after/*.png fixtures.
+
+STATUS "Ready for German" — generated-file cleanup
+Automatic approval review rejected the cleanup command before execution:
+"rm -f style commands are not permitted. Use a safer approach".
+The rejected removal actions were:
+rm -rf -- .tools .pub-cache .dart_tool build tool/__pycache__ tool/tests/__pycache__ tools/flag_report/__pycache__ tools/flag_report/tests/__pycache__ tools/semantic_review/__pycache__ tools/semantic_review/tests/__pycache__ ios/Flutter/ephemeral
+rm -f -- .flutter-plugins-dependencies android/local.properties android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java ios/Flutter/Generated.xcconfig ios/Flutter/flutter_export_environment.sh ios/Runner/GeneratedPluginRegistrant.h ios/Runner/GeneratedPluginRegistrant.m
+No retry. These ignored validation artifacts remain outside the proposed commit.
