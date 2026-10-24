@@ -66,7 +66,10 @@ class ReviewHeatmap extends StatelessWidget {
             ),
           ),
           const SizedBox(height: UiSpacing.sm),
-          ExcludeSemantics(child: _legend()),
+          SizedBox(
+            width: double.infinity,
+            child: ExcludeSemantics(child: _legend()),
+          ),
         ],
       ),
     );
@@ -117,15 +120,15 @@ class ReviewHeatmap extends StatelessWidget {
       children: [
         const Text(
           'Less',
-          style: TextStyle(color: UiColors.textMuted, fontSize: 10),
+          style: TextStyle(color: UiColors.textMuted, fontSize: 12),
         ),
         const SizedBox(width: 4),
         for (var level = 0; level <= 4; level++)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 1),
             child: Container(
-              width: 10,
-              height: 10,
+              width: _cell,
+              height: _cell,
               decoration: BoxDecoration(
                 color: _levelColor(level),
                 borderRadius: BorderRadius.circular(2),
@@ -135,7 +138,7 @@ class ReviewHeatmap extends StatelessWidget {
         const SizedBox(width: 4),
         const Text(
           'More',
-          style: TextStyle(color: UiColors.textMuted, fontSize: 10),
+          style: TextStyle(color: UiColors.textMuted, fontSize: 12),
         ),
       ],
     );

@@ -19,12 +19,14 @@ class DesktopReadingPane extends StatefulWidget {
   final ReviewController controller;
   final RecallApi api;
   final LocalReviewStore store;
+  final DateTime Function() clock;
 
   const DesktopReadingPane({
     super.key,
     required this.controller,
     required this.api,
     required this.store,
+    this.clock = DateTime.now,
   });
 
   @override
@@ -131,6 +133,10 @@ class _DesktopReadingPaneState extends State<DesktopReadingPane> {
                 children: [
                   if (_page != null) ...[
                     IconButton(
+                      constraints: const BoxConstraints(
+                        minWidth: 48,
+                        minHeight: 48,
+                      ),
                       key: const Key('recall_reading_back'),
                       tooltip: 'Back to reading',
                       onPressed: _backToReading,
@@ -145,6 +151,10 @@ class _DesktopReadingPaneState extends State<DesktopReadingPane> {
                   const Spacer(),
                   if (_page == null)
                     IconButton(
+                      constraints: const BoxConstraints(
+                        minWidth: 48,
+                        minHeight: 48,
+                      ),
                       tooltip: 'Refresh reading',
                       onPressed: () => unawaited(
                         _readKey.currentState?.reload(refresh: true),
@@ -163,6 +173,7 @@ class _DesktopReadingPaneState extends State<DesktopReadingPane> {
                       key: _readKey,
                       api: widget.api,
                       store: widget.store,
+                      clock: widget.clock,
                       showHeader: false,
                       libraryFirst: true,
                       relatedNodeIds: ConceptAttribution.nodeTags(
