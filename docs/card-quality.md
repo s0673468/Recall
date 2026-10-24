@@ -163,6 +163,9 @@ the largest combined signal when a note maps to multiple cards. Priorities
 remain capped at one, corrective flags stay first and queue limits stay 20–40.
 Liked notes are omitted from model-assisted revision, including any sibling
 marked `liked_keep_style` or an open like supplied through `--flags-file`.
+With cloud input enabled and no flags file, gardening also fetches current open
+likes, protecting cards liked after the scores were generated. For an offline
+run, supply current flags through `--flags-file` or regenerate the scores.
 No like is resolved or dismissed. The scorer's explanations guide suggested
 rewrites of **other** cards alongside the existing card standard. They never
 justify automatically editing liked cards or changing scheduling.

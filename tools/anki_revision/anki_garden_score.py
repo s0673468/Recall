@@ -314,6 +314,8 @@ def load_cloud_env(path: str | None) -> dict[str, str]:
 
 def fetch_cloud_signals(
     env: dict[str, str],
+    *,
+    include_likes: bool = False,
 ) -> tuple[list[dict[str, object]], object, str]:
     url = env.get("SUPABASE_URL") or os.environ.get("SUPABASE_URL")
     key = env.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY")
@@ -339,15 +341,16 @@ def fetch_cloud_signals(
             if len(chunk) < 1000:
                 break
             start += 1000
-        flags = (
+        flag_query = (
             client.table("note_flags")
             .select("guid,reason,status")
             .eq("user_id", user_id)
             .eq("status", "open")
-            .neq("reason", "like")
-            .execute()
-            .data
         )
+        # Model scores may predate a new like; protect using current flags too.
+        if not include_likes:
+            flag_query = flag_query.neq("reason", "like")
+        flags = flag_query.execute().data
         return reviews, flags, f"reviews={len(reviews)} open_flags={len(flags)}"
     except Exception as error:
         return [], None, f"{type(error).__name__}: {str(error)[:80]}"
@@ -386,7 +389,7 @@ def main() -> int:
                 str(args.cloud_env) if args.cloud_env else None
             )
             cloud_reviews, cloud_flags, cloud_note = fetch_cloud_signals(
-                load_cloud_env(env_path)
+                load_cloud_env(env_path), include_likes=bool(quality_scores)
             )
             if flags is None:
                 flags = cloud_flags
