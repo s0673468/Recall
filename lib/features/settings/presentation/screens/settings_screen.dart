@@ -387,6 +387,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       builder: (context, _) {
         final decks = widget.controller.state.decks;
         return ExpansionTile(
+          expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
           title: const Text('Per-deck new-card limits'),
           subtitle: Text(
             decks.isEmpty
@@ -522,6 +523,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           tooltip: 'Decrease $label',
           icon: const Icon(Icons.remove_circle_outline),
           color: UiColors.textMuted,
@@ -542,6 +544,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         IconButton(
+          constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           tooltip: 'Increase $label',
           icon: const Icon(Icons.add_circle_outline),
           color: UiColors.primary,

@@ -104,7 +104,11 @@ class PrimerContent extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),
             child: ListView(
-              padding: const EdgeInsets.all(UiSpacing.lg),
+              padding: EdgeInsets.all(
+                MediaQuery.sizeOf(context).width < 600
+                    ? UiSpacing.md
+                    : UiSpacing.lg,
+              ),
               children: [
                 Text(
                   page.title,

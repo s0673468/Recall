@@ -1,0 +1,74 @@
+Final validation — Flutter 3.47.1
+
+The pinned SDK and package cache were copied into this checkout. Dependencies
+were resolved with ./tool/flutterw pub get --offline (exit 0). No credentials,
+personal data, Supabase client, iOS build, or external test service was used.
+
+Environment prefixes used for the Flutter commands below:
+RECALL_FLUTTER_ROOT="$PWD/.tools/flutter-3.47.1"
+PUB_CACHE="$PWD/.pub-cache"
+TMPDIR="$PWD/.tools/tmp"
+
+Command: ./tool/flutterw analyze --no-pub
+Exit: 0
+Result: No issues found! (ran in 16.6s)
+
+Command: ./tool/flutterw test --no-pub --exclude-tags apple-mobile
+Exit: 0
+Result: 00:53 +1538 ~4: All tests passed!
+This final full suite compares all 51 new after PNGs without updating goldens.
+
+Golden generation command:
+./tool/flutterw test --no-pub test/reading_visual_acceptance_test.dart --update-goldens --reporter expanded
+Exit: 0
+Result: 00:06 +3: All tests passed!
+51 after PNGs written; 51 before PNGs captured separately from f485835.
+All 102 PNGs were opened and visually inspected.
+
+Command: git diff --check
+Exit: 0
+Result: No whitespace errors.
+
+New direct checks cover the 48dp reading/stepper targets, reader gutter sizes,
+expanded deck-row alignment, chat subtitle removal, loading copy/semantics,
+empty copy, heatmap legend size/alignment, search clearing, and reader return.
+The new target checks failed at 40dp before the corresponding control fixes.
+
+Existing tests were not edited or removed. The Study header, review controller,
+daily counts, git remotes and git metadata were not changed. No push or PR.
+The runner owns the commit. Temporary SDK/package/build caches were removed
+after validation; the requested PNGs, findings and test source remain.
+
+Review-fix validation — deterministic dates
+
+Used a copied Flutter 3.47.1 SDK and copied package cache inside this checkout.
+./tool/flutterw pub get --offline --enforce-lockfile exited 0; lockfile unchanged.
+Environment:
+RECALL_FLUTTER_ROOT="$PWD/.tools/review-validation/flutter"
+DART="$RECALL_FLUTTER_ROOT/bin/dart"
+PUB_CACHE="$PWD/.pub-cache"
+TMPDIR="$PWD/.tools/review-validation/tmp"
+XDG_CONFIG_HOME="$PWD/.tools/review-validation/config"
+XDG_CACHE_HOME="$PWD/.tools/review-validation/cache"
+CI=true FLUTTER_SUPPRESS_ANALYTICS=true DART_SUPPRESS_ANALYTICS=true
+
+Command: ./tool/flutterw test --no-pub test/visual_acceptance_clock_test.dart --reporter expanded
+Original wall-clock reads temporarily restored: exit 1; all 3 regressions failed.
+Fixed code: exit 0; all 3 regressions passed. Sources restored before final gate.
+
+Command: ./tool/flutterw analyze --no-pub
+Exit: 0
+Result: No issues found! (ran in 15.6s)
+
+Command: ./tool/flutterw test --no-pub --exclude-tags apple-mobile
+Exit: 0
+Result: 00:43 +1541 ~4: All tests passed!
+All 51 existing after goldens matched without --update-goldens.
+
+Command: git diff --check
+Exit: 0
+Result: No whitespace errors.
+
+No iOS build/test, network test service, personal data, credentials, push, PR,
+remote change or Git metadata write. Disposable validation caches were removed.
+Suggested runner commit: Fix date-dependent visual acceptance goldens
