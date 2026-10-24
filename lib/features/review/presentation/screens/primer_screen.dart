@@ -104,6 +104,7 @@ class PrimerContent extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),
             child: ListView(
+              key: PageStorageKey('recall_primer_scroll_${page.nodeId}'),
               padding: EdgeInsets.all(
                 MediaQuery.sizeOf(context).width < 600
                     ? UiSpacing.md

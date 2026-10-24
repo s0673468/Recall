@@ -144,11 +144,12 @@ class _DesktopReadingPaneState extends State<DesktopReadingPane> {
                     ),
                     const SizedBox(width: UiSpacing.xs),
                   ],
-                  Text(
-                    'Reading',
-                    style: Theme.of(context).textTheme.titleLarge,
+                  Expanded(
+                    child: Text(
+                      'Reading',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
                   ),
-                  const Spacer(),
                   if (_page == null)
                     IconButton(
                       constraints: const BoxConstraints(

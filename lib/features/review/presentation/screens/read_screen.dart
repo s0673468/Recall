@@ -57,7 +57,9 @@ class ReadScreen extends StatefulWidget {
 class ReadScreenState extends State<ReadScreen> {
   late final StatsService _service = StatsService(widget.api);
   late Future<_ReadData> _data;
-  bool _searching = false;
+  // Keep the query when a failed refresh temporarily replaces the library.
+  String _searchQuery = '';
+  bool get _searching => _searchQuery.trim().isNotEmpty;
 
   @override
   void initState() {
@@ -219,6 +221,7 @@ class ReadScreenState extends State<ReadScreen> {
               const SizedBox(height: UiSpacing.md),
               PrimerLibraryContent(
                 pages: data.conceptPages,
+                initialQuery: _searchQuery,
                 collapsedBrowse: widget.libraryFirst,
                 conceptNodes: data.conceptNodes,
                 browseExcludedNodeIds: {
@@ -231,9 +234,9 @@ class ReadScreenState extends State<ReadScreen> {
                     unawaited(_openPrimer(page, data.conceptNodes)),
                 onQueryChanged: (query) {
                   final searching = query.trim().isNotEmpty;
-                  if (searching != _searching) {
-                    setState(() => _searching = searching);
-                  }
+                  final wasSearching = _searching;
+                  _searchQuery = query;
+                  if (searching != wasSearching) setState(() {});
                 },
               ),
             ],

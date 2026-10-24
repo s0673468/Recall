@@ -50,6 +50,7 @@ class PrimerLibraryContent extends StatefulWidget {
   final ValueChanged<String>? onQueryChanged;
   final ValueChanged<ConceptPage>? onOpenPrimer;
   final bool collapsedBrowse;
+  final String initialQuery;
   final bool _ownsViewport;
 
   const PrimerLibraryContent({
@@ -60,6 +61,7 @@ class PrimerLibraryContent extends StatefulWidget {
     this.onQueryChanged,
     this.onOpenPrimer,
     this.collapsedBrowse = false,
+    this.initialQuery = '',
   }) : _ownsViewport = false;
 
   const PrimerLibraryContent._owningViewport({
@@ -69,6 +71,7 @@ class PrimerLibraryContent extends StatefulWidget {
   }) : browseExcludedNodeIds = const {},
        onQueryChanged = null,
        collapsedBrowse = false,
+       initialQuery = '',
        _ownsViewport = true;
 
   @override
@@ -76,13 +79,22 @@ class PrimerLibraryContent extends StatefulWidget {
 }
 
 class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
-  final _searchController = TextEditingController();
-  String _query = '';
+  late final TextEditingController _searchController;
+  final _searchFocus = FocusNode();
+  late String _query;
   bool _browseExpanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _query = widget.initialQuery;
+    _searchController = TextEditingController(text: _query);
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -129,18 +141,20 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
           child: TextField(
             key: const Key('recall_primer_search'),
             controller: _searchController,
+            focusNode: _searchFocus,
             autocorrect: false,
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
               hintText: 'Find a concept',
               prefixIcon: const Icon(Icons.search, size: 20),
-              suffixIcon: query.isEmpty
+              suffixIcon: _query.isEmpty
                   ? null
                   : IconButton(
                       tooltip: 'Clear search',
                       onPressed: () {
                         _searchController.clear();
                         _setQuery('');
+                        _searchFocus.requestFocus();
                       },
                       icon: const Icon(Icons.close, size: 20),
                     ),
