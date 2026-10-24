@@ -20,7 +20,7 @@ same owner default as the deployed single-user project and importer.
 | `cards` | note link, FSRS state, `cloud_seen`, `deleted`, `suspended` | importer for identity/content state; Recall for scheduling |
 | `review_log` | review result and timing, `client_event_id` ledger | `apply_review`; Recall undo may delete its one exact row |
 | `user_settings` | JSON `fsrs_params` and `recall_prefs`, unique per user/key | importer seed and Recall |
-| `note_flags` | four fixed reasons; open/resolved/dismissed lifecycle and resolution | Recall inserts; revision tooling resolves |
+| `note_flags` | wrong/confusing/too_long/duplicate/dislike/delete corrections; like is a standing style preference | Recall inserts; revision tooling resolves corrections |
 | `concept_nodes` | `node_id`, title, module, difficulty, update time | service-role concept sync |
 | `concept_pages` | title, HTML primer, optional SVG hero figure, `extra_figures` (JSON array of at most 3 `{svg, after_paragraph}` inline figures, default `[]`), update time | service-role primer authoring |
 | `deck_counts()` | due/new counts excluding deleted notes/cards and suspended cards | database RPC |
@@ -44,6 +44,7 @@ Apply each file as one transaction, in this order:
 8. [`migrations/007_note_flags_hide_reasons.sql`](migrations/007_note_flags_hide_reasons.sql)
 9. [`migrations/008_apply_review_missing_card.sql`](migrations/008_apply_review_missing_card.sql)
 10. [`migrations/009_concept_pages_extra_figures.sql`](migrations/009_concept_pages_extra_figures.sql)
+11. [`migrations/010_note_flags_like_reason.sql`](migrations/010_note_flags_like_reason.sql)
 
 All migrations are idempotent. Re-running them preserves rows. `000` uses
 `CREATE TABLE IF NOT EXISTS`; it intentionally does not guess how to repair a
@@ -116,7 +117,7 @@ RECALL_REQUIRE_PG=1 RECALL_PG_BIN=/path/to/postgresql/bin \
 ```
 
 It creates a throwaway cluster on a private Unix socket with a minimal
-stand-in for Supabase's `auth` schema and roles, applies `000`–`009`, checks
+stand-in for Supabase's `auth` schema and roles, applies all ordered migrations, checks
 `apply_review` behaviour (including a card hard-deleted while its review was
 queued, and the pre-008 failure), checks that `009` backfills existing primers
 with `[]`, enforces the array/at-most-3 shape and leaves clients read-only, and
@@ -126,6 +127,9 @@ binaries it skips unless `RECALL_REQUIRE_PG=1`. It never contacts Supabase.
 ## Rollback policy
 
 The safe rollback is intentionally asymmetric:
+
+- Roll back `010` with [`rollback/010_restore_flag_reasons.sql`](rollback/010_restore_flag_reasons.sql).
+  It refuses while any like rows exist, including closed rows, preserving history.
 
 - `009` needs no rollback for an incident: older clients never select
   `extra_figures`, and current clients fall back to the pre-009 select when the

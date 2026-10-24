@@ -14,6 +14,7 @@ void main() {
     'scripts/supabase/migrations/007_note_flags_hide_reasons.sql',
     'scripts/supabase/migrations/008_apply_review_missing_card.sql',
     'scripts/supabase/migrations/009_concept_pages_extra_figures.sql',
+    'scripts/supabase/migrations/010_note_flags_like_reason.sql',
   ];
 
   const tableContracts = <String>{
@@ -129,6 +130,31 @@ void main() {
     expect(migrations, contains('security invoker'));
     expect(migrations, contains('c.suspended = false'));
   });
+
+  test(
+    'likes extend reasons without changing hidden counts and rollback preserves rows',
+    () {
+      final migration = File(
+        'scripts/supabase/migrations/010_note_flags_like_reason.sql',
+      ).readAsStringSync();
+      expect(migration, contains("'dislike', 'delete', 'like'"));
+      expect(migration, isNot(contains('create or replace function')));
+      final rollback = File(
+        'scripts/supabase/rollback/010_restore_flag_reasons.sql',
+      ).readAsStringSync();
+      expect(rollback, contains("where reason = 'like'"));
+      expect(rollback, contains('raise exception'));
+      expect(rollback.toLowerCase(), isNot(contains('delete from')));
+      final verifier = File(
+        'scripts/supabase/verify/verify_schema.sql',
+      ).readAsStringSync();
+      expect(
+        verifier,
+        contains('note_flags lacks the like reason (apply 010)'),
+      );
+      expect(verifier, contains('must hide only dislike/delete, never likes'));
+    },
+  );
 
   test('the newest apply_review acknowledges a hard-deleted card', () {
     final rpcMigrations = migrationPaths

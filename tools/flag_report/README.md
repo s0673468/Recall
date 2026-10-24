@@ -9,6 +9,7 @@ deletes cards or flags. The output contains only:
 
 - the exact live reason (`wrong`, `confusing`, `too_long`, `duplicate`, or the one-tap
   `dislike` / `delete`, which also hide the card until the weekly review);
+- `like` is a standing style preference, shown separately as “Liked (keep this style)”;
 - the flag's `guid`;
 - a plain-text front prefix capped at 160 characters, with script/style/SVG
   content removed;

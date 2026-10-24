@@ -31,7 +31,7 @@ void main() {
   test('synthetic flag domain separates reporting from hiding', () {
     expect(ReviewController.hideReasons, {'dislike', 'delete'});
     expect(ReviewController.flagReasons, {
-      'wrong', 'confusing', 'too_long', 'duplicate', 'dislike', 'delete',
+      'wrong', 'confusing', 'too_long', 'duplicate', 'dislike', 'delete', 'like',
     });
     expect(ReviewController.flagReasons.contains('unknown'), isFalse);
     expect(ReviewController.flagReasons.contains(''), isFalse);

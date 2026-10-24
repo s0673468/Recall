@@ -28,13 +28,13 @@ const _patchSha = String.fromEnvironment('RECALL_PATCH_SHA256');
 const _fixtureSha = String.fromEnvironment('RECALL_FIXTURE_SHA256');
 const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
-const _storeBlob = '2d70d9c6aa4d228c87456fce6649884b2f4a09fe';
+const _storeBlob = '6b971b395d5b63b82cdf66134667e0eedb50ee30';
 const _baselineControllerSha =
-    'fbc440a788599df24d193a252764bd0ffc33753f687a7e32d2e8672f5ee64ec7';
+    '785c1cc281059722df498561501fd392c701b09c5572de5d0fcc76582ef576f0';
 const _checkpointControllerSha =
-    'f89393d4ffc2751792fb19e07884532c22dbdb963b6a3c29e33e045cf415583e';
+    '20bdd44241c133878e100fc44a469456c54a74b77508ea7d13ed25226f214dbf';
 const _checkpointPatchSha =
-    'c6fa9bc8ca5dad9c192adf07a9e47a104607aab132974bf3ce8602ee5469cf63';
+    '12b80894e29cccf1fbb9366def4ebeea1ca831fe761cd0c7e2ba252b80a7f902';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');
@@ -355,7 +355,7 @@ Future<void> main() async {
   try {
     _require(_enabled && kDebugMode && Platform.isAndroid);
     _require(RegExp(r'^[0-9a-f]{40}$').hasMatch(_sourceCommit));
-    _require(_baseCommit == '3e64b782e2b86e422bd15fcc9e767390dd2df081');
+    _require(_baseCommit == '1a38bb4be3ffff66da4204fa5bcb341e4c92698e');
     _require(RegExp(r'^[0-9a-f]{64}$').hasMatch(_fixtureSha));
     _require(
       (_variant == 'baseline' &&

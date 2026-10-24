@@ -375,6 +375,10 @@ class _StateController extends ChangeNotifier implements ReviewController {
 
   @override
   bool get rateInFlight => false;
+  @override
+  bool get currentLiked => false;
+  @override
+  bool get likeInFlight => false;
 
   @override
   bool get canUndo => false;

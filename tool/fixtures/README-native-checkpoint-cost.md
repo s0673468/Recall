@@ -2,13 +2,13 @@
 
 This fixture compares one **frozen, generated-data** baseline with one experimental checkpoint-drain Controller hunk. It is a debug-emulator experiment, not a production benchmark. The workflow is `.github/workflows/recall-synthetic-native-cost.yml` (`Synthetic native outbox checkpoint cost`); its `synthetic-native-cost` job runs on GitHub-hosted Ubuntu when the listed synthetic fixture, driver, test, or workflow paths change on a push or pull request to `main`. It has no scheduled or manual trigger. The job builds two isolated APKs under `com.german.recall.syntheticbenchmark`, then uses one disposable x86_64 Android emulator for four fresh processes: baseline with 128 and 512 pending generated reviews, followed by checkpoint with 128 and 512. Each case clears only the benchmark package and gets a distinct PID.
 
-The source profile is deliberately exact. The configured baseline reference is commit `3e64b782e2b86e422bd15fcc9e767390dd2df081`; the current byte profile binds Controller SHA-256 `fbc440a788599df24d193a252764bd0ffc33753f687a7e32d2e8672f5ee64ec7`, Store SHA-256 `5e664ef65dc5633e0ebd402bf2b82d60f9e525775d139423ce7510eced84d6da` (Git blob `2d70d9c6aa4d228c87456fce6649884b2f4a09fe`), checkpoint-only patch SHA-256 `c6fa9bc8ca5dad9c192adf07a9e47a104607aab132974bf3ce8602ee5469cf63`, resulting Controller SHA-256 `f89393d4ffc2751792fb19e07884532c22dbdb963b6a3c29e33e045cf415583e`, and this fixture entrypoint SHA-256 `012e6add7ce830b89ca707e5140003072aaf52c8e4c0921044750aaf511d31c5`. The generated pending reviews use the same 15-field payload and fake `.invalid` HTTP in both variants. The checked-out harness commit is the **current** `$GITHUB_SHA`, passed as `RECALL_SOURCE_COMMIT`; it is intentionally different from `RECALL_BASE_COMMIT=3e64b782...`, the frozen baseline reference. The preparer verifies both bindings and copies only technical source into new runner-temporary directories. It never replaces the production Controller or Store.
+The source profile is deliberately exact. The configured baseline reference is the pre-merge PR commit `1a38bb4be3ffff66da4204fa5bcb341e4c92698e`; the current merged byte profile binds Controller SHA-256 `785c1cc281059722df498561501fd392c701b09c5572de5d0fcc76582ef576f0`, Store SHA-256 `74b2d7e24f91a8dc32d0075692b5d098d6fb67e7e7a8cd29329112a3e4d0fd83` (Git blob `6b971b395d5b63b82cdf66134667e0eedb50ee30`), checkpoint-only patch SHA-256 `12b80894e29cccf1fbb9366def4ebeea1ca831fe761cd0c7e2ba252b80a7f902`, resulting Controller SHA-256 `20bdd44241c133878e100fc44a469456c54a74b77508ea7d13ed25226f214dbf`, and this fixture entrypoint SHA-256 `f849a1ea9453cabe8e3d5aad87d2b47d21405b02c8f19d6534750fd2611084fd`. The generated pending reviews use the same 15-field payload and fake `.invalid` HTTP in both variants. The checked-out harness commit is the **current** `$GITHUB_SHA`, passed as `RECALL_SOURCE_COMMIT`; it is intentionally different from `RECALL_BASE_COMMIT=1a38bb4b...`, the frozen baseline reference. The preparer verifies both bindings and copies only technical source into new runner-temporary directories. It never replaces the production Controller or Store.
 
 The workflow's source preparation and driver correspond to these commands (the workflow supplies fresh `$COST_SOURCE` and `$COST_RESULTS` paths under `$RUNNER_TEMP`):
 
 ```sh
-python3 tool/prepare_native_checkpoint_cost.py --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/baseline" --source-commit "$GITHUB_SHA" --variant baseline --patch tool/fixtures/checkpoint-drain-only.patch --fixture-sha 012e6add7ce830b89ca707e5140003072aaf52c8e4c0921044750aaf511d31c5 > "$COST_RESULTS/base-provenance.json"
-python3 tool/prepare_native_checkpoint_cost.py --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/checkpoint" --source-commit "$GITHUB_SHA" --variant checkpoint --patch tool/fixtures/checkpoint-drain-only.patch --fixture-sha 012e6add7ce830b89ca707e5140003072aaf52c8e4c0921044750aaf511d31c5 > "$COST_RESULTS/checkpoint-provenance.json"
+python3 tool/prepare_native_checkpoint_cost.py --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/baseline" --source-commit "$GITHUB_SHA" --variant baseline --patch tool/fixtures/checkpoint-drain-only.patch --fixture-sha f849a1ea9453cabe8e3d5aad87d2b47d21405b02c8f19d6534750fd2611084fd > "$COST_RESULTS/base-provenance.json"
+python3 tool/prepare_native_checkpoint_cost.py --source "$GITHUB_WORKSPACE" --destination "$COST_SOURCE/checkpoint" --source-commit "$GITHUB_SHA" --variant checkpoint --patch tool/fixtures/checkpoint-drain-only.patch --fixture-sha f849a1ea9453cabe8e3d5aad87d2b47d21405b02c8f19d6534750fd2611084fd > "$COST_RESULTS/checkpoint-provenance.json"
 python3 tool/run_native_checkpoint_cost.py --source-commit "$GITHUB_SHA" --baseline-apk "$COST_SOURCE/baseline/build/app/outputs/flutter-apk/app-debug.apk" --checkpoint-apk "$COST_SOURCE/checkpoint/build/app/outputs/flutter-apk/app-debug.apk" --baseline-provenance "$COST_RESULTS/base-provenance.json" --checkpoint-provenance "$COST_RESULTS/checkpoint-provenance.json" --output "$COST_RESULTS/native" --phase-timeout 90
 ```
 
@@ -50,4 +50,28 @@ The shared Android build input has a separate exact-byte pin in `measure_android
 
 Recall#176 refreshes the Gradle pin to `ea553273c9ddc2a8870cc6ba411a55eef3976d74a6662da35896ca8ddcd73277` after the reminders fix added the Robolectric unit-test dependency. Application behavior, source-isolation guards and the frozen checkpoint experiment are unchanged. The superseded Gradle source remains refused.
 
+The likes feature refreshes the current Controller/Store byte profile and the
+checkpoint hunk positions. The frozen baseline reference, experimental edits,
+generated workload, and required completion counts remain the same. This
+refresh establishes no new timing result.
+
+Recall#183's review correction re-pins the profile against `bae90089cb6b9fe3f2eb66513d84a9bb11ad0c5a`.
+The Controller now reconciles likes at delivery, and the Store verifies the
+complete withdrawal payload after an uncertain write. Both byte pins and the
+fixture guards are refreshed. The three checkpoint hunks change only their line
+positions; their contexts, additions and removal are byte-for-byte unchanged.
+Generated workloads and required write/completion counts remain unchanged.
+Superseded receipts remain refused. This refresh establishes no timing result;
+fresh four-case emulator results are required before interpreting timings.
+
 Recall#184 refreshes the profile against daily-count review fix `3e64b782e2b86e422bd15fcc9e767390dd2df081`. The checkpoint variant now persists accepted daily-review receipts before each batch removal, preserving the production durability ordering. Controller, patch and derived fixture guards are refreshed; Store and derived guards include the daily-review cache and shared writer lock; generated workloads and required outbox write/completion counts are unchanged. Superseded receipts remain refused. This refresh establishes no timing result; fresh four-case emulator results are required before interpreting timings.
+
+Recall#184’s merge resolution combines the daily-count branch with main’s
+Recall#183 likes and withdrawal recovery. The frozen reference is the pre-merge
+PR head `1a38bb4be3ffff66da4204fa5bcb341e4c92698e`; the exact Controller, Store,
+patch and entrypoint hashes above bind the combined working source, while
+`RECALL_SOURCE_COMMIT` identifies the eventual checked-out merge commit. The
+regenerated three-hunk checkpoint patch retains daily-review receipt persistence
+before every batch removal. Both parents’ superseded byte profiles remain
+refused, and the offline restart regression verifies that cached likes and
+daily counts restore together. No timing result is established by this merge.
