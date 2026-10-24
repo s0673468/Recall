@@ -2308,7 +2308,12 @@ class ReviewController extends ChangeNotifier {
           saved = await _savedDespite(
             error,
             stackTrace,
-            () => store.settleUnknownFlag(clientId, ownerScope: ownerScope),
+            () => entry['op'] == dismissOp
+                ? store.settleUnknownFlagWithdrawal(
+                    entry,
+                    ownerScope: ownerScope,
+                  )
+                : store.settleUnknownFlag(clientId, ownerScope: ownerScope),
           );
         } on StudyActionUnconfirmedException {
           if (ownsSession()) _unconfirmedLikeEntry = entry;
@@ -3347,17 +3352,32 @@ class ReviewController extends ChangeNotifier {
       // Keep it visible for recovery without reapplying it on every flush.
       if (!uniqueIds.contains(entry['client_id'])) break;
       try {
+        // The queue can be shown before the first likes read, or even while
+        // offline with no cache. Reconcile at delivery: keep an existing open
+        // like instead of creating a second identity, and withdraw all open
+        // identities for an unlike, including ones unknown at tap time. A
+        // failed read keeps the intent queued rather than guessing.
+        final serverLikes = entry['reason'] == 'like'
+            ? (await api.fetchLikedFlags())
+                  .where((flag) => flag['card_id'] == entry['card_id'])
+                  .toList()
+            : <Map<String, dynamic>>[];
+        if (!_flushStillOwnsSession(ownerId, ownerScope)) break;
         if (entry['op'] == dismissOp) {
           final ids = entry['reason'] == 'like'
-              ? (entry['like_client_ids'] as List)
+              ? {
+                  ...(entry['like_client_ids'] as List),
+                  for (final flag in serverLikes) flag['client_id'],
+                }
               : [entry['client_id']];
           for (final id in ids) {
+            if (!_flushStillOwnsSession(ownerId, ownerScope)) return;
             await api.dismissFlag(
               cardId: (entry['card_id'] as num).toInt(),
               clientEventId: id.toString(),
             );
           }
-        } else {
+        } else if (serverLikes.isEmpty) {
           await api.applyFlag(entry);
         }
         acknowledged.add(entry);
@@ -3367,6 +3387,10 @@ class ReviewController extends ChangeNotifier {
       }
     }
     await store.removeAcknowledgedFlags(acknowledged, ownerScope: ownerScope);
+    if (acknowledged.any((entry) => entry['reason'] == 'like') &&
+        _flushStillOwnsSession(ownerId, ownerScope)) {
+      await _refreshLikedFlags();
+    }
   }
 
   /// Background work (queue loads, outbox flushes) can finish after the

@@ -892,6 +892,27 @@ class LocalReviewStore {
         clientId,
       );
 
+  /// A withdrawal reuses the insert's identity, so that identity alone cannot
+  /// prove the replacement committed. Verify its complete payload, including
+  /// every like identity to dismiss, without tombstoning the original insert.
+  Future<int?> settleUnknownFlagWithdrawal(
+    Map<String, dynamic> entry, {
+    String? ownerScope,
+  }) {
+    final key = _storageKey(_flagOutboxKey, ownerScope: ownerScope);
+    final expected = Map<String, dynamic>.from(entry);
+    return _withOutboxLock(() async {
+      final durable = _readList(await _prefsFor([key]), key);
+      if (durable.any((e) => _sameAcknowledgedPayload(e, expected))) {
+        return _pendingCount(key, durable);
+      }
+      // The replacement is proven absent. Its eager shared-cache copy must
+      // not be persisted by an ACK merge for the still-durable original.
+      _refusedFlagWithdrawals.putIfAbsent(key, () => []).add(expected);
+      return null;
+    });
+  }
+
   Future<int?> _settleUnknown(String key, Object clientId) {
     return _withOutboxLock(() async {
       final durable = _readList(await _prefsFor([key]), key);
