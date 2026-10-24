@@ -99,3 +99,20 @@ Added the missing PNGs using the unchanged synthetic harness and pinned Flutter
 Inspected contact sheets for all 51 captures, then compared every image without
 `--update-goldens`. No application source, existing test or assertion changed.
 See the hosted-CI fix results appended to `validation.txt`.
+
+## PR #184 CI fix: daily reset text in Settings
+
+The daily-count branch adds `StudyDay.resetDescription` below the new-card
+limit, while these baselines predate that text. The unchanged visual test on
+Flutter 3.47.1 reproduced CI's exact Settings differences: 28,972 pixels at
+360px, 36,672 at 412px, and 30,067 at 1280px. This is a baseline mismatch with
+the PR's intended UI change, rather than a timing, temporary-directory or umask
+failure.
+
+Regenerated all 51 captures with the existing synthetic harness. Only seven
+Settings PNGs changed: the three initial views, all three scrolled views, and
+the 412px expanded view. The first mismatch previously stopped each viewport
+test before it could compare the later Settings captures. Visually inspected
+all seven replacements; the reset explanation wraps without clipping and the
+remaining controls retain their layout. Application source, test source and
+pixel comparison strictness are unchanged.
