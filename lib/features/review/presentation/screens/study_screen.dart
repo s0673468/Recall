@@ -206,6 +206,10 @@ class StudyScreen extends StatelessWidget {
           syncErrors: s.syncErrors,
           onUndo: undoable ? controller.undo : null,
           notice: controller.flagNotice,
+          liked: controller.currentLiked,
+          onLike: controller.rateInFlight || controller.likeInFlight
+              ? null
+              : () => unawaited(_absorbRefusedSave(controller.toggleLike())),
           onDislike: controller.rateInFlight
               ? null
               : () => unawaited(
@@ -329,6 +333,8 @@ class _Header extends StatelessWidget {
   final int syncErrors;
   final VoidCallback? onUndo;
   final VoidCallback? onDislike;
+  final VoidCallback? onLike;
+  final bool liked;
   final VoidCallback? onDelete;
   final String? notice;
   final VoidCallback onMore;
@@ -346,6 +352,8 @@ class _Header extends StatelessWidget {
     required this.onSession,
     this.onUndo,
     this.onDislike,
+    this.onLike,
+    this.liked = false,
     this.onDelete,
     this.notice,
   });
@@ -369,7 +377,7 @@ class _Header extends StatelessWidget {
       LayoutBuilder(
         builder: (context, constraints) {
           final stackActions =
-              constraints.maxWidth < 360 ||
+              constraints.maxWidth < 420 ||
               MediaQuery.textScalerOf(context).scale(1) > 1.3;
           final heading = Text(
             title,
@@ -383,6 +391,14 @@ class _Header extends StatelessWidget {
           final actions = Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              IconButton(
+                key: const Key('recall_flag_like'),
+                tooltip: 'Like it · keep this style',
+                isSelected: liked,
+                icon: const Icon(Icons.thumb_up_outlined, size: 20),
+                selectedIcon: const Icon(Icons.thumb_up, size: 20),
+                onPressed: onLike,
+              ),
               IconButton(
                 key: const Key('recall_flag_dislike'),
                 tooltip: 'Don’t like it · hide until Sunday review',

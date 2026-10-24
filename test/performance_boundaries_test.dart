@@ -62,6 +62,10 @@ class _MetadataController extends ChangeNotifier implements ReviewController {
 
   @override
   bool get rateInFlight => _rateInFlight;
+  @override
+  bool get currentLiked => false;
+  @override
+  bool get likeInFlight => false;
 
   set rateLocked(bool value) {
     _rateInFlight = value;

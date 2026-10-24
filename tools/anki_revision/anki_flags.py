@@ -81,6 +81,7 @@ def cmd_list(args):
         path="note_flags",
         params={
             "status": "eq.open",
+            **({"reason": f"eq.{args.reason}"} if getattr(args, "reason", None) else {}),
             "order": "flagged_at.asc",
             "select": "id,guid,reason,flagged_at,device",
         },
@@ -103,19 +104,25 @@ def cmd_list(args):
         local = by_guid.get(f["guid"], {})
         out.append({**f, **local})
     if args.nids_file:
-        nids = sorted({f["nid"] for f in out if "nid" in f})
-        json.dump(nids, open(args.nids_file, "w"))
+        # Likes are examples, never an implicit priority revise subset.
+        nids = sorted({f["nid"] for f in out if "nid" in f and f["reason"] != "like"})
+        with open(args.nids_file, "w") as output:
+            json.dump(nids, output)
         print(f"{len(flags)} open flags -> {len(nids)} local nids -> {args.nids_file}")
     elif args.json:
         print(json.dumps(out, ensure_ascii=False, indent=1))
     else:
         if not out:
             print("no open flags")
-        for f in out:
-            print(
-                f"#{f['id']} [{f['reason']}] {f.get('deck', '?')} nid={f.get('nid', '?')} "
-                f"{f['flagged_at'][:10]} | {f.get('front', '(guid not in local collection)')}"
-            )
+        for liked, heading in ((False, "Revision flags"), (True, "Liked (keep this style)")):
+            group = [f for f in out if (f["reason"] == "like") == liked]
+            if group:
+                print(f"{heading} ({len(group)})")
+            for f in group:
+                print(
+                    f"#{f['id']} [{f['reason']}] {f.get('deck', '?')} nid={f.get('nid', '?')} "
+                    f"{f['flagged_at'][:10]} | {f.get('front', '(guid not in local collection)')}"
+                )
 
 
 def cmd_close(args, status):
@@ -125,7 +132,7 @@ def cmd_close(args, status):
         key,
         method="PATCH",
         path="note_flags",
-        params={"id": f"eq.{args.flag_id}", "status": "eq.open"},
+        params={"id": f"eq.{args.flag_id}", "status": "eq.open", "reason": "neq.like"},
         body={
             "status": status,
             "resolved_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -143,6 +150,7 @@ def main():
     lp = sub.add_parser("list")
     lp.add_argument("--json", action="store_true")
     lp.add_argument("--nids-file")
+    lp.add_argument("--reason", choices=("wrong", "confusing", "too_long", "duplicate", "dislike", "delete", "like"))
     for name in ("resolve", "dismiss"):
         p = sub.add_parser(name)
         p.add_argument("flag_id", type=int)

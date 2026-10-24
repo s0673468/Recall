@@ -1,6 +1,6 @@
 --- a/lib/features/review/application/review_controller.dart
 +++ b/lib/features/review/application/review_controller.dart
-@@ -2919,6 +2919,10 @@
+@@ -3093,6 +3093,10 @@
      } while (_flushFollowUp);
    }
  
@@ -11,7 +11,7 @@
    /// Reviews the server permanently refused, by owner scope and delivery id.
    /// They stay in the durable outbox (and in [ReviewState.pendingSync]) but
    /// are skipped until the app restarts, so one can never hold the rest.
-@@ -2953,6 +2957,7 @@
+@@ -3127,6 +3131,7 @@
      // local storage error: only the network's answer says it is unreachable.
      Object? sendFailure;
      final acknowledged = <Map<String, dynamic>>[];
@@ -19,7 +19,7 @@
      final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
        pending,
        legacyReviews: true,
-@@ -3027,10 +3032,25 @@
+@@ -3201,10 +3206,25 @@
          if (sending) sendFailure = error;
          debugPrint('Recall: review sync deferred (offline?)');
          break;

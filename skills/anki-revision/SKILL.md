@@ -51,10 +51,21 @@ resolution proving the current golden standard, full-catalog duplicate search,
 and concept-node ownership as either assigned to an existing node or proposed
 as a new node before dry run or apply.
 
-For routine gardening, build a bounded 20–40 card queue. Open learner flags
+Before suggesting improvements, read the liked cards from open `like` flags
+(`anki_flags.py list --reason like --json`). Read their full fronts and backs
+by the returned nids/guids; the truncated list previews alone are insufficient.
+Summarize their shared length, structure, wording, cloze style, examples, and formatting. Apply
+those observed preferences to suggested edits of other cards, alongside the
+quality standard. If there are no likes or no shared traits, say so instead of
+inventing preferences. Mention which preferences were applied in the weekly
+summary. Likes are standing preferences, never revision work items: never
+rewrite a liked card only because it is flagged, and never resolve or dismiss
+likes during the weekly pass. The learner removes likes in Recall.
+
+For routine gardening, build a bounded 20–40 card queue. Open corrective learner flags
 come first; mature Again rate, lapses, slow answers, failed post-edit validation,
 and due `volatile` claims supply the remaining evidence. Resolve flags only
-after exact local and cloud readback.
+after exact local and cloud readback. Keep the existing dislike/delete flow.
 
 The versioned importer is the production source. Installed skill copies contain
 this skill file only; they must not become a second source of executable tools.

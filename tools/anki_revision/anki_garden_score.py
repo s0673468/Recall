@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build a bounded evidence-led Recall card-gardening queue.
 
-Open learner flags always come first. Remaining cards are ranked using mature
+Open corrective learner flags come first; likes are standing preferences.
+Remaining cards are ranked using mature
 Again rates, Anki lapses, slow-answer rates, failed post-edit validation, and
 volatile claims whose source recheck is due. This command is read-only.
 """
@@ -80,6 +81,10 @@ def _signal_ids(value: object, label: str) -> tuple[set[int], set[str]]:
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             raise GardenError(f"{label}[{index}] must be an object")
+        if label == "flags" and (
+            row.get("reason") == "like" or row.get("status", "open") != "open"
+        ):
+            continue
         nid, guid = row.get("nid"), row.get("guid")
         if isinstance(nid, int) and nid > 0:
             nids.add(nid)
@@ -252,9 +257,10 @@ def fetch_cloud_signals(
             start += 1000
         flags = (
             client.table("note_flags")
-            .select("guid")
+            .select("guid,reason,status")
             .eq("user_id", user_id)
-            .is_("resolved_at", "null")
+            .eq("status", "open")
+            .neq("reason", "like")
             .execute()
             .data
         )

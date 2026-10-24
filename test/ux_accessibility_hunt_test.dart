@@ -124,6 +124,7 @@ void main() {
         addTearDown(controller.dispose);
         await _pump(tester, StudyScreen(controller: controller), scale: scale);
         for (final finder in [
+          _iconButton('Like it · keep this style'),
           _iconButton('Don’t like it · hide until Sunday review'),
           _iconButton('Flag for deletion'),
           _iconButton('More options'),
@@ -482,6 +483,10 @@ class _StudyFixture extends ChangeNotifier implements ReviewController {
   bool get undoInFlight => false;
   @override
   bool get rateInFlight => false;
+  @override
+  bool get currentLiked => false;
+  @override
+  bool get likeInFlight => false;
   @override
   String? get flagNotice => null;
   @override

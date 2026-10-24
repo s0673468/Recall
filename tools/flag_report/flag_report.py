@@ -24,7 +24,7 @@ import urllib.request
 from typing import Iterable, Mapping, Sequence
 
 
-FLAG_REASONS = ("wrong", "confusing", "too_long", "duplicate", "dislike", "delete")
+FLAG_REASONS = ("wrong", "confusing", "too_long", "duplicate", "dislike", "delete", "like")
 REQUIRED_SCHEMA = {
     "note_flags": ("card_id", "guid", "reason", "flagged_at"),
     "notes": ("guid", "front", "deck_id"),
@@ -222,7 +222,7 @@ def _parse_flag_rows(rows: Iterable[Mapping[str, object]]) -> list[tuple[str, st
         if reason not in FLAG_REASONS:
             raise DataContractError(
                 "note_flags contains a reason outside the fixed live set "
-                "(wrong, confusing, too_long, duplicate); no report was written",
+                "(wrong, confusing, too_long, duplicate, dislike, delete, like); no report was written",
             )
         parsed.append((guid, str(reason), _parse_timestamp(row.get("flagged_at"))))
     return parsed
@@ -238,6 +238,7 @@ def fetch_flags(url: str, key: str) -> list[tuple[str, str, datetime]]:
             key,
             table="note_flags",
             params={
+                "status": "eq.open",
                 "select": "card_id,guid,reason,flagged_at",
                 "order": "flagged_at.asc,guid.asc",
                 "limit": str(PAGE_SIZE),
@@ -409,7 +410,7 @@ def render_markdown(records: Iterable[FlagRecord]) -> str:
             continue
         lines.extend(
             [
-                f"## {reason} ({len(reason_records)})",
+                f"## {'Liked (keep this style)' if reason == 'like' else reason} ({len(reason_records)})",
                 "",
                 "| GUID | Front prefix | Deck | Date (UTC) |",
                 "| --- | --- | --- | --- |",
