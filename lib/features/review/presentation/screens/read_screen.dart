@@ -37,6 +37,7 @@ class ReadScreen extends StatefulWidget {
   final List<String> relatedNodeIds;
   final bool showHeader;
   final bool libraryFirst;
+  final DateTime Function() clock;
 
   ReadScreen({
     super.key,
@@ -46,6 +47,7 @@ class ReadScreen extends StatefulWidget {
     this.relatedNodeIds = const [],
     this.showHeader = true,
     this.libraryFirst = false,
+    this.clock = DateTime.now,
   }) : store = store ?? LocalReviewStore();
 
   @override
@@ -136,9 +138,21 @@ class ReadScreenState extends State<ReadScreen> {
               UiSpacing.md,
               UiSpacing.xl,
             ),
-            children: const [
-              SizedBox(height: UiSpacing.xl),
-              Center(child: CircularProgressIndicator()),
+            children: [
+              if (widget.showHeader) const RecallPageHeader(title: 'Read'),
+              const SizedBox(height: UiSpacing.xl),
+              const Center(
+                child: CircularProgressIndicator(
+                  semanticsLabel: 'Loading primers',
+                ),
+              ),
+              const SizedBox(height: UiSpacing.md),
+              const Center(
+                child: Text(
+                  'Loading primers…',
+                  style: TextStyle(color: UiColors.textMuted),
+                ),
+              ),
             ],
           );
         } else if (snapshot.hasError || !snapshot.hasData) {
@@ -167,11 +181,12 @@ class ReadScreenState extends State<ReadScreen> {
           );
         } else {
           final data = snapshot.data!;
+          final now = widget.clock();
           final todayPages = ConceptAttribution.recentConceptPages(
             reviewLog: data.reviewLog,
             noteTags: data.noteTags,
             conceptPages: data.conceptPages,
-            today: DateTime.now(),
+            today: now,
           );
           final rereadPages = visibleRemediationPages(
             queue: data.remediation,
@@ -190,7 +205,7 @@ class ReadScreenState extends State<ReadScreen> {
           };
           final chatPages = ConceptAttribution.recentChatPages(
             conceptPages: data.conceptPages,
-            now: DateTime.now(),
+            now: now,
           );
           final library = Column(
             key: const Key('recall_read_library'),
@@ -289,7 +304,6 @@ class ReadScreenState extends State<ReadScreen> {
                           for (final page in chatPages)
                             PrimerRow(
                               page: page,
-                              module: moduleByNode[page.nodeId],
                               onTap: () => unawaited(
                                 _openPrimer(page, data.conceptNodes),
                               ),
@@ -321,9 +335,11 @@ class ReadScreenState extends State<ReadScreen> {
                     if (rereadPages.isNotEmpty && todayPages.isNotEmpty)
                       const SizedBox(height: UiSpacing.md),
                     if (todayPages.isEmpty && rereadPages.isEmpty)
-                      const Text(
-                        'Nothing reviewed in the last 3 days. Your full library is ready below.',
-                        style: TextStyle(color: UiColors.textMuted),
+                      Text(
+                        data.conceptPages.isEmpty
+                            ? 'No recent reading yet.'
+                            : 'Nothing reviewed in the last 3 days. Your full library is ready below.',
+                        style: const TextStyle(color: UiColors.textMuted),
                       ),
                     if (todayPages.isNotEmpty)
                       RecallListGroup(

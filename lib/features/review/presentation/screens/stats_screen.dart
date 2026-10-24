@@ -31,7 +31,15 @@ class StatsScreen extends StatefulWidget {
   final RecallApi api;
   final ReviewController controller;
 
-  const StatsScreen({super.key, required this.api, required this.controller});
+  /// Shared date source for all chart windows; defaults to the local clock.
+  final DateTime Function() clock;
+
+  const StatsScreen({
+    super.key,
+    required this.api,
+    required this.controller,
+    this.clock = DateTime.now,
+  });
 
   @override
   State<StatsScreen> createState() => StatsScreenState();
@@ -125,7 +133,7 @@ class StatsScreenState extends State<StatsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final today = DateTime.now();
+    final today = widget.clock();
     // Every transform below depends on the calendar day only.
     final day = StatsService.dayOnly(today);
     ({String recall, int reviews, int streak}) tiles(
