@@ -30,9 +30,9 @@ const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
 const _storeBlob = '6b971b395d5b63b82cdf66134667e0eedb50ee30';
 const _baselineControllerSha =
-    '785c1cc281059722df498561501fd392c701b09c5572de5d0fcc76582ef576f0';
+    'b3d90eab96f173391ed56504dde79d631681c54d975cdacaf96031718dd48ccb';
 const _checkpointControllerSha =
-    '20bdd44241c133878e100fc44a469456c54a74b77508ea7d13ed25226f214dbf';
+    '692e9616f875d96cb1a6c1b6837d17146adc72c2ab8340af9eb7704ade26b4e0';
 const _checkpointPatchSha =
     '12b80894e29cccf1fbb9366def4ebeea1ca831fe761cd0c7e2ba252b80a7f902';
 

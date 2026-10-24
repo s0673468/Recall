@@ -145,6 +145,9 @@ class StudyScreen extends StatelessWidget {
         // Hidden while nothing is undoable AND while an undo is completing
         // (rate() is blocked then too — nothing may interleave the restore).
         final undoable = controller.canUndo && !controller.undoInFlight;
+        final undoLabel = s.undoRestoresHiddenCard
+            ? 'Undo hide'
+            : 'Undo last rating';
 
         if (s.loading) {
           return const RecallMotionSwap(
@@ -183,7 +186,7 @@ class StudyScreen extends StatelessWidget {
                   announceSubtitle: true,
                   action: 'Reload',
                   onAction: controller.refresh,
-                  secondaryAction: undoable ? 'Undo last rating' : null,
+                  secondaryAction: undoable ? undoLabel : null,
                   onSecondaryAction: undoable ? controller.undo : null,
                 ),
               ),
@@ -213,7 +216,7 @@ class StudyScreen extends StatelessWidget {
                     // A mis-tap on the session's last card lands here — keep it
                     // recoverable (undo survives until the queue is reloaded).
                     secondaryAction: undoable
-                        ? 'Undo last rating'
+                        ? undoLabel
                         : (canKeepGoing ? 'Reload' : null),
                     onSecondaryAction: undoable
                         ? controller.undo

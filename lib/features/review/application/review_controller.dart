@@ -300,7 +300,7 @@ class ReviewController extends ChangeNotifier {
       _timedCardId = current?.id;
       _cardShownAt = current == null ? null : clock();
     }
-    _state = next.copyWith(reviewedToday: _reviewedToday);
+    _state = _withUndoState(next.copyWith(reviewedToday: _reviewedToday));
     notifyListeners();
   }
 
@@ -3074,7 +3074,7 @@ class ReviewController extends ChangeNotifier {
   _UndoRecord? _undo;
   bool _undoInFlight = false;
 
-  /// Whether the most recent rating can still be reverted.
+  /// Whether the most recent rating or hide can still be reverted.
   bool get canUndo => !_rateInFlight && (_undo != null || _hideUndo != null);
 
   /// True while [undo] is completing. [rate] is blocked for the duration and
@@ -3535,6 +3535,10 @@ class ReviewController extends ChangeNotifier {
       await _refreshLikedFlags();
     }
   }
+
+  /// Project the session's Undo record into presentation-only state.
+  ReviewState _withUndoState(ReviewState next) =>
+      next.copyWith(undoRestoresHiddenCard: _hideUndo != null);
 
   /// Background work (queue loads, outbox flushes) can finish after the
   /// controller is disposed; notifying then throws in debug builds. Swallow
