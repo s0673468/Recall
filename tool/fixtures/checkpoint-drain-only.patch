@@ -1,6 +1,6 @@
 --- a/lib/features/review/application/review_controller.dart
 +++ b/lib/features/review/application/review_controller.dart
-@@ -2919,6 +2919,10 @@
+@@ -3044,6 +3044,10 @@
      } while (_flushFollowUp);
    }
  
@@ -11,7 +11,7 @@
    /// Reviews the server permanently refused, by owner scope and delivery id.
    /// They stay in the durable outbox (and in [ReviewState.pendingSync]) but
    /// are skipped until the app restarts, so one can never hold the rest.
-@@ -2953,6 +2957,7 @@
+@@ -3078,6 +3082,7 @@
      // local storage error: only the network's answer says it is unreachable.
      Object? sendFailure;
      final acknowledged = <Map<String, dynamic>>[];
@@ -19,15 +19,32 @@
      final uniqueIds = LocalReviewStore.uniqueDeliveryIds(
        pending,
        legacyReviews: true,
-@@ -3027,10 +3032,25 @@
-         if (sending) sendFailure = error;
+@@ -3153,9 +3158,42 @@
          debugPrint('Recall: review sync deferred (offline?)');
          break;
-+      }
+       }
 +      if (acknowledged.length >= _reviewFlushCheckpointSize) {
 +        if (!cacheInvalidated) {
 +          RecallReadCache.of(api).reviewsChanged();
 +          cacheInvalidated = true;
++        }
++        // Persist accepted identities before removing their only durable local
++        // copy. A failed cache write leaves the idempotent review queued for retry.
++        if (acknowledged.isNotEmpty) {
++          await store.dailyReviewEvents(
++            now: clock(),
++            ownerScope: ownerScope,
++            requirePersistence: true,
++            includePending: false,
++            merge: acknowledged
++                .map(DailyReviewEvent.fromPending)
++                .whereType<DailyReviewEvent>()
++                .map((event) => event.receipt),
++          );
++          if (_flushStillOwnsSession(ownerId, ownerScope)) {
++            _dailyEventsRevision++;
++            _mergeDailyEvents(acknowledged.map(DailyReviewEvent.fromPending));
++          }
 +        }
 +        // A failed native acknowledgement stops this pass; it never licenses
 +        // draining a later event in place of this captured identity batch.
@@ -36,13 +53,13 @@
 +          ownerScope: ownerScope,
 +        );
 +        acknowledged.clear();
-       }
++      }
      }
      // Delivered reviews changed the server's log and due dates.
 -    if (acknowledged.isNotEmpty) RecallReadCache.of(api).reviewsChanged();
 +    if (acknowledged.isNotEmpty && !cacheInvalidated) {
 +      RecallReadCache.of(api).reviewsChanged();
 +    }
-     final remaining = await store.removeAcknowledgedReviews(
-       acknowledged,
-       ownerScope: ownerScope,
+     // Persist accepted identities before removing their only durable local
+     // copy. A failed cache write leaves the idempotent review queued for retry.
+     if (acknowledged.isNotEmpty) {

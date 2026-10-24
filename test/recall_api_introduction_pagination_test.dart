@@ -18,7 +18,10 @@ void main() {
       final client = fixture.client();
       addTearDown(client.dispose);
 
-      await RecallApi(client).fetchQueue(newLimit: 20);
+      await RecallApi(
+        client,
+        clock: () => fixture.now,
+      ).fetchQueue(newLimit: 20);
 
       expect(fixture.newLimit, 16);
       expect(fixture.todayRequests.map((uri) => uri.queryParameters['id']), [
@@ -53,7 +56,10 @@ void main() {
       final client = fixture.client();
       addTearDown(client.dispose);
 
-      await RecallApi(client).fetchQueue(newLimit: 20);
+      await RecallApi(
+        client,
+        clock: () => fixture.now,
+      ).fetchQueue(newLimit: 20);
 
       expect(fixture.newLimit, 19);
       expect(fixture.priorRequests.map((uri) => uri.queryParameters['id']), [
@@ -75,7 +81,10 @@ void main() {
       final client = fixture.client();
       addTearDown(client.dispose);
 
-      await RecallApi(client).fetchQueue(newLimit: 20);
+      await RecallApi(
+        client,
+        clock: () => fixture.now,
+      ).fetchQueue(newLimit: 20);
 
       expect(fixture.newLimit, 20);
       expect(fixture.priorRequests, hasLength(1));
@@ -88,7 +97,7 @@ void main() {
     final client = fixture.client();
     addTearDown(client.dispose);
 
-    await RecallApi(client).fetchQueue(newLimit: 2);
+    await RecallApi(client, clock: () => fixture.now).fetchQueue(newLimit: 2);
 
     expect(fixture.newLimit, 0);
   });
@@ -106,7 +115,7 @@ void main() {
         final client = fixture.client();
         addTearDown(client.dispose);
 
-        await RecallApi(client).fetchQueue(
+        await RecallApi(client, clock: () => fixture.now).fetchQueue(
           deckId: explicitDeck ? 7 : null,
           includedDeckIds: explicitDeck ? {4} : {9, 7},
           newLimit: 10,
@@ -134,13 +143,16 @@ void main() {
     addTearDown(client.dispose);
 
     expect(
-      await RecallApi(client).fetchQueue(includedDeckIds: const {}),
+      await RecallApi(
+        client,
+        clock: () => fixture.now,
+      ).fetchQueue(includedDeckIds: const {}),
       isEmpty,
     );
     expect(fixture.requests, isEmpty);
   });
 
-  test('paging preserves the existing half-open local-day boundary', () async {
+  test('paging preserves the half-open Sao Paulo study-day boundary', () async {
     final fixture = _HistoryFixture(cap: 1, today: [(10, 41), (20, 42)]);
     // These rows prove start is inclusive and end is exclusive. The earlier
     // review prevents card 41 from being counted as a first introduction.
@@ -163,7 +175,7 @@ void main() {
     final client = fixture.client();
     addTearDown(client.dispose);
 
-    await RecallApi(client).fetchQueue(newLimit: 10);
+    await RecallApi(client, clock: () => fixture.now).fetchQueue(newLimit: 10);
 
     expect(fixture.newLimit, 9);
     for (final uri in fixture.todayRequests) {
@@ -179,6 +191,29 @@ void main() {
     }
   });
 
+  for (final now in [
+    DateTime.utc(2026, 10, 24, 23, 59),
+    DateTime.utc(2026, 10, 25, 2, 59),
+    DateTime.parse('2026-10-25T11:59:00+09:00'),
+  ]) {
+    test('UTC midnight does not reset the study budget at $now', () async {
+      final fixture = _HistoryFixture(cap: 1, today: [(10, 41), (20, 42)]);
+      final client = fixture.client();
+      addTearDown(client.dispose);
+
+      await RecallApi(client, clock: () => now).fetchQueue(newLimit: 10);
+
+      expect(fixture.newLimit, 8);
+      expect(fixture.todayRequests, hasLength(3));
+      for (final uri in fixture.todayRequests) {
+        expect(uri.queryParametersAll['rating_at'], [
+          'gte.2026-10-24T03:00:00.000Z',
+          'lt.2026-10-25T03:00:00.000Z',
+        ]);
+      }
+    });
+  }
+
   test(
     'large daily ID sets use bounded independent prior-history batches',
     () async {
@@ -190,7 +225,10 @@ void main() {
       final client = fixture.client();
       addTearDown(client.dispose);
 
-      await RecallApi(client).fetchQueue(newLimit: 250);
+      await RecallApi(
+        client,
+        clock: () => fixture.now,
+      ).fetchQueue(newLimit: 250);
 
       expect(fixture.newLimit, 148);
       final batches = {
@@ -228,7 +266,7 @@ void main() {
         addTearDown(client.dispose);
 
         await expectLater(
-          RecallApi(client).fetchQueue(newLimit: 20),
+          RecallApi(client, clock: () => fixture.now).fetchQueue(newLimit: 20),
           throwsA(
             isA<StateError>().having(
               (error) => error.message,
@@ -255,7 +293,7 @@ void main() {
       addTearDown(client.dispose);
 
       await expectLater(
-        RecallApi(client).fetchQueue(newLimit: 20),
+        RecallApi(client, clock: () => fixture.now).fetchQueue(newLimit: 20),
         throwsA(isA<PostgrestException>()),
       );
 
@@ -273,8 +311,9 @@ class _HistoryFixture {
   final Map<int, int> decks;
   final List<Map<String, dynamic>> rows = [];
   final List<Uri> requests = [];
-  late final DateTime start;
-  late final DateTime end;
+  final DateTime now = DateTime.utc(2026, 10, 24, 15);
+  final DateTime start = DateTime.utc(2026, 10, 24, 3);
+  final DateTime end = DateTime.utc(2026, 10, 25, 3);
 
   _HistoryFixture({
     required this.cap,
@@ -285,9 +324,6 @@ class _HistoryFixture {
     this.repeatPrior = false,
     this.failAfter,
   }) {
-    final now = DateTime.now();
-    start = DateTime(now.year, now.month, now.day);
-    end = start.add(const Duration(days: 1));
     rows.addAll([
       for (final (id, cardId) in prior)
         row(id, cardId, start.subtract(const Duration(seconds: 1))),
