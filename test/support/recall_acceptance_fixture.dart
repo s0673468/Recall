@@ -488,6 +488,19 @@ class SanitizedRecallApi extends RecallApi {
   final Set<String> _dismissedFlagIds = {};
 
   @override
+  Future<List<Map<String, dynamic>>> fetchLikedFlags() async {
+    _requireOnline();
+    return [
+      for (final flag
+          in _appliedFlagsByOwner[_requireOwnerId()] ??
+              const <Map<String, dynamic>>[])
+        if (flag['reason'] == 'like' &&
+            !_dismissedFlagIds.contains(flag['client_id']))
+          Map<String, dynamic>.from(flag),
+    ];
+  }
+
+  @override
   Future<Set<int>> fetchHiddenCardIds() async {
     _requireOnline();
     return {

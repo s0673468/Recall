@@ -516,6 +516,17 @@ class FakeRecallApi implements RecallApi {
     };
   }
 
+  @override
+  Future<List<Map<String, dynamic>>> fetchLikedFlags() async {
+    if (failFetchHidden) throw StateError('offline');
+    return [
+      for (final flag in flagged)
+        if (flag['reason'] == 'like' &&
+            !dismissedFlags.contains(flag['client_id']))
+          Map<String, dynamic>.from(flag),
+    ];
+  }
+
   /// Awaited inside dismissFlag — lets tests hold a withdrawal open.
   Future<void> Function()? beforeDismissFlag;
 

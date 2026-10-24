@@ -28,13 +28,13 @@ const _patchSha = String.fromEnvironment('RECALL_PATCH_SHA256');
 const _fixtureSha = String.fromEnvironment('RECALL_FIXTURE_SHA256');
 const _enabled = bool.fromEnvironment('RECALL_SYNTHETIC_NATIVE_OUTBOX_COST');
 const _package = 'com.german.recall.syntheticbenchmark';
-const _storeBlob = '4263f81a878b1543ba39fb5339536d688c3e54a8';
+const _storeBlob = '316ba994f6403ef3be72d6885d06a710353d4411';
 const _baselineControllerSha =
-    '22e0f2ca4335c5275616757f2ecfdb5ef30113cbd858ef5253f1ecaa903db515';
+    '441266ce03e6b294e9cd3f299c4ddaad0f4f8a38683609aee08698b5a091f453';
 const _checkpointControllerSha =
-    '8bf811b993b18041a1b412c9b4bddcd2d0feeb3227a68c051b3b2acf44a6b490';
+    '22aac21746798c119e53cb4454b4b8751e476580b05fd9f6de7e41bbd5952fd5';
 const _checkpointPatchSha =
-    'e2b1fd925a43d0f17325aaa5f0afb9e7880a0903320d21f819e55fd14653ddd7';
+    '554a9215d3e96bc3330a08f9b6e390ac1c52c40fc48499259bd57dcdceb1bd5f';
 
 void _require(bool condition) {
   if (!condition) throw StateError('synthetic_outbox_contract_refused');

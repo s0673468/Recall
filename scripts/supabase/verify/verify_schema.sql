@@ -248,6 +248,16 @@ begin
   if not exists (
     select 1
       from pg_catalog.pg_constraint
+     where conrelid = 'public.note_flags'::regclass
+       and conname = 'note_flags_reason_check'
+       and pg_get_constraintdef(oid) like '%''like''%'
+  ) then
+    raise exception 'VERIFY FAILED: note_flags lacks the like reason (apply 010)';
+  end if;
+
+  if not exists (
+    select 1
+      from pg_catalog.pg_constraint
      where conrelid = 'public.cards'::regclass
        and conname = 'cards_note_id_fkey'
        and confrelid = 'public.notes'::regclass
@@ -314,6 +324,10 @@ begin
   end if;
   if position('note_flags' in v_function_def) = 0 then
     raise exception 'VERIFY FAILED: deck_counts() does not exclude hidden flagged cards (apply 007)';
+  end if;
+  if v_function_def not like '%f.reason%''dislike''%''delete''%'
+     or position('''like''' in v_function_def) > 0 then
+    raise exception 'VERIFY FAILED: deck_counts() must hide only dislike/delete, never likes';
   end if;
 
   if to_regprocedure(

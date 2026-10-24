@@ -499,6 +499,9 @@ class ReviewController extends ChangeNotifier {
     _hideUndo = null;
     _ratedCatchUpCardIds.clear();
     _hiddenCardIds = const {};
+    _likedFlags = [];
+    _unconfirmedLikeEntry = null;
+    _likesRevision++;
     _hidesInFlight.clear();
     _aheadSession = false;
     _flagNoticeTimer?.cancel();
@@ -606,6 +609,13 @@ class ReviewController extends ChangeNotifier {
   /// flag. Server open flags are the truth; the local copy covers flags that
   /// have not synced yet and offline cold starts.
   Set<int> _hiddenCardIds = const {};
+  List<Map<String, dynamic>> _likedFlags = [];
+  int _likesRevision = 0;
+  bool _likeInFlight = false;
+  Map<String, dynamic>? _unconfirmedLikeEntry;
+  bool get likeInFlight => _likeInFlight;
+  bool get currentLiked =>
+      _likedFlags.any((flag) => flag['card_id'] == _state.current?.id);
 
   /// Hides whose durable flag write is still in flight. A reload that
   /// re-reads storage meanwhile must keep them hidden.
@@ -697,6 +707,8 @@ class ReviewController extends ChangeNotifier {
       return;
     }
     _hiddenCardIds = {...cachedHidden, ..._hidesInFlight};
+    await _loadLikedFlags();
+    if (loadToken != _loadSequence) return;
     var snapshotPainted = false;
     if (!deckChanged && _state.queue.isEmpty) {
       final snapshot = await store.loadSnapshot(deckId: _state.deckFilter);
@@ -773,6 +785,7 @@ class ReviewController extends ChangeNotifier {
     // Flags have no bearing on the fetched queue, so drain them off the
     // critical path — never let a flag flush delay the load.
     _syncInBackground(_flushFlagOutbox());
+    _syncInBackground(_refreshLikedFlags());
 
     final generationAtFetch = _interactionGeneration;
     final queueAtFetch = _state.queue;
@@ -2214,6 +2227,7 @@ class ReviewController extends ChangeNotifier {
     'confusing',
     'too_long',
     'duplicate',
+    'like',
     ...hideReasons,
   };
 
@@ -2236,7 +2250,93 @@ class ReviewController extends ChangeNotifier {
   /// review, survives an offline session. Its `client_id` comes from the same
   /// install-scoped minter reviews use, so it stays unique across restarts and
   /// across devices — `note_flags` dedupes on it exactly like `review_log`.
-  Future<void> flag(String reason) => _runStudyAction(() => _flag(reason));
+  Future<void> flag(String reason) =>
+      reason == 'like' ? toggleLike() : _runStudyAction(() => _flag(reason));
+
+  /// Likes use the flag outbox but leave the current review untouched.
+  Future<void> toggleLike() => _runStudyAction(_toggleLike);
+
+  Future<void> _toggleLike() async {
+    final card = _state.current;
+    if (card == null || _rateInFlight || _likeInFlight) return;
+    _likeInFlight = true;
+    _likesRevision++;
+    notifyListeners();
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final generation = _sessionSetupGeneration;
+    bool ownsSession() =>
+        generation == _sessionSetupGeneration &&
+        _flushStillOwnsSession(ownerId, ownerScope);
+    try {
+      final existing = _likedFlags
+          .where((f) => f['card_id'] == card.id)
+          .toList();
+      // A retry of an unknown native commit keeps the exact event and intent.
+      final retry = _unconfirmedLikeEntry;
+      final Map<String, dynamic> entry;
+      if (retry != null && retry['card_id'] == card.id) {
+        entry = retry;
+      } else if (existing.isEmpty) {
+        final clientId = await _flagClientId();
+        if (!ownsSession()) return;
+        entry = {
+          'card_id': card.id,
+          'guid': card.guid,
+          'reason': 'like',
+          'flagged_at': clock().toUtc().toIso8601String(),
+          'device': api.device,
+          'client_id': clientId,
+        };
+      } else {
+        // Replace a pending insert with a withdrawal, including a lost ACK.
+        // The serialized flush finishes an active insert before withdrawing it.
+        entry = {
+          'op': dismissOp,
+          'reason': 'like',
+          'card_id': card.id,
+          'client_id': existing.first['client_id'],
+          'like_client_ids': [for (final flag in existing) flag['client_id']],
+        };
+      }
+      final clientId = entry['client_id'] as String;
+      try {
+        await store.enqueueFlag(entry);
+      } catch (error, stackTrace) {
+        final int? saved;
+        try {
+          saved = await _savedDespite(
+            error,
+            stackTrace,
+            () => store.settleUnknownFlag(clientId, ownerScope: ownerScope),
+          );
+        } on StudyActionUnconfirmedException {
+          if (ownsSession()) _unconfirmedLikeEntry = entry;
+          _unconfirmedFlag = (clientId: clientId, ownerScope: ownerScope);
+          if (ownsSession()) _showFlagNotice(saveUnconfirmedNotice);
+          rethrow;
+        }
+        if (saved == null) {
+          if (ownsSession()) _showFlagNotice(saveRefusedNotice);
+          _throwNotSaved(error, stackTrace);
+        }
+      }
+      if (!ownsSession()) return;
+      _unconfirmedLikeEntry = null;
+      if (_unconfirmedFlag?.clientId == clientId) _unconfirmedFlag = null;
+      _likedFlags = _mergeLikedFlags(_likedFlags, [entry]);
+      _likesRevision++;
+      await _cacheLikedFlags(ownerScope, ownsSession);
+      if (!ownsSession()) return;
+      _showFlagNotice(
+        entry['op'] == dismissOp ? 'Like removed' : 'Liked · keep this style',
+      );
+      _syncInBackground(_flushFlagOutbox());
+    } finally {
+      _likeInFlight = false;
+      notifyListeners();
+    }
+  }
 
   Future<void> _flag(String reason) async {
     final card = _state.current;
@@ -2570,7 +2670,7 @@ class ReviewController extends ChangeNotifier {
     for (final entry in pending) {
       final id = entry['card_id'];
       if (id is! num) continue;
-      if (entry['op'] == dismissOp) {
+      if (entry['op'] == dismissOp && entry['reason'] != 'like') {
         next.remove(id.toInt());
       } else if (hideReasons.contains(entry['reason'])) {
         next.add(id.toInt());
@@ -2649,6 +2749,75 @@ class ReviewController extends ChangeNotifier {
       await write();
     } catch (_) {
       debugPrint('Recall: hidden-card cache write skipped (non-fatal)');
+    }
+  }
+
+  // --- Like preferences ---
+
+  List<Map<String, dynamic>> _mergeLikedFlags(
+    List<Map<String, dynamic>> base,
+    List<Map<String, dynamic>> pending,
+  ) {
+    final next = [for (final flag in base) Map<String, dynamic>.from(flag)];
+    for (final flag in pending.where((f) => f['reason'] == 'like')) {
+      if (flag['op'] == dismissOp) {
+        next.removeWhere((f) => f['card_id'] == flag['card_id']);
+      } else if (!next.any((f) => f['client_id'] == flag['client_id'])) {
+        next.add(flag);
+      }
+    }
+    return next;
+  }
+
+  Future<void> _cacheLikedFlags(String? ownerScope, bool Function() canWrite) =>
+      _quietly(
+        () => store.replaceLikedFlags(
+          _likedFlags,
+          ownerScope: ownerScope,
+          canWrite: canWrite,
+        ),
+      );
+
+  Future<void> _loadLikedFlags() async {
+    if (_likeInFlight) return;
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final revision = _likesRevision;
+    try {
+      final cached = await store.likedFlags(ownerScope: ownerScope);
+      final pending = await store.flagOutbox(ownerScope: ownerScope);
+      if (loadToken != _loadSequence ||
+          revision != _likesRevision ||
+          !_flushStillOwnsSession(ownerId, ownerScope)) {
+        return;
+      }
+      _likedFlags = _mergeLikedFlags(cached, pending);
+    } catch (_) {
+      /* Keep the in-memory preference if cache reads fail. */
+    }
+  }
+
+  Future<void> _refreshLikedFlags() async {
+    if (_likeInFlight) return;
+    final loadToken = _loadSequence;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    final revision = _likesRevision;
+    bool stillCurrent() =>
+        loadToken == _loadSequence &&
+        revision == _likesRevision &&
+        _flushStillOwnsSession(ownerId, ownerScope);
+    try {
+      // Capture pending writes before server reads so a concurrent ACK is safe.
+      final pending = await store.flagOutbox(ownerScope: ownerScope);
+      final server = await api.fetchLikedFlags();
+      if (!stillCurrent()) return;
+      _likedFlags = _mergeLikedFlags(server, pending);
+      await _cacheLikedFlags(ownerScope, stillCurrent);
+      if (stillCurrent()) notifyListeners();
+    } catch (_) {
+      /* Offline: the cache and durable outbox retain likes. */
     }
   }
 
@@ -3179,10 +3348,15 @@ class ReviewController extends ChangeNotifier {
       if (!uniqueIds.contains(entry['client_id'])) break;
       try {
         if (entry['op'] == dismissOp) {
-          await api.dismissFlag(
-            cardId: (entry['card_id'] as num).toInt(),
-            clientEventId: entry['client_id'].toString(),
-          );
+          final ids = entry['reason'] == 'like'
+              ? (entry['like_client_ids'] as List)
+              : [entry['client_id']];
+          for (final id in ids) {
+            await api.dismissFlag(
+              cardId: (entry['card_id'] as num).toInt(),
+              clientEventId: id.toString(),
+            );
+          }
         } else {
           await api.applyFlag(entry);
         }

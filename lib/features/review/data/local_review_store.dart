@@ -33,6 +33,7 @@ class LocalReviewStore {
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
   static const _hiddenCardsKey = 'recall_hidden_cards_v1';
+  static const _likedFlagsKey = 'recall_liked_flags_v1';
   static const catchUpKey = 'recall_catch_up_v1';
   static const remediationKey = 'recall_remediation_v1';
   static const installIdKey = 'recall_install_id_v1';
@@ -1046,6 +1047,27 @@ class LocalReviewStore {
     });
   }
 
+  // --- Like preferences ---
+
+  /// Disposable, owner-scoped cache of open likes and their withdrawal IDs.
+  Future<List<Map<String, dynamic>>> likedFlags({String? ownerScope}) {
+    final key = _storageKey(_likedFlagsKey, ownerScope: ownerScope);
+    return _withOutboxLock(() async => _readList(await _prefsFor([key]), key));
+  }
+
+  Future<void> replaceLikedFlags(
+    List<Map<String, dynamic>> flags, {
+    String? ownerScope,
+    bool Function()? canWrite,
+  }) {
+    final key = _storageKey(_likedFlagsKey, ownerScope: ownerScope);
+    return _withOutboxLock(() async {
+      final prefs = await _prefsFor([key]);
+      if (canWrite != null && !canWrite()) return;
+      await _writeList(prefs, key, flags);
+    });
+  }
+
   // --- Hidden cards ---
   //
   // Cards German flagged as "don't like" or "delete" stay out of the queue
@@ -1234,6 +1256,7 @@ class LocalReviewStore {
       await prefs.remove(catchUpStorageKey);
       await prefs.remove(remediationStorageKey);
       await prefs.remove(hiddenStorageKey);
+      await prefs.remove(_storageKey(_likedFlagsKey, ownerScope: ownerScope));
       await prefs.remove(_storageKey(_deckCountsKey, ownerScope: ownerScope));
     });
   }

@@ -1046,6 +1046,37 @@ class RecallApi implements ReviewReplayGateway {
     }
   }
 
+  /// Open likes are preferences and never part of the hidden-card set.
+  Future<List<Map<String, dynamic>>> fetchLikedFlags() async {
+    final flags = <Map<String, dynamic>>[];
+    int? afterId;
+    while (true) {
+      var query = client
+          .from('note_flags')
+          .select('id,card_id,client_event_id')
+          .eq('status', 'open')
+          .eq('reason', 'like');
+      if (afterId != null) query = query.gt('id', afterId);
+      final page = await query.order('id', ascending: true).limit(_statsPageSize);
+      if (page.isEmpty) return flags;
+      final nextId = (page.last['id'] as num).toInt();
+      if (afterId != null && nextId <= afterId) {
+        throw StateError('Liked-flag pagination did not advance');
+      }
+      for (final row in page) {
+        if (row['card_id'] is! num || row['client_event_id'] is! String) {
+          throw StateError('Liked flag lacks a card or withdrawal identity');
+        }
+        flags.add({
+          'card_id': row['card_id'],
+          'client_id': row['client_event_id'],
+          'reason': 'like',
+        });
+      }
+      afterId = nextId;
+    }
+  }
+
   /// Card ids with an open "don't like" or "delete" flag. Those cards stay out
   /// of the queue until the weekly review resolves or dismisses the flag.
   Future<Set<int>> fetchHiddenCardIds() async {

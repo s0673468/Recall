@@ -87,6 +87,7 @@ void main() {
       }).toList();
       var previous = -1;
       for (final label in [
+        'Like it · keep this style',
         'Don’t like it · hide until Sunday review',
         'Flag for deletion',
         'More options',
@@ -402,6 +403,10 @@ class _Controller extends ChangeNotifier implements ReviewController {
   bool get undoInFlight => false;
   @override
   bool rateInFlight = false;
+  @override
+  bool get currentLiked => false;
+  @override
+  bool get likeInFlight => false;
   @override
   String? get flagNotice => null;
   Completer<void>? save;
