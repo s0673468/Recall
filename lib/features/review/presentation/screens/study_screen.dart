@@ -37,12 +37,36 @@ class StudyScreen extends StatelessWidget {
   });
 
   KeyEventResult _handleReviewKey(FocusNode node, KeyEvent event) {
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isControlPressed ||
+        keyboard.isAltPressed ||
+        keyboard.isMetaPressed ||
+        keyboard.isShiftPressed) {
+      return KeyEventResult.ignored;
+    }
+    // Consume held review keys without repeating an action or allowing Space
+    // to scroll the study surface. Focused controls retain their own activation.
+    if (event is KeyRepeatEvent &&
+        node.hasPrimaryFocus &&
+        const [
+          LogicalKeyboardKey.space,
+          LogicalKeyboardKey.digit1,
+          LogicalKeyboardKey.digit2,
+          LogicalKeyboardKey.digit3,
+          LogicalKeyboardKey.digit4,
+        ].contains(event.logicalKey)) {
+      return KeyEventResult.handled;
+    }
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.space) {
       // A focused button owns Space for activation. Only the study surface
       // consumes the review shortcut, preventing the default scroll action.
       if (!node.hasPrimaryFocus) return KeyEventResult.ignored;
-      controller.flip();
+      if (controller.state.showBack) {
+        unawaited(_absorbRefusedSave(controller.rate(Rating.good)));
+      } else {
+        controller.flip();
+      }
     } else if (event.logicalKey == LogicalKeyboardKey.digit1) {
       unawaited(_absorbRefusedSave(controller.rate(Rating.again)));
     } else if (event.logicalKey == LogicalKeyboardKey.digit2) {
@@ -82,6 +106,32 @@ class StudyScreen extends StatelessWidget {
           ),
         ],
       ),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Semantics(
+          label:
+              '${controller.state.reviewedToday} ${controller.state.reviewedToday == 1 ? 'card' : 'cards'} reviewed today',
+          excludeSemantics: true,
+          child: Text(
+            '${controller.state.reviewedToday} done',
+            style: const TextStyle(color: UiColors.textMuted, fontSize: 13),
+          ),
+        ),
+      ),
+      if (controller.flagNotice != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Semantics(
+            liveRegion: true,
+            child: Text(
+              controller.flagNotice!,
+              style: const TextStyle(
+                color: UiColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ),
       Expanded(child: child),
     ],
   );
