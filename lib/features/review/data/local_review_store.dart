@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../domain/daily_review_event.dart';
+import '../domain/study_day.dart';
 import 'catch_up_state.dart';
 import 'deck_count_snapshot.dart';
 import 'local_review_preferences.dart';
@@ -30,6 +32,7 @@ import 'models.dart';
 class LocalReviewStore {
   static const _snapshotKey = 'recall_snapshot_v1';
   static const _deckCountsKey = 'recall_deck_counts_v1';
+  static const _dailyReviewsKey = 'recall_daily_reviews_v1';
   static const _outboxKey = 'recall_outbox_v1';
   static const _flagOutboxKey = 'flag_outbox_v1';
   static const _hiddenCardsKey = 'recall_hidden_cards_v1';
@@ -444,6 +447,67 @@ class LocalReviewStore {
     } catch (_) {
       /* Best-effort invalidation of disposable storage. */
     }
+  }
+
+  /// Disposable, account-scoped review identities for offline restarts. Pending
+  /// reviews remain in their outbox. Merge before ACK removal so a delivered
+  /// review survives a crash even if the next history fetch has not returned.
+  Future<List<DailyReviewEvent>> dailyReviewEvents({
+    required DateTime now,
+    Iterable<DailyReviewEvent> merge = const [],
+    bool replaceCloud = false,
+    bool requirePersistence = false,
+    bool includePending = true,
+    String? ownerScope,
+  }) {
+    final key = _storageKey(_dailyReviewsKey, ownerScope: ownerScope);
+    final outboxKey = _storageKey(_outboxKey, ownerScope: ownerScope);
+    return _withOutboxLock(() async {
+      final prefs = await _prefsFor([key]);
+      final events = <String, DailyReviewEvent>{};
+      try {
+        final raw = jsonDecode(prefs.getString(key) ?? '[]') as List;
+        for (final item in raw) {
+          final event = DailyReviewEvent.decode(
+            Map<String, dynamic>.from(item as Map),
+          );
+          if (event != null &&
+              StudyDay.contains(event.at, now) &&
+              (!replaceCloud || event.awaitingHistory)) {
+            events[event.key] = event;
+          }
+        }
+      } catch (_) {
+        // This is a rebuildable read cache; never touch the durable outbox.
+      }
+      for (final event in merge) {
+        if (StudyDay.contains(event.at, now)) events[event.key] = event;
+      }
+      if (merge.isNotEmpty || replaceCloud) {
+        try {
+          if (!await prefs.setString(
+            key,
+            jsonEncode([for (final event in events.values) event.toJson()]),
+          )) {
+            throw LocalOutboxWriteException(key);
+          }
+        } catch (_) {
+          if (requirePersistence) rethrow;
+        }
+      }
+      // Read the pending side under the same ACK/Undo lock as the cache.
+      // A transfer between these sources can never leave a gap in the total.
+      if (includePending) {
+        final pendingPrefs = await _prefsFor([outboxKey]);
+        for (final row in _readOutbox(pendingPrefs, outboxKey)) {
+          final event = DailyReviewEvent.fromPending(row);
+          if (event != null && StudyDay.contains(event.at, now)) {
+            events[event.key] = event;
+          }
+        }
+      }
+      return events.values.toList();
+    });
   }
 
   /// Append one review; returns the new pending count so the caller can
@@ -1235,6 +1299,7 @@ class LocalReviewStore {
       await prefs.remove(remediationStorageKey);
       await prefs.remove(hiddenStorageKey);
       await prefs.remove(_storageKey(_deckCountsKey, ownerScope: ownerScope));
+      await prefs.remove(_storageKey(_dailyReviewsKey, ownerScope: ownerScope));
     });
   }
 
