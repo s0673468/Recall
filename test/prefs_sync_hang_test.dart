@@ -63,6 +63,7 @@ void main() {
       });
       await prefs.activateOwner(api.user!.id);
       final store = LocalReviewStore();
+      await store.activateOwner(api.user!.id);
       final controller = ReviewController(
         api: api,
         engine: FsrsEngine(),

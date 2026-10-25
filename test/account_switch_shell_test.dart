@@ -99,6 +99,7 @@ void main() {
         store: LocalReviewStore(),
         prefs: prefs,
       );
+      api.auth.add(const AuthState(AuthChangeEvent.initialSession, null));
       await controller.load();
       final dependencies = RecallDependencies(
         api: api,
