@@ -266,6 +266,9 @@ class StatsScreenState extends State<StatsScreen> {
                     totalConcepts: data.nodes.length,
                     conceptPages: data.pages,
                     conceptNodes: data.nodes,
+                    reviewLog: data.log,
+                    api: widget.api,
+                    libraryStore: () => widget.controller.store,
                   );
                 },
               ),
