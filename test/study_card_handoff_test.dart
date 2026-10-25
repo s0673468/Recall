@@ -235,6 +235,7 @@ void main() {
       tester,
       offline: false,
     );
+    debugPrint('HANDOFF: fixture ready');
     final releaseSender = Completer<void>();
     var sends = 0;
     api.beforeApplyReview = () {
@@ -244,9 +245,13 @@ void main() {
     addTearDown(() {
       if (!releaseSender.isCompleted) releaseSender.complete();
     });
+    debugPrint('HANDOFF: sender configured');
     store.release();
+    debugPrint('HANDOFF: revealing');
     await _reveal(tester);
+    debugPrint('HANDOFF: tapping Good');
     await tester.tap(find.text('Good'));
+    debugPrint('HANDOFF: pumping');
     await tester.pump();
     _expectImmediateFront(
       tester,
@@ -257,8 +262,11 @@ void main() {
     expect(releaseSender.isCompleted, isFalse);
     expect(api.applied, isEmpty);
 
+    debugPrint('HANDOFF: revealing');
     await _reveal(tester);
+    debugPrint('HANDOFF: tapping Good');
     await tester.tap(find.text('Good'));
+    debugPrint('HANDOFF: pumping');
     await tester.pump();
     _expectImmediateFront(
       tester,
@@ -276,9 +284,13 @@ void main() {
       [101, 102],
     );
 
+    debugPrint('HANDOFF: releasing sender');
     releaseSender.complete();
+    debugPrint('HANDOFF: pumping');
     await tester.pump();
+    debugPrint('HANDOFF: draining sender');
     await tester.runAsync(controller.syncPending);
+    debugPrint('HANDOFF: sender drained');
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(api.applied, hasLength(2));
