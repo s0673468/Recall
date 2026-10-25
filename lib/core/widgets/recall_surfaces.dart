@@ -72,7 +72,7 @@ class RecallSectionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs),
+    padding: EdgeInsets.zero,
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -159,7 +159,6 @@ class _MetricTile extends StatelessWidget {
             metric.value,
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
               color: metric.color ?? UiColors.textPrimary,
-              fontSize: 22,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -170,10 +169,7 @@ class _MetricTile extends StatelessWidget {
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: UiColors.textMuted,
-            fontSize: 11,
-          ),
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       ],
     ),
@@ -287,7 +283,6 @@ class RecallListRow extends StatelessWidget {
                       title,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: UiColors.textPrimary,
-                        fontSize: 15,
                         fontWeight: FontWeight.w400,
                       ),
                     ),
@@ -342,7 +337,7 @@ class RecallStatePanel extends StatelessWidget {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: UiColors.primary, size: 30),
+        Icon(icon, color: UiColors.textSecondary, size: 30),
         const SizedBox(height: UiSpacing.md),
         Text(title, style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: UiSpacing.xs),

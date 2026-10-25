@@ -12,7 +12,7 @@ class RatingBar extends StatelessWidget {
 
   static const List<(Rating, String, Color)> _defs = [
     (Rating.again, 'Again', UiColors.danger),
-    (Rating.hard, 'Hard', UiColors.warning),
+    (Rating.hard, 'Hard', UiColors.textSecondary),
     (Rating.good, 'Good', UiColors.primary),
     (Rating.easy, 'Easy', UiColors.success),
   ];
@@ -62,7 +62,7 @@ class RatingBar extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(UiRadius.md),
           side: BorderSide(
-            color: primary ? UiColors.primary : UiColors.border,
+            color: primary ? UiColors.primary : UiColors.borderControl,
           ),
         ),
       ),

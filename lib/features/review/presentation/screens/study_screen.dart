@@ -88,15 +88,14 @@ class StudyScreen extends StatelessWidget {
           Expanded(
             child: Text(
               'Study',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
           IconButton(
             tooltip: 'More options',
-            icon: const Icon(Icons.more_horiz),
+            icon: const Icon(Icons.more_horiz, size: 20),
             onPressed: () => _showStudyOptions(
               context,
               controller,
@@ -114,7 +113,7 @@ class StudyScreen extends StatelessWidget {
           excludeSemantics: true,
           child: Text(
             '${controller.state.reviewedToday} done',
-            style: const TextStyle(color: UiColors.textMuted, fontSize: 13),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
       ),
@@ -125,10 +124,9 @@ class StudyScreen extends StatelessWidget {
             liveRegion: true,
             child: Text(
               controller.flagNotice!,
-              style: const TextStyle(
-                color: UiColors.textSecondary,
-                fontSize: 13,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: UiColors.textSecondary),
             ),
           ),
         ),
@@ -237,9 +235,8 @@ class StudyScreen extends StatelessWidget {
         }
 
         final card = s.current!;
-        final style = Theme.of(context).textTheme.titleLarge!.copyWith(
+        final style = Theme.of(context).textTheme.headlineMedium!.copyWith(
           color: UiColors.textPrimary,
-          fontSize: 24,
           height: 1.45,
           fontWeight: FontWeight.w400,
         );
@@ -454,21 +451,33 @@ class _Header extends StatelessWidget {
       LayoutBuilder(
         builder: (context, constraints) {
           final stackActions =
-              constraints.maxWidth < 420 ||
+              constraints.maxWidth < 300 ||
               MediaQuery.textScalerOf(context).scale(1) > 1.3;
           final heading = Text(
             key: const Key('recall_study_title'),
             title,
             maxLines: stackActions ? null : 1,
             overflow: stackActions ? null : TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w600),
           );
           final actions = Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // Reserve Undo before the four main actions so they stay evenly
+              // spaced and never shift when a hide or rating becomes undoable.
+              Visibility(
+                visible: onUndo != null,
+                maintainSize: true,
+                maintainAnimation: true,
+                maintainState: true,
+                child: IconButton(
+                  tooltip: 'Undo',
+                  icon: const Icon(Icons.undo, size: 20),
+                  onPressed: onUndo,
+                ),
+              ),
               IconButton(
                 key: const Key('recall_flag_like'),
                 tooltip: 'Like it · keep this style',
@@ -486,25 +495,12 @@ class _Header extends StatelessWidget {
               IconButton(
                 key: const Key('recall_flag_delete'),
                 tooltip: 'Flag for deletion',
-                icon: const Icon(Icons.delete_outline, size: 21),
+                icon: const Icon(Icons.delete_outline, size: 20),
                 onPressed: onDelete,
-              ),
-              // The undo slot is always reserved so the flag buttons never shift
-              // under a finger when undo appears after a hide or rating.
-              Visibility(
-                visible: onUndo != null,
-                maintainSize: true,
-                maintainAnimation: true,
-                maintainState: true,
-                child: IconButton(
-                  tooltip: 'Undo',
-                  icon: const Icon(Icons.undo, size: 20),
-                  onPressed: onUndo,
-                ),
               ),
               IconButton(
                 tooltip: 'More options',
-                icon: const Icon(Icons.more_horiz, size: 22),
+                icon: const Icon(Icons.more_horiz, size: 20),
                 onPressed: onMore,
               ),
             ],
@@ -536,18 +532,20 @@ class _Header extends StatelessWidget {
                 message: 'Session options',
                 child: TextButton.icon(
                   onPressed: onSession,
-                  icon: const Icon(Icons.keyboard_arrow_down, size: 15),
+                  icon: const Icon(Icons.keyboard_arrow_down, size: 20),
                   iconAlignment: IconAlignment.end,
                   label: Text(
                     '$due due · $neu new',
-                    style: const TextStyle(fontSize: 13),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: UiColors.textSecondary,
+                    ),
                   ),
                   style: TextButton.styleFrom(
                     foregroundColor: UiColors.textSecondary,
                     minimumSize: const Size(0, 48),
                     padding: const EdgeInsets.symmetric(
                       vertical: 8,
-                      horizontal: 2,
+                      horizontal: 0,
                     ),
                   ),
                 ),
@@ -558,30 +556,33 @@ class _Header extends StatelessWidget {
           // The flag confirmation takes this slot for a moment instead of a
           // popup, so nothing ever covers the card or the rating buttons.
           Flexible(
-            child: AnimatedSwitcher(
-              duration: RecallMotion.duration(context, RecallMotion.quick),
-              child: Semantics(
-                key: ValueKey(notice ?? 'session'),
-                // Preserve session feedback for ratings/Undo; expose the
-                // durable daily total as its own accessible metric below.
-                liveRegion: true,
-                label:
-                    notice ??
-                    '$session ${session == 1 ? 'card' : 'cards'} reviewed this session',
-                container: true,
-                explicitChildNodes: true,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: AnimatedSwitcher(
+                duration: RecallMotion.duration(context, RecallMotion.quick),
                 child: Semantics(
-                  label: notice == null
-                      ? '$today ${today == 1 ? 'card' : 'cards'} reviewed today'
-                      : '',
-                  excludeSemantics: true,
-                  child: Text(
-                    notice ?? '$today done',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: notice == null
-                          ? UiColors.textMuted
-                          : UiColors.textSecondary,
+                  key: ValueKey(notice ?? 'session'),
+                  // Preserve session feedback for ratings/Undo; expose the
+                  // durable daily total as its own accessible metric below.
+                  liveRegion: true,
+                  label:
+                      notice ??
+                      '$session ${session == 1 ? 'card' : 'cards'} reviewed this session',
+                  container: true,
+                  explicitChildNodes: true,
+                  child: Semantics(
+                    label: notice == null
+                        ? '$today ${today == 1 ? 'card' : 'cards'} reviewed today'
+                        : '',
+                    excludeSemantics: true,
+                    child: Text(
+                      notice ?? '$today done',
+                      textAlign: TextAlign.end,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: notice == null
+                            ? UiColors.textMuted
+                            : UiColors.textSecondary,
+                      ),
                     ),
                   ),
                 ),
@@ -599,10 +600,9 @@ class _Header extends StatelessWidget {
           children: [
             Text(
               MediaQuery.textScalerOf(context).scale(1) > 1.3 ? '\n' : '',
-              style: const TextStyle(
-                color: UiColors.textSecondary,
-                fontSize: 12,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: UiColors.textSecondary),
             ),
             Positioned.fill(
               child: SingleChildScrollView(
@@ -614,9 +614,8 @@ class _Header extends StatelessWidget {
                               ? '$offlineLabel · $pendingSync waiting to sync'
                               : offlineLabel)
                         : (pendingSync > 0 ? _onlineSyncLine : ''),
-                    style: const TextStyle(
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: UiColors.textSecondary,
-                      fontSize: 12,
                     ),
                   ),
                 ),
@@ -665,7 +664,10 @@ Future<String?> _studySheet(
     context: context,
     sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
         ? AnimationStyle.noAnimation
-        : null,
+        : const AnimationStyle(
+            duration: RecallMotion.slow,
+            reverseDuration: RecallMotion.base,
+          ),
     showDragHandle: true,
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
@@ -845,12 +847,12 @@ class _CardPanel extends StatelessWidget {
                                   cacheKey: '${card.id}:back',
                                   selectable: false,
                                   textAlign: TextAlign.start,
-                                  style: style.copyWith(
-                                    color: UiColors.textSecondary,
-                                    fontSize: 18,
-                                    height: 1.6,
-                                    fontWeight: FontWeight.w400,
-                                  ),
+                                  style: Theme.of(context).textTheme.titleLarge!
+                                      .copyWith(
+                                        color: UiColors.textSecondary,
+                                        height: 1.6,
+                                        fontWeight: FontWeight.w400,
+                                      ),
                                   // The answer face reveals any cloze deletions it carries.
                                   revealCloze: true,
                                 ),
@@ -981,7 +983,10 @@ void _showFlagSheet(
     context: context,
     sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
         ? AnimationStyle.noAnimation
-        : null,
+        : const AnimationStyle(
+            duration: RecallMotion.slow,
+            reverseDuration: RecallMotion.base,
+          ),
     backgroundColor: UiColors.panel,
     showDragHandle: true,
     builder: (sheetContext) {
@@ -993,8 +998,8 @@ void _showFlagSheet(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Padding(
-                padding: EdgeInsets.fromLTRB(
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
                   UiSpacing.lg,
                   0,
                   UiSpacing.lg,
@@ -1002,9 +1007,8 @@ void _showFlagSheet(
                 ),
                 child: Text(
                   'Flag this card',
-                  style: TextStyle(
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: UiColors.textMuted,
-                    fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -1085,7 +1089,7 @@ class _Message extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(icon, size: 38, color: UiColors.primary),
+                  Icon(icon, size: 38, color: UiColors.textSecondary),
                   const SizedBox(height: UiSpacing.md),
                   Text(title, style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: UiSpacing.sm),
