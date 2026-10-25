@@ -46,12 +46,25 @@ already executed by Dart wrapper tests.
 
 ## Suite speed
 
-Hosted CI splits the Flutter tests into whole-file shards with
+Hosted CI splits the Flutter tests into four whole-file shards with
 `tool/flutter_test_shards.py` and runs each at `--concurrency=4`, the hosted
-runner's vCPU count. Built-in `--total-shards` is avoided because it slices the
-tests inside every file, so each shard would still compile the whole suite.
+runner's vCPU count. Matching test-source/SDK timings balance loading and test
+cost; new or edited files fall back to source-size estimates. Timing metadata
+never selects or excludes tests. Built-in `--total-shards` is avoided because it
+slices the tests inside every file, so each shard would still compile the whole suite.
 The required `flutter` check passes only when `flutter-checks` (analyze, browser
 and tooling tests) and every `flutter-tests` shard succeeded.
+
+The local before/after measurements and full-gate results are recorded in
+[Test gate performance](test-gate-performance.md). Use the JSON reporter for
+per-file loading and test-body timings; include loading costs when comparing
+shards because compilation dominates this suite.
+
+Use `--no-timings` on the shard-listing command to reproduce the former
+source-size partition for a comparison. Refresh the advisory profile only from
+complete, successful JSON-reporter runs of the unchanged test sources, using
+the current Flutter pin and four workers. Stale entries may remain: their
+hash/SDK mismatch safely falls back without making a test edit fail the gate.
 
 Tests that drive a 503 or an offline transport through postgrest wrap the call
 in `withInstantRetryBackoff` (`test/support/instant_retry_backoff.dart`). Every

@@ -51,9 +51,9 @@ jobs:
       - name: flutter pub get
         run: ./tool/flutterw pub get
 
-      # analyze_options treats infos/warnings as fatal, matching the local gate.
+      # Reuse the resolution above; analyze_options keeps infos/warnings fatal.
       - name: flutter analyze
-        run: ./tool/flutterw analyze
+        run: ./tool/flutterw analyze --no-pub
 
       - name: Test browser quota classification
         run: >-
@@ -65,7 +65,7 @@ jobs:
 
   flutter-tests:
     timeout-minutes: 20
-    # The suite is split by whole file across hosted runners, so each shard
+    # Spread per-file compilation across four hosted runners; each shard
     # compiles only its own files. Hosted Linux, as above.
     runs-on: ubuntu-latest
     permissions:
@@ -74,9 +74,9 @@ jobs:
       # Report every failing shard instead of cancelling the others.
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     env:
-      SHARD_TOTAL: 3
+      SHARD_TOTAL: 4
       SHARD_INDEX: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v7
@@ -265,7 +265,11 @@ jobs:
           python-version: "3.13"
 
       - name: Install FSRS optimizer dependencies
-        run: python -m pip install -r tools/fsrs_optimize/requirements.txt
+        # Hosted Linux has no GPU. Resolve CPU torch first so the optimizer's
+        # unqualified torch dependency does not download the CUDA toolchain.
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r tools/fsrs_optimize/requirements.txt
 
       - name: Test report-only FSRS optimizer
         run: python -m unittest discover -s tools/fsrs_optimize/tests -p 'test_*.py'
