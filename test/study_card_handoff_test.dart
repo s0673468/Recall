@@ -241,9 +241,8 @@ void main() {
       sends++;
       return releaseSender.future;
     };
-    addTearDown(() async {
+    addTearDown(() {
       if (!releaseSender.isCompleted) releaseSender.complete();
-      await tester.runAsync(controller.syncPending);
     });
     store.release();
     await _reveal(tester);
@@ -278,6 +277,7 @@ void main() {
     );
 
     releaseSender.complete();
+    await tester.pump();
     await tester.runAsync(controller.syncPending);
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
