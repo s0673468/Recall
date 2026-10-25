@@ -5,6 +5,7 @@ import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show AppScrollBehavior, AuthGate, AuthGateModel;
 
 import '../core/widgets/recall_widget_bridge.dart';
+import '../core/widgets/listenable_selector.dart';
 import '../core/widgets/recall_motion.dart';
 import '../core/widgets/recall_surfaces.dart';
 import '../navigation/app_shell.dart';
@@ -77,12 +78,19 @@ class RecallApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: UiBrand.appName,
-      debugShowCheckedModeBanner: false,
-      theme: buildRecallTheme(),
-      scrollBehavior: const AppScrollBehavior(),
-      home: _RecallRoot(dependencies: dependencies),
+    return ListenableSelector<String?>(
+      listenable: dependencies.reviewController,
+      selector: () => dependencies.reviewController.currentUser?.id,
+      builder: (context, ownerId) => MaterialApp(
+        // Drop all mounted account data, including pushed primer/settings
+        // routes and outgoing animated children, on a direct account switch.
+        key: ValueKey(ownerId),
+        title: UiBrand.appName,
+        debugShowCheckedModeBanner: false,
+        theme: buildRecallTheme(),
+        scrollBehavior: const AppScrollBehavior(),
+        home: _RecallRoot(dependencies: dependencies),
+      ),
     );
   }
 }

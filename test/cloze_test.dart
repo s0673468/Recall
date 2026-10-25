@@ -90,10 +90,7 @@ void main() {
       expect(isCloze('{{c1,2::shared}}'), isTrue);
       final d = _deletions(parseCloze('a {{c1,2::shared}} b')).single;
       expect(_flat(d.content), 'shared');
-      expect(
-        d.index,
-        1,
-      ); // first ordinal (index is irrelevant in fallback mode)
+      expect(d.index, 1); // first ordinal (index is irrelevant in fallback mode)
     });
   });
 
@@ -121,14 +118,10 @@ void main() {
     });
 
     test('balanced LaTeX / JSON braces stay inside the deletion', () {
-      expect(
-        _flat(_deletions(parseCloze(r'{{c1::\frac{a}{b}}}')).single.content),
-        r'\frac{a}{b}',
-      );
-      expect(
-        _flat(_deletions(parseCloze('{{c1::{"k": 1}}}')).single.content),
-        '{"k": 1}',
-      );
+      expect(_flat(_deletions(parseCloze(r'{{c1::\frac{a}{b}}}')).single.content),
+          r'\frac{a}{b}');
+      expect(_flat(_deletions(parseCloze('{{c1::{"k": 1}}}')).single.content),
+          '{"k": 1}');
     });
 
     test('an unbalanced lone } in content is kept, not dropped', () {
@@ -212,13 +205,10 @@ void main() {
   });
 
   group('parseCloze — HTML / math survive inside content', () {
-    test(
-      'HTML tags are kept raw in the content for the downstream pipeline',
-      () {
-        final d = _deletions(parseCloze('{{c1::<b>bold</b>}}')).single;
-        expect(_flat(d.content), '<b>bold</b>');
-      },
-    );
+    test('HTML tags are kept raw in the content for the downstream pipeline', () {
+      final d = _deletions(parseCloze('{{c1::<b>bold</b>}}')).single;
+      expect(_flat(d.content), '<b>bold</b>');
+    });
 
     test('inline math delimiters survive', () {
       final d = _deletions(parseCloze(r'{{c1::\(x=5\)}}')).single;

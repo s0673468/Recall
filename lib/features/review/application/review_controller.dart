@@ -1761,7 +1761,10 @@ class ReviewController extends ChangeNotifier {
     // The web timer and Android's reconnect are single-flight on this call,
     // so a hung flag send must not stop them retrying reviews.
     _flushFlagOutboxBounded(),
-    if (prefs != null) prefs!.syncOwner(),
+    // Keep the preference transport serialized even after we stop waiting.
+    // It must not hold Android reconnect or browser sync occupied forever.
+    if (prefs != null)
+      prefs!.syncOwner().timeout(reviewSendTimeout, onTimeout: () {}),
   ]);
 
   /// Flush durable study actions and summarize the result for iOS background
