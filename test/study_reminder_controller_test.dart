@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,6 +13,10 @@ class _FakeStudyReminderPlatform implements StudyReminderPlatform {
   var cancellations = 0;
   var settingsOpens = 0;
   Object? cancelError;
+  Future<void> Function()? beforeApply;
+
+  int get operationCount =>
+      permissionRequests + applied.length + cancellations + settingsOpens;
 
   @override
   Future<bool> requestPermission() async {
@@ -29,6 +35,7 @@ class _FakeStudyReminderPlatform implements StudyReminderPlatform {
   }) async {
     applied.add(settings);
     appliedContexts.add((dueCount: dueCount, studiedToday: studiedToday));
+    await beforeApply?.call();
   }
 
   @override
@@ -318,4 +325,103 @@ void main() {
 
     expect(platform.applied.length, appliedBeforeForce + 1);
   });
+
+  for (final changingSettings in [false, true]) {
+    testWidgets(
+      'disposal during ${changingSettings ? 'a settings save' : 'reconciliation'} '
+      'drops queued work and midnight timers',
+      (tester) async {
+        final timers = <Timer>[];
+        await runZoned(
+          () async {
+            SharedPreferences.setMockInitialValues({
+              'recall_study_reminder_enabled:user-1': true,
+            });
+            var now = DateTime(2026, 10, 25, 23, 59, 59);
+            final platform = _FakeStudyReminderPlatform();
+            final controller = StudyReminderController(
+              platform: platform,
+              clock: () => now,
+            );
+            addTearDown(controller.dispose);
+            await controller.initialize(ownerId: 'user-1');
+            await controller.reconcile(
+              dueCount: 3,
+              lastReviewedAt: null,
+              reviewActivityKnown: true,
+            );
+            expect(timers.where((timer) => timer.isActive), hasLength(1));
+
+            final applyStarted = Completer<void>();
+            final finishApply = Completer<void>();
+            platform.beforeApply = () {
+              applyStarted.complete();
+              return finishApply.future;
+            };
+            final inFlight = changingSettings
+                ? controller.setTime(hour: 20, minute: 45)
+                : controller.reconcile(
+                    dueCount: 3,
+                    lastReviewedAt: null,
+                    reviewActivityKnown: true,
+                    force: true,
+                  );
+            await applyStarted.future;
+            final queuedCancellation = controller.reconcile(
+              dueCount: 0,
+              lastReviewedAt: null,
+              reviewActivityKnown: true,
+              force: true,
+            );
+            final queuedApply = controller.reconcile(
+              dueCount: 7,
+              lastReviewedAt: null,
+              reviewActivityKnown: true,
+              force: true,
+            );
+            final operationsAtDisposal = platform.operationCount;
+
+            controller.dispose();
+            expect(controller.dispose, returnsNormally);
+            expect(timers.where((timer) => timer.isActive), isEmpty);
+            finishApply.complete();
+            await Future.wait([inFlight, queuedCancellation, queuedApply]);
+
+            expect(platform.operationCount, operationsAtDisposal);
+            expect(timers.where((timer) => timer.isActive), isEmpty);
+            if (changingSettings) {
+              // A successful apply still finishes its existing save contract.
+              expect(controller.value.hour, 20);
+              expect(controller.value.minute, 45);
+              final prefs = await SharedPreferences.getInstance();
+              expect(prefs.getInt('recall_study_reminder_hour:user-1'), 20);
+              expect(prefs.getInt('recall_study_reminder_minute:user-1'), 45);
+            }
+
+            await controller.reconcile(
+              dueCount: 9,
+              lastReviewedAt: null,
+              reviewActivityKnown: true,
+              force: true,
+            );
+            for (final day in [26, 27]) {
+              final next = DateTime(2026, 10, day, 0, 0, 0, 1);
+              final elapsed = next.difference(now);
+              now = next;
+              await tester.pump(elapsed);
+              expect(platform.operationCount, operationsAtDisposal);
+              expect(timers.where((timer) => timer.isActive), isEmpty);
+            }
+          },
+          zoneSpecification: ZoneSpecification(
+            createTimer: (self, parent, zone, duration, callback) {
+              final timer = parent.createTimer(zone, duration, callback);
+              timers.add(timer);
+              return timer;
+            },
+          ),
+        );
+      },
+    );
+  }
 }

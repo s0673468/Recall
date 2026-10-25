@@ -45,6 +45,18 @@ void main() {
   _printResult('cloze_uncached', iterations, uncachedCloze);
   _printResult('inline_html_cached', iterations, cachedHtml);
   _printResult('cloze_cached', iterations, cachedCloze);
+
+  // Broken imports must not stall card rendering. Increasing the number of
+  // unclosed openers should grow parsing work linearly, as for valid cards.
+  for (final markers in [1000, 4000, 16000]) {
+    final broken = List.filled(markers, '{{c1::unclosed ').join();
+    parseCloze(broken);
+    _printResult(
+      'cloze_unclosed_$markers',
+      7,
+      _measure(7, () => parseCloze(broken)),
+    );
+  }
 }
 
 ({int micros, int checksum}) _measure(

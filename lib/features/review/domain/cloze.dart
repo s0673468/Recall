@@ -11,6 +11,8 @@
 /// node tree into spans, composing cloze → HTML → math.
 library;
 
+import 'dart:typed_data';
+
 /// A node in the cloze tree.
 sealed class ClozeNode {
   const ClozeNode();
@@ -40,11 +42,7 @@ class ClozeDeletion extends ClozeNode {
   final List<ClozeNode> content;
   final String? hint;
 
-  const ClozeDeletion({
-    required this.index,
-    required this.content,
-    this.hint,
-  });
+  const ClozeDeletion({required this.index, required this.content, this.hint});
 
   @override
   bool operator ==(Object other) =>
@@ -82,6 +80,7 @@ const int _maxDepth = 6;
 List<ClozeNode> parseCloze(String s, {int maxDepth = _maxDepth}) {
   final out = <ClozeNode>[];
   final buf = StringBuffer();
+  Int32List? closeIndex;
   void flush() {
     if (buf.isNotEmpty) {
       out.add(ClozeText(buf.toString()));
@@ -99,7 +98,16 @@ List<ClozeNode> parseCloze(String s, {int maxDepth = _maxDepth}) {
         // tryParse defensively (the ≤9-digit bound already precludes overflow).
         final index = int.tryParse(m.group(1)!.split(',').first);
         if (index != null) {
-          final close = _findClose(s, m.end);
+          final indexOfClose = closeIndex;
+          final close = indexOfClose == null
+              ? _findClose(s, m.end)
+              : (indexOfClose[m.end] == 0 ? null : indexOfClose[m.end] - 1);
+          // A malformed outer deletion can contain valid inner deletions.
+          // Keep scanning them, but index the suffix once rather than scanning
+          // it again for every unclosed opener (quadratic on broken cards).
+          if (close == null && closeIndex == null) {
+            closeIndex = _indexCloses(s);
+          }
           if (close != null) {
             final inner = s.substring(m.end, close);
             final (text, hint) = _splitHint(inner);
@@ -157,6 +165,30 @@ int? _findClose(String s, int from) {
     }
   }
   return null;
+}
+
+/// The same brace rules as [_findClose], indexed in one backwards pass.
+/// Zero means no terminator; other values are the terminator's offset + 1.
+/// An opening brace skips its balanced content group; an unmatched opening
+/// has no terminator. A lone closing brace is literal, while `}}` terminates
+/// a search that starts at that depth. Only malformed input needs this index.
+Int32List _indexCloses(String s) {
+  final next = Int32List(s.length + 1);
+  final closingBraces = <int>[];
+  for (var i = s.length - 1; i >= 0; i--) {
+    final ch = s.codeUnitAt(i);
+    if (ch == 0x7b) {
+      if (closingBraces.isNotEmpty) {
+        next[i] = next[closingBraces.removeLast() + 1];
+      }
+    } else {
+      next[i] = ch == 0x7d && i + 1 < s.length && s.codeUnitAt(i + 1) == 0x7d
+          ? i + 1
+          : next[i + 1];
+      if (ch == 0x7d) closingBraces.add(i);
+    }
+  }
+  return next;
 }
 
 /// Split a cloze's inner content into (text, hint) on the FIRST top-level `::`

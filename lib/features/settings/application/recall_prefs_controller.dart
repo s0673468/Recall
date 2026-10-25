@@ -43,6 +43,7 @@ class RecallPrefsController extends ChangeNotifier {
   int? _durableVersion;
   Future<void> _localTail = Future<void>.value();
   Future<void> _syncTail = Future<void>.value();
+  Future<void>? _queuedSync;
 
   RecallPrefs get value => _value;
   bool get hasStoredPrefs => _hasStored;
@@ -138,7 +139,15 @@ class RecallPrefsController extends ChangeNotifier {
   /// state. Never throws: this is a reconnect/startup optimization and the
   /// durable local pending record is the recovery contract.
   Future<void> syncOwner() {
-    final run = _syncTail.then((_) => _syncOwnerOnce());
+    // Keep one follow-up behind the active request. A stalled cloud request
+    // must not accumulate a new queued fetch on every reconnect/timer tick.
+    final queued = _queuedSync;
+    if (queued != null) return queued;
+    final run = _syncTail.then((_) {
+      _queuedSync = null;
+      return _syncOwnerOnce();
+    });
+    _queuedSync = run;
     _syncTail = run.then<void>((_) {}, onError: (_) {});
     return run;
   }

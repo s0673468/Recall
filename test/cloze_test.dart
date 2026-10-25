@@ -142,6 +142,27 @@ void main() {
   });
 
   group('parseCloze — malformed never throws, renders literally', () {
+    test('a long broken prefix preserves later valid clozes and hints', () {
+      final prefix = List.filled(16000, '{{c1::unclosed ').join();
+      final nodes = parseCloze('$prefix{{c2::\\frac{a}{b} } x::hint}} tail');
+      expect(nodes, [
+        ClozeText(prefix),
+        const ClozeDeletion(
+          index: 2,
+          content: [ClozeText(r'\frac{a}{b} } x')],
+          hint: 'hint',
+        ),
+        const ClozeText(' tail'),
+      ]);
+    });
+
+    test('indexed recovery keeps balanced groups and nested deletions', () {
+      final nodes = parseCloze(
+        r'{{c1::broken {{c2::{a} {{c3::b}} } c::hint}} {{c4::d}}',
+      );
+      expect(_flat(nodes), '{{c1::broken ⟦c2:{a} ⟦c3:b⟧ } c|hint⟧ ⟦c4:d⟧');
+    });
+
     test('unclosed opener passes through as literal text', () {
       final nodes = parseCloze('{{c1::mitochondria');
       expect(nodes, [const ClozeText('{{c1::mitochondria')]);

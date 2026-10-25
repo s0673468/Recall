@@ -238,7 +238,7 @@ class StudyReminderController extends ChangeNotifier {
     required bool reviewActivityKnown,
     bool force = false,
   }) => _enqueue(() async {
-    if (_ownerId == null) return;
+    if (_disposed || _ownerId == null) return;
     _dueCount = dueCount;
     _lastReviewedAt = lastReviewedAt;
     _reviewActivityKnown = reviewActivityKnown;
@@ -345,7 +345,8 @@ class StudyReminderController extends ChangeNotifier {
 
   void _armDayBoundaryTimer() {
     _dayBoundaryTimer?.cancel();
-    if (_ownerId == null) return;
+    // Native apply or preference persistence can finish after disposal.
+    if (_disposed || _ownerId == null) return;
     final now = clock().toLocal();
     final tomorrow = DateTime(now.year, now.month, now.day + 1);
     final delay = tomorrow.difference(now) + const Duration(milliseconds: 1);
@@ -381,6 +382,7 @@ class StudyReminderController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
     _dayBoundaryTimer?.cancel();
     _dayBoundaryTimer = null;
