@@ -245,8 +245,10 @@ class StudyScreen extends StatelessWidget {
         );
 
         String? selectedDeck;
+        String? cardDeck;
         for (final deck in s.decks) {
           if (deck.deckId == s.deckFilter) selectedDeck = deck.name;
+          if (deck.deckId == card.deckId) cardDeck = deck.name;
         }
         final header = _Header(
           title: selectedDeck?.replaceAll('::', ' › ') ?? 'Study',
@@ -288,32 +290,41 @@ class StudyScreen extends StatelessWidget {
         );
         final cardPanel = _CardPanel(
           card: card,
+          deckName: cardDeck?.replaceAll('::', ' › ') ?? 'Deck',
           showBack: s.showBack,
           style: style,
         );
-        final actions = RecallMotionSwap(
-          duration: RecallMotion.quick,
-          travel: 0,
-          child: s.showBack
-              ? RatingBar(
-                  key: const ValueKey('study_rating_bar'),
-                  onRate: (rating) =>
-                      unawaited(_absorbRefusedSave(controller.rate(rating))),
-                  enabled: !controller.rateInFlight,
-                )
-              : SizedBox(
-                  key: const ValueKey('study_show_answer'),
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: controller.flip,
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: UiSpacing.md,
-                      ),
-                    ),
-                    child: const Text('Show answer'),
+        // Both controls participate in layout, so the real rating buttons
+        // reserve their final height at every width and text scale. Inactive
+        // controls are excluded from paint, semantics, pointer and focus input.
+        final actions = IndexedStack(
+          index: s.showBack ? 1 : 0,
+          alignment: Alignment.center,
+          children: [
+            ExcludeFocus(
+              excluding: s.showBack,
+              child: SizedBox(
+                key: const ValueKey('study_show_answer'),
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: controller.flip,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: UiSpacing.md),
                   ),
+                  child: const Text('Show answer'),
                 ),
+              ),
+            ),
+            ExcludeFocus(
+              excluding: !s.showBack,
+              child: RatingBar(
+                key: const ValueKey('study_rating_bar'),
+                onRate: (rating) =>
+                    unawaited(_absorbRefusedSave(controller.rate(rating))),
+                enabled: !controller.rateInFlight,
+              ),
+            ),
+          ],
         );
         final body = LayoutBuilder(
           builder: (context, constraints) {
@@ -334,7 +345,16 @@ class StudyScreen extends StatelessWidget {
                       children: [
                         header,
                         const SizedBox(height: UiSpacing.sm),
-                        SizedBox(height: 260, child: cardPanel),
+                        // Preserve the original reading viewport as the footer
+                        // grows with accessible type.
+                        SizedBox(
+                          height:
+                              260 +
+                              MediaQuery.textScalerOf(context).scale(12) * 1.5 +
+                              UiSpacing.sm * 2 +
+                              1,
+                          child: cardPanel,
+                        ),
                         const SizedBox(height: UiSpacing.md),
                         actions,
                         const SizedBox(height: UiSpacing.sm),
@@ -437,6 +457,7 @@ class _Header extends StatelessWidget {
               constraints.maxWidth < 420 ||
               MediaQuery.textScalerOf(context).scale(1) > 1.3;
           final heading = Text(
+            key: const Key('recall_study_title'),
             title,
             maxLines: stackActions ? null : 1,
             overflow: stackActions ? null : TextOverflow.ellipsis,
@@ -538,7 +559,7 @@ class _Header extends StatelessWidget {
           // popup, so nothing ever covers the card or the rating buttons.
           Flexible(
             child: AnimatedSwitcher(
-              duration: RecallMotion.quick,
+              duration: RecallMotion.duration(context, RecallMotion.quick),
               child: Semantics(
                 key: ValueKey(notice ?? 'session'),
                 // Preserve session feedback for ratings/Undo; expose the
@@ -569,24 +590,41 @@ class _Header extends StatelessWidget {
           ),
         ],
       ),
-      if (offline || pendingSync > 0)
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Semantics(
-            liveRegion: true,
-            child: Text(
-              offline
-                  ? (pendingSync > 0
-                        ? '$offlineLabel · $pendingSync waiting to sync'
-                        : offlineLabel)
-                  : _onlineSyncLine,
+      // Blank caption lines reserve the slot with the same font metrics as
+      // feedback. Large type gets two lines; unusually long feedback remains
+      // scrollable instead of truncating or displacing the card.
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Stack(
+          children: [
+            Text(
+              MediaQuery.textScalerOf(context).scale(1) > 1.3 ? '\n' : '',
               style: const TextStyle(
                 color: UiColors.textSecondary,
                 fontSize: 12,
               ),
             ),
-          ),
+            Positioned.fill(
+              child: SingleChildScrollView(
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    offline
+                        ? (pendingSync > 0
+                              ? '$offlineLabel · $pendingSync waiting to sync'
+                              : offlineLabel)
+                        : (pendingSync > 0 ? _onlineSyncLine : ''),
+                    style: const TextStyle(
+                      color: UiColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
+      ),
     ],
   );
 }
@@ -625,6 +663,9 @@ Future<String?> _studySheet(
   }
   return showModalBottomSheet<String>(
     context: context,
+    sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     showDragHandle: true,
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
@@ -738,10 +779,12 @@ Future<void> _showSessionOptions(
 
 class _CardPanel extends StatelessWidget {
   final ReviewCard card;
+  final String deckName;
   final bool showBack;
   final TextStyle style;
   const _CardPanel({
     required this.card,
+    required this.deckName,
     required this.showBack,
     required this.style,
   });
@@ -753,65 +796,99 @@ class _CardPanel extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(UiSpacing.lg),
       decoration: buildHeroPanelDecoration(),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            CardFace(
-              html: card.front,
-              textAlign: TextAlign.start,
-              hasLatex: card.hasLatex,
-              latexSvg: card.latexSvg,
-              cacheKey: '${card.id}:front',
-              style: style,
-              selectable: false,
-              // The deleted answers live in the front's {{cN::…}} markup, so the
-              // front itself fills them in on flip (the back is the extra field
-              // and is often just a summary). A no-op for non-cloze fronts.
-              revealCloze: showBack,
-            ),
-            AnimatedSize(
-              duration: RecallMotion.duration(context),
-              curve: RecallMotion.curve,
-              alignment: Alignment.topCenter,
-              child: RecallMotionSwap(
-                duration: RecallMotion.quick,
-                child: showBack
-                    ? Column(
-                        key: ValueKey('study_answer_${card.id}'),
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Padding(
-                            padding: EdgeInsets.symmetric(
-                              vertical: UiSpacing.lg,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  CardFace(
+                    html: card.front,
+                    textAlign: TextAlign.start,
+                    hasLatex: card.hasLatex,
+                    latexSvg: card.latexSvg,
+                    cacheKey: '${card.id}:front',
+                    style: style,
+                    selectable: false,
+                    // The deleted answers live in the front's {{cN::…}} markup, so the
+                    // front itself fills them in on flip (the back is the extra field
+                    // and is often just a summary). A no-op for non-cloze fronts.
+                    revealCloze: showBack,
+                  ),
+                  AnimatedSize(
+                    duration: RecallMotion.duration(context),
+                    curve: RecallMotion.curve,
+                    alignment: Alignment.topCenter,
+                    child: RecallMotionSwap(
+                      duration: RecallMotion.quick,
+                      child: showBack
+                          ? Column(
+                              key: ValueKey('study_answer_${card.id}'),
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    vertical: UiSpacing.lg,
+                                  ),
+                                  child: Divider(
+                                    color: UiColors.border,
+                                    height: 1,
+                                  ),
+                                ),
+                                CardFace(
+                                  html: card.back,
+                                  hasLatex: card.hasLatex,
+                                  latexSvg: card.latexSvg,
+                                  cacheKey: '${card.id}:back',
+                                  selectable: false,
+                                  textAlign: TextAlign.start,
+                                  style: style.copyWith(
+                                    color: UiColors.textSecondary,
+                                    fontSize: 18,
+                                    height: 1.6,
+                                    fontWeight: FontWeight.w400,
+                                  ),
+                                  // The answer face reveals any cloze deletions it carries.
+                                  revealCloze: true,
+                                ),
+                              ],
+                            )
+                          : const SizedBox(
+                              key: ValueKey('study_answer_hidden'),
                             ),
-                            child: Divider(color: UiColors.border, height: 1),
-                          ),
-                          CardFace(
-                            html: card.back,
-                            hasLatex: card.hasLatex,
-                            latexSvg: card.latexSvg,
-                            cacheKey: '${card.id}:back',
-                            selectable: false,
-                            textAlign: TextAlign.start,
-                            style: style.copyWith(
-                              color: UiColors.textSecondary,
-                              fontSize: 18,
-                              height: 1.6,
-                              fontWeight: FontWeight.w400,
-                            ),
-                            // The answer face reveals any cloze deletions it carries.
-                            revealCloze: true,
-                          ),
-                        ],
-                      )
-                    : const SizedBox(key: ValueKey('study_answer_hidden')),
+                    ),
+                  ),
+                  const SizedBox(height: UiSpacing.sm),
+                ],
               ),
             ),
-            const SizedBox(height: UiSpacing.sm),
-          ],
-        ),
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: UiSpacing.sm),
+            child: Divider(color: UiColors.borderSubtle, height: 1),
+          ),
+          DefaultTextStyle(
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall!.copyWith(color: UiColors.textMuted),
+            child: Row(
+              key: const Key('recall_study_card_footer'),
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Text(deckName, maxLines: 1),
+                  ),
+                ),
+                const SizedBox(width: UiSpacing.md),
+                Text(card.isNew ? 'New' : 'Review'),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -902,6 +979,9 @@ void _showFlagSheet(
 
   showModalBottomSheet<void>(
     context: context,
+    sheetAnimationStyle: MediaQuery.disableAnimationsOf(context)
+        ? AnimationStyle.noAnimation
+        : null,
     backgroundColor: UiColors.panel,
     showDragHandle: true,
     builder: (sheetContext) {
