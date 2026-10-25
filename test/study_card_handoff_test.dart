@@ -278,7 +278,11 @@ void main() {
 
     releaseSender.complete();
     await tester.pump();
-    await tester.runAsync(controller.syncPending);
+    // Drive the fake event loop while the automatic follow-up sender drains.
+    // Awaiting its future directly would park fake-clock storage callbacks.
+    for (var frame = 0; frame < 50 && api.applied.length < 2; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(api.applied, hasLength(2));
