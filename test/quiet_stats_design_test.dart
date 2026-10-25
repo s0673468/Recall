@@ -195,13 +195,23 @@ void main() {
       expect(find.text('Young'), findsOneWidget);
       expect(find.text('Mature'), findsOneWidget);
       expect(find.text('25% again · 4 reviews'), findsOneWidget);
-      final chartScroll = tester.state<ScrollableState>(
+      // The chart now wraps accessible day cells instead of requiring a
+      // horizontal scroll. Keep the original 320px / 200% coverage.
+      expect(
         find.descendant(
           of: find.byType(DueForecastChart),
           matching: find.byType(Scrollable),
         ),
+        findsNothing,
       );
-      expect(chartScroll.position.maxScrollExtent, greaterThan(300));
+      for (var day = 1; day <= 14; day++) {
+        final cell = find.byKey(ValueKey('forecast_day_$day'));
+        final bounds = tester.getRect(cell);
+        expect(find.byKey(ValueKey('forecast_date_$day')), findsOneWidget);
+        expect(bounds.width, greaterThanOrEqualTo(44));
+        expect(bounds.left, greaterThanOrEqualTo(0));
+        expect(bounds.right, lessThanOrEqualTo(320));
+      }
       expect(tester.takeException(), isNull);
     },
   );
