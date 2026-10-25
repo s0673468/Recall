@@ -108,6 +108,24 @@ Study surface; Recall Hub acceptance belongs to its own repository.
 
 ## Coverage boundaries
 
+List feedback uses open card flags and the existing note `node::` tags. The
+library and reading rows say **Has liked cards** / **Has disliked cards**, since
+primers have no direct feedback identity. Both icons can appear for one concept;
+deletion flags and unmapped notes do not imply dislike. One paginated metadata
+load serves every row, with pending local actions overlaid before mapping.
+Feedback loads independently, so a slow optional read cannot block reading rows.
+The Stats library route also reuses its already-loaded review identities to map
+legacy cached likes that have a card ID but no note GUID. Unmapped card IDs stay
+unmarked; this fallback does not fetch card content or add network requests.
+
+`test/list_feedback_test.dart`, `test/recall_api_list_feedback_test.dart` and
+`test/list_feedback_lists_test.dart` cover this contract with synthetic metadata
+and an in-memory HTTP transport. The last file also runs with `--platform chrome`
+using the browser command above. This covers the preserved Flutter list surface;
+the maintained Recall Hub web client remains in its separate repository.
+`test/list_feedback_stats_cache_test.dart` checks the Stats-to-library fallback
+with the production cache shape and asserts no duplicate metadata reads.
+
 - Flutter tests exercise scheduling, replay/idempotency, auth, owner isolation,
   offline state and synthetic UI flows. Mock HTTP tests do not execute PostgreSQL
   RPCs or prove production row-level security. Schema/RPC checks have their own

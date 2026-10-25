@@ -4,22 +4,63 @@ import '../../../../core/platform/recall_platform.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
+import '../../application/list_feedback_service.dart';
+import '../../application/stats_service.dart';
+import '../../data/local_review_store.dart';
+import '../../data/recall_api.dart';
 import '../../domain/concept_attribution.dart';
+import '../../domain/list_feedback.dart';
 import '../../domain/stats_models.dart';
+import '../widgets/list_feedback_indicator.dart';
 import 'primer_screen.dart';
 
 /// Read-only library of every available primer, ordered by concept module.
-class PrimerLibraryScreen extends StatelessWidget {
+class PrimerLibraryScreen extends StatefulWidget {
   final List<ConceptPage> pages;
   final List<ConceptNodeInfo> conceptNodes;
   final ValueChanged<ConceptPage>? onOpenPrimer;
+  final RecallApi? api;
+  final LocalReviewStore? store;
+  final List<ReviewLogEntry> reviewLog;
+  final Map<String, ListFeedback> feedbackByNode;
 
   const PrimerLibraryScreen({
     super.key,
     required this.pages,
     required this.conceptNodes,
     this.onOpenPrimer,
+    this.api,
+    this.store,
+    this.reviewLog = const [],
+    this.feedbackByNode = const {},
   });
+
+  @override
+  State<PrimerLibraryScreen> createState() => _PrimerLibraryScreenState();
+}
+
+class _PrimerLibraryScreenState extends State<PrimerLibraryScreen> {
+  late final Future<Map<String, ListFeedback>>? _feedback = _loadFeedback();
+
+  Future<Map<String, ListFeedback>>? _loadFeedback() {
+    final api = widget.api;
+    if (api == null) return null;
+    return () async {
+      final tags = await StatsService(api).loadNoteTags();
+      return ListFeedbackService(
+        api: api,
+        store: widget.store ?? LocalReviewStore(),
+      ).load(noteTags: tags, reviewLog: widget.reviewLog);
+    }().catchError((_) => <String, ListFeedback>{});
+  }
+
+  Widget _library(Map<String, ListFeedback> feedback) =>
+      PrimerLibraryContent._owningViewport(
+        pages: widget.pages,
+        conceptNodes: widget.conceptNodes,
+        feedbackByNode: feedback,
+        onOpenPrimer: widget.onOpenPrimer,
+      );
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -30,11 +71,13 @@ class PrimerLibraryScreen extends StatelessWidget {
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
-          child: PrimerLibraryContent._owningViewport(
-            pages: pages,
-            conceptNodes: conceptNodes,
-            onOpenPrimer: onOpenPrimer,
-          ),
+          child: _feedback == null
+              ? _library(widget.feedbackByNode)
+              : FutureBuilder<Map<String, ListFeedback>>(
+                  future: _feedback,
+                  builder: (context, snapshot) =>
+                      _library(snapshot.data ?? widget.feedbackByNode),
+                ),
         ),
       ),
     ),
@@ -51,6 +94,7 @@ class PrimerLibraryContent extends StatefulWidget {
   final ValueChanged<ConceptPage>? onOpenPrimer;
   final bool collapsedBrowse;
   final String initialQuery;
+  final Map<String, ListFeedback> feedbackByNode;
   final bool _ownsViewport;
 
   const PrimerLibraryContent({
@@ -62,12 +106,14 @@ class PrimerLibraryContent extends StatefulWidget {
     this.onOpenPrimer,
     this.collapsedBrowse = false,
     this.initialQuery = '',
+    this.feedbackByNode = const {},
   }) : _ownsViewport = false;
 
   const PrimerLibraryContent._owningViewport({
     required this.pages,
     required this.conceptNodes,
     this.onOpenPrimer,
+    required this.feedbackByNode,
   }) : browseExcludedNodeIds = const {},
        onQueryChanged = null,
        collapsedBrowse = false,
@@ -194,6 +240,7 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
     );
     PrimerRow buildRow(ConceptPage page) => PrimerRow(
       page: page,
+      feedback: widget.feedbackByNode[page.nodeId],
       module: moduleByNode[page.nodeId],
       onTap: () => widget.onOpenPrimer != null
           ? widget.onOpenPrimer!(page)
@@ -274,12 +321,14 @@ class PrimerRow extends StatelessWidget {
   final ConceptPage page;
   final String? module;
   final VoidCallback onTap;
+  final ListFeedback? feedback;
 
   const PrimerRow({
     super.key,
     required this.page,
     this.module,
     required this.onTap,
+    this.feedback,
   });
 
   @override
@@ -288,6 +337,9 @@ class PrimerRow extends StatelessWidget {
     child: RecallListRow(
       title: page.title,
       subtitle: module?.isNotEmpty == true ? module : null,
+      trailing: feedback == null
+          ? null
+          : ListFeedbackIndicator(feedback: feedback!),
       onTap: onTap,
     ),
   );

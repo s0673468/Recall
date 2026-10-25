@@ -8,15 +8,23 @@ import '../../../../theme/ui_tokens.dart';
 import '../../application/remediation_service.dart';
 import '../../data/local_review_store.dart';
 import '../../data/recall_api.dart';
+import '../../domain/list_feedback.dart';
 import '../../domain/stats_models.dart';
 import '../screens/primer_screen.dart';
+import 'list_feedback_indicator.dart';
 
 /// The shared presentation for local lapse-remediation rows.
 class RemediationRows extends StatelessWidget {
   final List<ConceptPage> pages;
   final ValueChanged<ConceptPage> onTap;
+  final Map<String, ListFeedback> feedbackByNode;
 
-  const RemediationRows({super.key, required this.pages, required this.onTap});
+  const RemediationRows({
+    super.key,
+    required this.pages,
+    required this.onTap,
+    this.feedbackByNode = const {},
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -27,7 +35,11 @@ class RemediationRows extends StatelessWidget {
         Text('Reread', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: UiSpacing.xs),
         for (final page in pages)
-          RereadRow(page: page, onTap: () => onTap(page)),
+          RereadRow(
+            page: page,
+            feedback: feedbackByNode[page.nodeId],
+            onTap: () => onTap(page),
+          ),
       ],
     );
   }
@@ -36,8 +48,14 @@ class RemediationRows extends StatelessWidget {
 class RereadRow extends StatelessWidget {
   final ConceptPage page;
   final VoidCallback onTap;
+  final ListFeedback? feedback;
 
-  const RereadRow({super.key, required this.page, required this.onTap});
+  const RereadRow({
+    super.key,
+    required this.page,
+    required this.onTap,
+    this.feedback,
+  });
 
   @override
   Widget build(BuildContext context) => Material(
@@ -73,6 +91,11 @@ class RereadRow extends StatelessWidget {
                 ),
               ),
             ),
+            if (feedback != null) ...[
+              const SizedBox(width: UiSpacing.sm),
+              ListFeedbackIndicator(feedback: feedback!),
+              const SizedBox(width: UiSpacing.xs),
+            ],
             const Icon(
               Icons.chevron_right,
               color: UiColors.textMuted,
