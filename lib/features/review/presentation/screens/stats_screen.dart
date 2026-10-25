@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
     show AppSwitcher, HealthWebApp;
 
-import '../../../../core/widgets/recall_motion.dart';
 import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../theme/ui_tokens.dart';
@@ -14,6 +13,7 @@ import '../widgets/concept_retention_panel.dart';
 import '../widgets/due_forecast_chart.dart';
 import '../widgets/retention_panel.dart';
 import '../widgets/review_heatmap.dart';
+import '../widgets/stats_chart_styles.dart';
 
 /// The bundled inputs for the Concepts (METIS node-retention) section: the
 /// review log, the note guid -> tags map, and the concept metadata.
@@ -143,162 +143,177 @@ class StatsScreenState extends State<StatsScreen> {
       () => StatsService.tileStats(log, today: today),
       inputs: [log, day],
     );
-    return RefreshIndicator(
-      onRefresh: () => reload(refresh: true),
-      // Eagerly build the small set of sections. Together with maintainState,
-      // this attaches every FutureBuilder while its disclosure is closed, so
-      // an independent fetch failure always has a listener.
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(
-          UiSpacing.md,
-          UiSpacing.md,
-          UiSpacing.md,
-          UiSpacing.lg,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const RecallPageHeader(title: 'Stats'),
-            const SizedBox(height: UiSpacing.lg),
-            _asyncSection<List<ReviewLogEntry>>(
-              future: _reviewLog,
-              label: 'retention',
-              builder: (log) => RetentionPanel(
-                key: const Key('recall_retention_hero'),
-                hero: true,
-                summary: _derive(
-                  'retention',
-                  () => StatsService.computeRetention(
-                    log,
-                    now: today,
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.copyWith(
+        textTheme: StatsChartStyles.tabular(theme.textTheme),
+      ),
+      child: DefaultTextStyle.merge(
+        style: const TextStyle(fontFeatures: StatsChartStyles.figures),
+        child: RefreshIndicator(
+          onRefresh: () => reload(refresh: true),
+          // Eagerly build the small set of sections. Together with maintainState,
+          // this attaches every FutureBuilder while its disclosure is closed, so
+          // an independent fetch failure always has a listener.
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.md,
+              UiSpacing.lg,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const RecallPageHeader(title: 'Stats'),
+                const SizedBox(height: UiSpacing.lg),
+                _asyncSection<List<ReviewLogEntry>>(
+                  future: _reviewLog,
+                  label: 'retention',
+                  builder: (log) => RetentionPanel(
+                    key: const Key('recall_retention_hero'),
+                    hero: true,
+                    summary: _derive(
+                      'retention',
+                      () => StatsService.computeRetention(
+                        log,
+                        now: today,
+                        windowDays: _retentionWindow,
+                      ),
+                      inputs: [log, day, _retentionWindow],
+                    ),
                     windowDays: _retentionWindow,
+                    onWindowChanged: (w) =>
+                        setState(() => _retentionWindow = w),
                   ),
-                  inputs: [log, day, _retentionWindow],
                 ),
-                windowDays: _retentionWindow,
-                onWindowChanged: (w) => setState(() => _retentionWindow = w),
-              ),
-            ),
-            const SizedBox(height: UiSpacing.lg),
-            _asyncSection<List<ReviewLogEntry>>(
-              future: _reviewLog,
-              label: 'history',
-              builder: (log) {
-                final t = tiles(log);
-                return RecallMetricStrip(
-                  key: const Key('recall_stats_history_strip'),
-                  metrics: [
-                    RecallMetric(
-                      'Streak',
-                      '${t.streak}${t.streak == 1 ? ' day' : ' days'}',
-                    ),
-                    RecallMetric('Reviews · 30 days', '${t.reviews}'),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: UiSpacing.md),
-            _disclosure(
-              id: 'activity',
-              title: 'Activity',
-              child: _asyncSection<List<ReviewLogEntry>>(
-                future: _reviewLog,
-                label: 'heatmap',
-                builder: (log) {
-                  final t = tiles(log);
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        'Recall over the last 30 days: ${t.recall}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: UiSpacing.md),
-                      ReviewHeatmap(
-                        days: _derive(
-                          'heatmap',
-                          () => StatsService.buildHeatmap(log, today: today),
-                          inputs: [log, day],
+                const SizedBox(height: UiSpacing.lg),
+                _asyncSection<List<ReviewLogEntry>>(
+                  future: _reviewLog,
+                  label: 'history',
+                  builder: (log) {
+                    final t = tiles(log);
+                    return RecallMetricStrip(
+                      key: const Key('recall_stats_history_strip'),
+                      metrics: [
+                        RecallMetric(
+                          'Streak',
+                          '${t.streak}${t.streak == 1 ? ' day' : ' days'}',
                         ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-            _disclosure(
-              id: 'forecast',
-              title: 'Work ahead',
-              child: _asyncSection<List<DateTime>>(
-                future: _dueDates,
-                label: 'forecast',
-                builder: (due) => DueForecastChart(
-                  days: _derive(
-                    'forecast',
-                    () => StatsService.buildForecast(due, today: today),
-                    inputs: [due, day],
+                        RecallMetric('Reviews · 30 days', '${t.reviews}'),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: UiSpacing.md),
+                _disclosure(
+                  id: 'activity',
+                  title: 'Activity',
+                  child: _asyncSection<List<ReviewLogEntry>>(
+                    future: _reviewLog,
+                    label: 'heatmap',
+                    builder: (log) {
+                      final t = tiles(log);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          StatsChartReadout(
+                            placeholder: 'Recall over the last 30 days: 100%',
+                            value: 'Recall over the last 30 days: ${t.recall}',
+                          ),
+                          const SizedBox(height: UiSpacing.md),
+                          ReviewHeatmap(
+                            days: _derive(
+                              'heatmap',
+                              () =>
+                                  StatsService.buildHeatmap(log, today: today),
+                              inputs: [log, day],
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ),
-              ),
-            ),
-            _disclosure(
-              id: 'concepts',
-              title: 'Concepts to reinforce',
-              child: _asyncSection<_ConceptInputs>(
-                future: _conceptData,
-                label: 'concepts',
-                builder: (data) {
-                  final result = _derive(
-                    'concepts',
-                    () => StatsService.computeNodeRetention(
-                      reviewLog: data.log,
-                      noteTags: data.tags,
-                      conceptNodes: data.nodes,
-                      now: today,
+                _disclosure(
+                  id: 'forecast',
+                  title: 'Work ahead',
+                  child: _asyncSection<List<DateTime>>(
+                    future: _dueDates,
+                    label: 'forecast',
+                    builder: (due) => DueForecastChart(
+                      days: _derive(
+                        'forecast',
+                        () => StatsService.buildForecast(
+                          due,
+                          today: today,
+                          days: 15,
+                        ),
+                        inputs: [due, day],
+                      ),
                     ),
-                    inputs: [data.log, data.tags, data.nodes, day],
-                  );
-                  return ConceptRetentionPanel(
-                    ranked: result.ranked,
-                    notEnoughData: result.notEnoughData,
-                    coveredNodeCount: result.coveredNodeCount,
-                    totalConcepts: data.nodes.length,
-                    conceptPages: data.pages,
-                    conceptNodes: data.nodes,
-                    reviewLog: data.log,
-                    api: widget.api,
-                    libraryStore: () => widget.controller.store,
-                  );
-                },
-              ),
+                  ),
+                ),
+                _disclosure(
+                  id: 'concepts',
+                  title: 'Concepts to reinforce',
+                  child: _asyncSection<_ConceptInputs>(
+                    future: _conceptData,
+                    label: 'concepts',
+                    builder: (data) {
+                      final result = _derive(
+                        'concepts',
+                        () => StatsService.computeNodeRetention(
+                          reviewLog: data.log,
+                          noteTags: data.tags,
+                          conceptNodes: data.nodes,
+                          now: today,
+                        ),
+                        inputs: [data.log, data.tags, data.nodes, day],
+                      );
+                      return ConceptRetentionPanel(
+                        ranked: result.ranked,
+                        notEnoughData: result.notEnoughData,
+                        coveredNodeCount: result.coveredNodeCount,
+                        totalConcepts: data.nodes.length,
+                        conceptPages: data.pages,
+                        conceptNodes: data.nodes,
+                        reviewLog: data.log,
+                        api: widget.api,
+                        libraryStore: () => widget.controller.store,
+                      );
+                    },
+                  ),
+                ),
+                _disclosure(
+                  id: 'session',
+                  title: 'Current session',
+                  child: ListenableBuilder(
+                    listenable: widget.controller,
+                    builder: (context, _) {
+                      final s = widget.controller.state;
+                      return RecallMetricStrip(
+                        key: const Key('recall_stats_session_strip'),
+                        metrics: [
+                          RecallMetric('Reviewed', '${s.reviewedThisSession}'),
+                          RecallMetric('Due now', '${s.dueRemaining}'),
+                          RecallMetric('New left', '${s.newRemaining}'),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                if (AppSwitcher.isSupported) ...[
+                  const SizedBox(height: UiSpacing.lg),
+                  const AppSwitcher(
+                    current: HealthWebApp.recall,
+                    alignment: WrapAlignment.center,
+                  ),
+                ],
+              ],
             ),
-            _disclosure(
-              id: 'session',
-              title: 'Current session',
-              child: ListenableBuilder(
-                listenable: widget.controller,
-                builder: (context, _) {
-                  final s = widget.controller.state;
-                  return RecallMetricStrip(
-                    key: const Key('recall_stats_session_strip'),
-                    metrics: [
-                      RecallMetric('Reviewed', '${s.reviewedThisSession}'),
-                      RecallMetric('Due now', '${s.dueRemaining}'),
-                      RecallMetric('New left', '${s.newRemaining}'),
-                    ],
-                  );
-                },
-              ),
-            ),
-            if (AppSwitcher.isSupported) ...[
-              const SizedBox(height: UiSpacing.lg),
-              const AppSwitcher(
-                current: HealthWebApp.recall,
-                alignment: WrapAlignment.center,
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -329,10 +344,10 @@ class StatsScreenState extends State<StatsScreen> {
       builder: (context, snap) {
         late final Widget content;
         if (snap.connectionState != ConnectionState.done) {
-          content = const Padding(
-            key: ValueKey('stats_section_loading'),
-            padding: EdgeInsets.all(UiSpacing.lg),
-            child: Center(child: CircularProgressIndicator()),
+          content = Semantics(
+            key: ValueKey('stats_section_loading_$label'),
+            label: 'Loading ${label ?? 'statistics'}',
+            child: _loadingSection(label),
           );
         } else if (snap.hasError || !snap.hasData) {
           content = Container(
@@ -353,8 +368,67 @@ class StatsScreenState extends State<StatsScreen> {
             child: builder(snap.data as T),
           );
         }
-        return RecallMotionSwap(child: content);
+        return content;
       },
     );
+  }
+
+  Widget _loadingSection(String? label) {
+    final today = widget.clock();
+    switch (label) {
+      case 'retention':
+        return RetentionPanel(
+          hero: true,
+          loading: true,
+          summary: const RetentionSummary(
+            windowDays: 30,
+            total: 0,
+            passed: 0,
+            youngTotal: 0,
+            youngPassed: 0,
+            matureTotal: 0,
+            maturePassed: 0,
+          ),
+          windowDays: _retentionWindow,
+          onWindowChanged: (_) {},
+        );
+      case 'history':
+        return const StatsSkeleton(
+          columns: 2,
+          child: RecallMetricStrip(
+            metrics: [
+              RecallMetric('Streak', '— days'),
+              RecallMetric('Reviews · 30 days', '—'),
+            ],
+          ),
+        );
+      case 'heatmap':
+        return StatsSkeleton(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const StatsChartReadout(
+                placeholder: 'Recall over the last 30 days: 100%',
+                value: 'Recall over the last 30 days: —',
+              ),
+              const SizedBox(height: UiSpacing.md),
+              ReviewHeatmap(days: StatsService.buildHeatmap([], today: today)),
+            ],
+          ),
+        );
+      case 'forecast':
+        return StatsSkeleton(
+          child: DueForecastChart(
+            days: StatsService.buildForecast([], today: today, days: 15),
+          ),
+        );
+      default:
+        return const StatsSkeleton(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: UiSpacing.md),
+            child: Text('Loading statistics', style: StatsChartStyles.caption),
+          ),
+        );
+    }
   }
 }

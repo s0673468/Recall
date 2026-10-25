@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../theme/ui_tokens.dart';
 import '../../domain/stats_models.dart';
+import 'stats_chart_styles.dart';
 
 /// True retention over a chosen window, with the interval cohorts available
 /// when the reader wants the underlying detail.
@@ -10,6 +11,7 @@ class RetentionPanel extends StatelessWidget {
   final int windowDays;
   final ValueChanged<int> onWindowChanged;
   final bool hero;
+  final bool loading;
 
   const RetentionPanel({
     super.key,
@@ -17,6 +19,7 @@ class RetentionPanel extends StatelessWidget {
     required this.windowDays,
     required this.onWindowChanged,
     this.hero = false,
+    this.loading = false,
   });
 
   @override
@@ -45,22 +48,16 @@ class RetentionPanel extends StatelessWidget {
                 DropdownMenuItem(value: 30, child: Text('30 days')),
                 DropdownMenuItem(value: 90, child: Text('90 days')),
               ],
-              onChanged: (window) {
-                if (window != null) onWindowChanged(window);
-              },
+              onChanged: loading
+                  ? null
+                  : (window) {
+                      if (window != null) onWindowChanged(window);
+                    },
             ),
           ],
         ),
         const SizedBox(height: UiSpacing.md),
-        if (summary.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: UiSpacing.md),
-            child: Text(
-              'No reviews in this window yet.',
-              style: TextStyle(color: UiColors.textMuted),
-            ),
-          )
-        else ...[
+        ...[
           _overall(context),
           const SizedBox(height: UiSpacing.sm),
           ExpansionTile(
@@ -68,9 +65,12 @@ class RetentionPanel extends StatelessWidget {
             maintainState: true,
             tilePadding: EdgeInsets.zero,
             childrenPadding: const EdgeInsets.only(bottom: UiSpacing.sm),
-            title: Text(
-              'Young and mature cards',
-              style: Theme.of(context).textTheme.bodySmall,
+            enabled: !loading,
+            title: _placeholder(
+              Text(
+                'Young and mature cards',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ),
             children: [
               if (summary.hasCohorts)
@@ -130,21 +130,37 @@ class RetentionPanel extends StatelessWidget {
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
-          child: Text(
-            '${(summary.passed * 100 / summary.total).round()}%',
-            style: TextStyle(
-              color: UiColors.textPrimary,
-              fontSize: hero ? 64 : 40,
-              fontWeight: FontWeight.w400,
-              height: 1.1,
-              letterSpacing: -1.5,
+          child: _placeholder(
+            Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                ExcludeSemantics(
+                  child: Opacity(
+                    opacity: 0,
+                    child: RichText(
+                      text: TextSpan(text: '100%', style: _heroStyle),
+                      textScaler: MediaQuery.textScalerOf(context),
+                    ),
+                  ),
+                ),
+                Text(
+                  summary.isEmpty
+                      ? '—'
+                      : '${(summary.passed * 100 / summary.total).round()}%',
+                  style: _heroStyle,
+                ),
+              ],
             ),
           ),
         ),
         const SizedBox(height: UiSpacing.sm),
-        Text(
-          '${summary.passed} of ${summary.total} scheduled reviews remembered.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(height: 1.6),
+        _placeholder(
+          StatsChartReadout(
+            placeholder: '000000 of 000000 scheduled reviews remembered.',
+            value: summary.isEmpty
+                ? 'No reviews in this window yet.'
+                : '${summary.passed} of ${summary.total} scheduled reviews remembered.',
+          ),
         ),
         const SizedBox(height: UiSpacing.lg),
         ClipRRect(
@@ -162,6 +178,18 @@ class RetentionPanel extends StatelessWidget {
     );
   }
 
+  TextStyle get _heroStyle => TextStyle(
+    color: UiColors.textPrimary,
+    fontSize: hero ? 64 : 40,
+    fontWeight: FontWeight.w400,
+    height: 1.1,
+    letterSpacing: -1.5,
+    fontFeatures: StatsChartStyles.figures,
+  );
+
+  Widget _placeholder(Widget child) =>
+      loading ? StatsSkeleton(child: child) : child;
+
   Widget _cohort(BuildContext context, String label, int passed, int total) =>
       Padding(
         padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
@@ -172,7 +200,7 @@ class RetentionPanel extends StatelessWidget {
             const SizedBox(height: UiSpacing.xs),
             Text(
               total == 0 ? '—' : '${(passed * 100 / total).round()}%',
-              style: Theme.of(context).textTheme.titleLarge,
+              style: StatsChartStyles.value,
             ),
             Text(
               '$total reviews',
