@@ -68,7 +68,7 @@ Future<void> _mount(WidgetTester tester, Widget child) async {
 }
 
 void main() {
-  testWidgets('real rating advances once before the next card paints', (
+  testWidgets('real rating paints the next card in its first frame', (
     tester,
   ) async {
     final fixture = await _fixture(tester);
@@ -90,8 +90,8 @@ void main() {
     await tester.pump();
     expect(
       probe.hasPaintedCard(2),
-      isFalse,
-      reason: 'An incoming zero-opacity frame is not visible',
+      isTrue,
+      reason: 'The saved next card must be visible in its first frame',
     );
     probe.requestPaint();
     await tester.pump(const Duration(milliseconds: 16));

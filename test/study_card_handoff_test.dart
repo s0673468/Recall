@@ -286,6 +286,7 @@ void main() {
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(api.applied, hasLength(2));
+    expect(controller.state.pendingSync, 0);
     await tester.pumpWidget(const SizedBox());
   });
 }
