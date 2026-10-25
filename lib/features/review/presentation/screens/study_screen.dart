@@ -322,35 +322,36 @@ class StudyScreen extends StatelessWidget {
             final accessibleScroll =
                 MediaQuery.textScalerOf(context).scale(1) > 1.3 ||
                 constraints.maxHeight < 420;
-            return RecallMotionSwap(
-              child: accessibleScroll
-                  ? SingleChildScrollView(
-                      key: ValueKey('study_card_${card.id}'),
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          header,
-                          const SizedBox(height: UiSpacing.sm),
-                          SizedBox(height: 260, child: cardPanel),
-                          const SizedBox(height: UiSpacing.md),
-                          actions,
-                          const SizedBox(height: UiSpacing.sm),
-                        ],
-                      ),
-                    )
-                  : Column(
-                      key: ValueKey('study_card_${card.id}'),
+            // A rating already waits for its durable local save. Present the
+            // next question in that first frame instead of fading the entire
+            // study surface out/in on every card id change.
+            return accessibleScroll
+                ? SingleChildScrollView(
+                    key: ValueKey('study_card_${card.id}'),
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         header,
                         const SizedBox(height: UiSpacing.sm),
-                        Expanded(child: cardPanel),
+                        SizedBox(height: 260, child: cardPanel),
                         const SizedBox(height: UiSpacing.md),
                         actions,
                         const SizedBox(height: UiSpacing.sm),
                       ],
                     ),
-            );
+                  )
+                : Column(
+                    key: ValueKey('study_card_${card.id}'),
+                    children: [
+                      header,
+                      const SizedBox(height: UiSpacing.sm),
+                      Expanded(child: cardPanel),
+                      const SizedBox(height: UiSpacing.md),
+                      actions,
+                      const SizedBox(height: UiSpacing.sm),
+                    ],
+                  );
           },
         );
         return Focus(
