@@ -21,6 +21,7 @@ class PrimerLibraryScreen extends StatefulWidget {
   final ValueChanged<ConceptPage>? onOpenPrimer;
   final RecallApi? api;
   final LocalReviewStore? store;
+  final List<ReviewLogEntry> reviewLog;
   final Map<String, ListFeedback> feedbackByNode;
 
   const PrimerLibraryScreen({
@@ -30,6 +31,7 @@ class PrimerLibraryScreen extends StatefulWidget {
     this.onOpenPrimer,
     this.api,
     this.store,
+    this.reviewLog = const [],
     this.feedbackByNode = const {},
   });
 
@@ -48,7 +50,7 @@ class _PrimerLibraryScreenState extends State<PrimerLibraryScreen> {
       return ListFeedbackService(
         api: api,
         store: widget.store ?? LocalReviewStore(),
-      ).load(noteTags: tags);
+      ).load(noteTags: tags, reviewLog: widget.reviewLog);
     }().catchError((_) => <String, ListFeedback>{});
   }
 

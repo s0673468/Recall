@@ -18,6 +18,7 @@ class ConceptRetentionPanel extends StatelessWidget {
   final int totalConcepts;
   final List<ConceptPage> conceptPages;
   final List<ConceptNodeInfo> conceptNodes;
+  final List<ReviewLogEntry> reviewLog;
   final RecallApi? api;
   final LocalReviewStore Function()? libraryStore;
 
@@ -29,6 +30,7 @@ class ConceptRetentionPanel extends StatelessWidget {
     required this.totalConcepts,
     this.conceptPages = const [],
     this.conceptNodes = const [],
+    this.reviewLog = const [],
     this.api,
     this.libraryStore,
   });
@@ -80,6 +82,7 @@ class ConceptRetentionPanel extends StatelessWidget {
                     builder: (_) => PrimerLibraryScreen(
                       pages: conceptPages,
                       conceptNodes: conceptNodes,
+                      reviewLog: reviewLog,
                       api: api,
                       store: libraryStore?.call(),
                     ),

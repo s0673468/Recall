@@ -93,15 +93,17 @@ class ReadScreenState extends State<ReadScreen> {
     // Feedback is optional: a slow transport or local store must never hold
     // the reading content on its loading screen. Ignore superseded loads.
     unawaited(
-      _data.then((data) async {
-        final feedback = await ListFeedbackService(
-          api: widget.api,
-          store: widget.store,
-        ).load(noteTags: data.noteTags, reviewLog: data.reviewLog);
-        if (mounted && feedbackLoad == _feedbackLoad) {
-          setState(() => _feedbackByNode = feedback);
-        }
-      }).catchError((_) {}),
+      _data
+          .then((data) async {
+            final feedback = await ListFeedbackService(
+              api: widget.api,
+              store: widget.store,
+            ).load(noteTags: data.noteTags, reviewLog: data.reviewLog);
+            if (mounted && feedbackLoad == _feedbackLoad) {
+              setState(() => _feedbackByNode = feedback);
+            }
+          })
+          .catchError((_) {}),
     );
   }
 
