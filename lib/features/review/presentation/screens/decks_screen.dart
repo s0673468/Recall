@@ -214,6 +214,7 @@ class DecksScreenState extends State<DecksScreen> {
                                   child: Align(
                                     alignment: Alignment.topCenter,
                                     child: LinearProgressIndicator(
+                                      color: UiColors.textMuted,
                                       minHeight: 2,
                                     ),
                                   ),
@@ -230,18 +231,15 @@ class DecksScreenState extends State<DecksScreen> {
                   ),
                   if (coreDecks.isNotEmpty) ...[
                     _sliverBox(
-                      const Column(
+                      Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          SizedBox(height: UiSpacing.lg),
+                          const SizedBox(height: UiSpacing.lg),
                           Text(
                             'Included in automatic review',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: UiColors.textMuted,
-                            ),
+                            style: Theme.of(context).textTheme.bodySmall,
                           ),
-                          SizedBox(height: UiSpacing.sm),
+                          const SizedBox(height: UiSpacing.sm),
                         ],
                       ),
                     ),
@@ -498,7 +496,7 @@ class _OptionalDecksState extends State<_OptionalDecks> {
                 setState(() => _expanded = expanded);
                 widget.onExpansionChanged(expanded);
               },
-              tilePadding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs),
+              tilePadding: EdgeInsets.zero,
               childrenPadding: EdgeInsets.zero,
               title: Row(
                 children: [
@@ -543,10 +541,10 @@ class _CountError extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: UiSpacing.sm),
     child: Row(
       children: [
-        const Expanded(
+        Expanded(
           child: Text(
             'Could not load deck counts.',
-            style: TextStyle(color: UiColors.textMuted, fontSize: 12),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
         TextButton(onPressed: onRetry, child: const Text('Retry')),

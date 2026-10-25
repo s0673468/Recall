@@ -66,7 +66,7 @@ class RereadRow extends StatelessWidget {
         key: ValueKey('recall_reread_row_${page.nodeId}'),
         constraints: const BoxConstraints(minHeight: 52),
         padding: const EdgeInsets.symmetric(
-          horizontal: UiSpacing.sm,
+          horizontal: 0,
           vertical: UiSpacing.md,
         ),
         decoration: const BoxDecoration(
@@ -76,16 +76,15 @@ class RereadRow extends StatelessWidget {
           children: [
             const Icon(
               Icons.refresh_outlined,
-              color: UiColors.primary,
+              color: UiColors.textMuted,
               size: 18,
             ),
             const SizedBox(width: UiSpacing.md),
             Expanded(
               child: Text(
                 'Reread: ${page.title}',
-                style: const TextStyle(
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                   color: UiColors.textPrimary,
-                  fontSize: 16,
                   height: 1.45,
                   fontWeight: FontWeight.w500,
                 ),

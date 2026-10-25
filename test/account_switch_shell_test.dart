@@ -113,7 +113,7 @@ void main() {
       );
       addTearDown(dependencies.dispose);
       await tester.pumpWidget(RecallApp(dependencies: dependencies));
-      // A delayed primer request leaves a spinner, so do not settle it.
+      // Allow the initial tab to mount while the primer request is pending.
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
@@ -159,6 +159,12 @@ void main() {
       expect(api.pageOwners, containsAll(['A', 'B']));
       api.ownerAGate?.complete();
       await tester.tap(destination('Read'));
+      await tester.pumpAndSettle();
+      expect(find.text('Account B primer'), findsNothing);
+      await tester.enterText(
+        find.byKey(const Key('recall_primer_search')),
+        'Account',
+      );
       await tester.pumpAndSettle();
       expect(find.text('Account B primer'), findsWidgets);
       expect(find.text('Account A primer'), findsNothing);

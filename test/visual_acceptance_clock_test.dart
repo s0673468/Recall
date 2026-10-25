@@ -127,8 +127,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      const emptyMessage =
-          'Nothing reviewed in the last 3 days. Your full library is ready below.';
+      const emptyMessage = 'No recent reading yet.';
       expect(find.byKey(const Key('recall_read_chats')), findsOneWidget);
       expect(find.text(emptyMessage), findsNothing);
 

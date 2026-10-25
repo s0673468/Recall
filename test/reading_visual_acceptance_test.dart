@@ -380,14 +380,24 @@ void main() {
       );
       await capture('reading-loading');
       expect(find.text('Read'), findsOneWidget);
-      expect(find.text('Loading primers…'), findsOneWidget);
+      expect(find.text('Loading primers…'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(
+        find.byKey(const Key('recall_read_skeleton_rows')),
+        findsOneWidget,
+      );
       expect(
         tester
-            .widget<CircularProgressIndicator>(
-              find.byType(CircularProgressIndicator),
+            .widget<Semantics>(
+              find.byWidgetPredicate(
+                (widget) =>
+                    widget is Semantics &&
+                    widget.properties.label == 'Loading primers',
+              ),
             )
-            .semanticsLabel,
-        'Loading primers',
+            .properties
+            .liveRegion,
+        isTrue,
       );
       pending.complete([]);
       await tester.pumpAndSettle();

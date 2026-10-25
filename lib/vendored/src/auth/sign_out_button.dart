@@ -55,7 +55,7 @@ class SignOutButton extends StatelessWidget {
     final label = (email == null || email!.isEmpty)
         ? 'Sign out'
         : 'Sign out · $email';
-    final icon = const Icon(Icons.logout_rounded, size: 18);
+    final icon = const Icon(Icons.logout_outlined, size: 20);
     switch (variant) {
       case SignOutButtonVariant.text:
         return TextButton.icon(

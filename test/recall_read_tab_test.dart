@@ -134,7 +134,7 @@ void main() {
       expect(find.text('Attention primer'), findsNothing);
     });
 
-    testWidgets('shows a primer reviewed today above the grouped library', (
+    testWidgets('shows a primer reviewed today above the library search', (
       tester,
     ) async {
       final page = ConceptPage(
@@ -155,7 +155,8 @@ void main() {
 
       expect(inReadTab(find.byType(ReadScreen)), findsOneWidget);
       expect(inReadTab(find.text('Recent reading')), findsOneWidget);
-      expect(inReadTab(find.text('More from the library')), findsOneWidget);
+      expect(inReadTab(find.text('Library')), findsOneWidget);
+      expect(inReadTab(find.text('More from the library')), findsNothing);
       expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
       expect(inReadTab(find.text('M00')), findsNothing);
       expect(
@@ -204,10 +205,17 @@ void main() {
         findsOneWidget,
       );
       expect(inReadTab(find.text('Entropy, from your chats')), findsOneWidget);
+      expect(inReadTab(find.text('Vector geometry primer')), findsNothing);
+      await tester.enterText(
+        inReadTab(find.byKey(const Key('recall_primer_search'))),
+        'Vector',
+      );
+      await tester.pumpAndSettle();
       expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
+      expect(inReadTab(find.text('Entropy, from your chats')), findsNothing);
     });
 
-    testWidgets('shows the empty-today line while keeping the library', (
+    testWidgets('keeps unreviewed library primers hidden until searched', (
       tester,
     ) async {
       final page = ConceptPage(
@@ -230,15 +238,17 @@ void main() {
 
       await pumpShell(tester, api);
 
-      expect(
-        inReadTab(
-          find.text(
-            'Nothing reviewed in the last 3 days. Your full library is ready below.',
-          ),
-        ),
-        findsOneWidget,
+      expect(inReadTab(find.text('No recent reading yet.')), findsOneWidget);
+      expect(inReadTab(find.text('Vector geometry primer')), findsNothing);
+      await tester.enterText(
+        inReadTab(find.byKey(const Key('recall_primer_search'))),
+        'Vector',
       );
+      await tester.pumpAndSettle();
       expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
+      await tester.tap(inReadTab(find.byTooltip('Clear search')));
+      await tester.pumpAndSettle();
+      expect(inReadTab(find.text('Vector geometry primer')), findsNothing);
       expect(inReadTab(find.text('M00')), findsNothing);
     });
 

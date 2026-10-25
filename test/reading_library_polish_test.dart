@@ -378,11 +378,14 @@ void main() {
       scale: 2,
       settle: false,
     );
-    expect(find.text('Loading primers…'), findsOneWidget);
+    expect(find.text('Loading primers…'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const Key('recall_read_skeleton_rows')), findsOneWidget);
     pending.complete([]);
     await tester.pumpAndSettle();
     expect(find.text('No recent reading yet.'), findsOneWidget);
-    expect(find.text('No primers available.'), findsOneWidget);
+    expect(find.text('No primers available.'), findsNothing);
+    expect(find.byKey(const Key('recall_primer_search')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

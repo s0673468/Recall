@@ -156,25 +156,31 @@ class _Loading extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
     body: Container(
       decoration: const BoxDecoration(color: UiColors.canvas),
-      child: const Center(
+      child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.auto_stories_rounded, color: UiColors.primary, size: 38),
-            SizedBox(height: UiSpacing.md),
+            const Icon(
+              Icons.auto_stories_outlined,
+              color: UiColors.textSecondary,
+              size: 38,
+            ),
+            const SizedBox(height: UiSpacing.md),
             Text(
               'Recall',
-              style: TextStyle(
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 color: UiColors.textPrimary,
-                fontSize: 24,
                 fontWeight: FontWeight.w700,
               ),
             ),
-            SizedBox(height: UiSpacing.lg),
-            SizedBox(
+            const SizedBox(height: UiSpacing.lg),
+            const SizedBox(
               width: 24,
               height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: UiColors.textMuted,
+              ),
             ),
           ],
         ),

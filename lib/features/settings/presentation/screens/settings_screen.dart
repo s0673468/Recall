@@ -63,23 +63,25 @@ class FsrsOptimizerStatusLine extends StatelessWidget {
     return '21 weights, fitted ${fittedAt.toIso8601String().substring(0, 10)}';
   }
 
-  Widget _line() => ListTile(
+  Widget _line(BuildContext context) => ListTile(
     contentPadding: EdgeInsets.zero,
     dense: true,
     leading: const Icon(Icons.tune, color: UiColors.textMuted),
     title: Text(
       label,
-      style: const TextStyle(color: UiColors.textSecondary, fontSize: 13),
+      style: Theme.of(
+        context,
+      ).textTheme.bodySmall?.copyWith(color: UiColors.textSecondary),
     ),
   );
 
   @override
   Widget build(BuildContext context) {
     final changes = this.changes;
-    if (changes == null) return _line();
+    if (changes == null) return _line(context);
     return ListenableBuilder(
       listenable: changes,
-      builder: (context, _) => _line(),
+      builder: (context, _) => _line(context),
     );
   }
 }
@@ -182,8 +184,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(width: UiSpacing.sm),
               Text(
                 '${(retention * 100).round()}%',
-                style: const TextStyle(
-                  color: UiColors.primary,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: UiColors.textPrimary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
@@ -211,7 +213,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Text(
             '≈ workload ×${mult.toStringAsFixed(1)} vs the 90% baseline. '
             'Higher retention means more reviews.',
-            style: const TextStyle(color: UiColors.textMuted, fontSize: 12),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           const Divider(color: UiColors.border, height: UiSpacing.xl),
           _stepperRow(
@@ -219,9 +221,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _prefs.newLimitDefault,
             onChanged: (v) => _apply(_prefs.copyWith(newLimitDefault: v)),
           ),
-          const Text(
+          Text(
             StudyDay.resetDescription,
-            style: TextStyle(color: UiColors.textMuted, fontSize: 12),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: UiSpacing.md),
           const Text(
@@ -547,9 +549,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Text(
             '$value',
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
               color: UiColors.textPrimary,
-              fontSize: 16,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -558,7 +559,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
           tooltip: 'Increase $label',
           icon: const Icon(Icons.add_circle_outline),
-          color: UiColors.primary,
+          color: UiColors.textSecondary,
           onPressed: value >= RecallPrefs.maxNewLimit
               ? null
               : () => onChanged((value + 1).clamp(0, RecallPrefs.maxNewLimit)),

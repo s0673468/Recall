@@ -31,7 +31,7 @@ typedef _ReadData = ({
 typedef OpenReadingPrimer =
     Future<void> Function(ConceptPage page, List<ConceptNodeInfo> conceptNodes);
 
-/// Daily concept reading followed by the complete grouped primer library.
+/// Recent concept reading with library results shown only while searching.
 class ReadScreen extends StatefulWidget {
   final RecallApi api;
   final LocalReviewStore store;
@@ -152,31 +152,10 @@ class ReadScreenState extends State<ReadScreen> {
         late final Widget content;
         if (snapshot.connectionState != ConnectionState.done &&
             !snapshot.hasData) {
-          content = ListView(
-            key: const ValueKey('read_loading'),
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(
-              UiSpacing.md,
-              UiSpacing.md,
-              UiSpacing.md,
-              UiSpacing.xl,
-            ),
-            children: [
-              if (widget.showHeader) const RecallPageHeader(title: 'Read'),
-              const SizedBox(height: UiSpacing.xl),
-              const Center(
-                child: CircularProgressIndicator(
-                  semanticsLabel: 'Loading primers',
-                ),
-              ),
-              const SizedBox(height: UiSpacing.md),
-              const Center(
-                child: Text(
-                  'Loading primers…',
-                  style: TextStyle(color: UiColors.textMuted),
-                ),
-              ),
-            ],
+          content = _ReadLoading(
+            showHeader: widget.showHeader,
+            libraryFirst: widget.libraryFirst,
+            hasRelatedPages: widget.relatedNodeIds.isNotEmpty,
           );
         } else if (snapshot.hasError || !snapshot.hasData) {
           content = ListView(
@@ -231,17 +210,13 @@ class ReadScreenState extends State<ReadScreen> {
             key: const Key('recall_read_library'),
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              RecallSectionLabel(
-                title: widget.libraryFirst || _searching
-                    ? 'Library'
-                    : 'More from the library',
-              ),
+              const RecallSectionLabel(title: 'Library'),
               const SizedBox(height: UiSpacing.md),
               PrimerLibraryContent(
                 pages: data.conceptPages,
                 feedbackByNode: _feedbackByNode,
                 initialQuery: _searchQuery,
-                collapsedBrowse: widget.libraryFirst,
+                collapsedBrowse: true,
                 conceptNodes: data.conceptNodes,
                 browseExcludedNodeIds: {
                   for (final page in relatedPages) page.nodeId,
@@ -338,11 +313,9 @@ class ReadScreenState extends State<ReadScreen> {
                     if (rereadPages.isNotEmpty && todayPages.isNotEmpty)
                       const SizedBox(height: UiSpacing.md),
                     if (todayPages.isEmpty && rereadPages.isEmpty)
-                      Text(
-                        data.conceptPages.isEmpty
-                            ? 'No recent reading yet.'
-                            : 'Nothing reviewed in the last 3 days. Your full library is ready below.',
-                        style: const TextStyle(color: UiColors.textMuted),
+                      const Text(
+                        'No recent reading yet.',
+                        style: TextStyle(color: UiColors.textMuted),
                       ),
                     if (todayPages.isNotEmpty)
                       RecallListGroup(
@@ -367,6 +340,112 @@ class ReadScreenState extends State<ReadScreen> {
         }
         return RecallMotionSwap(child: content);
       },
+    ),
+  );
+}
+
+class _ReadLoading extends StatelessWidget {
+  final bool showHeader;
+  final bool libraryFirst;
+  final bool hasRelatedPages;
+
+  const _ReadLoading({
+    required this.showHeader,
+    required this.libraryFirst,
+    required this.hasRelatedPages,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const library = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        RecallSectionLabel(title: 'Library'),
+        SizedBox(height: UiSpacing.md),
+        Material(
+          color: Colors.transparent,
+          child: TextField(
+            key: Key('recall_primer_search'),
+            enabled: false,
+            decoration: InputDecoration(
+              hintText: 'Find a concept',
+              prefixIcon: Icon(Icons.search, size: 20),
+            ),
+          ),
+        ),
+      ],
+    );
+    return Semantics(
+      label: 'Loading primers',
+      liveRegion: true,
+      child: ExcludeSemantics(
+        child: ListView(
+          key: const ValueKey('read_loading'),
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(
+            UiSpacing.md,
+            UiSpacing.md,
+            UiSpacing.md,
+            UiSpacing.xl,
+          ),
+          children: [
+            if (showHeader) ...[
+              const RecallPageHeader(title: 'Read'),
+              const SizedBox(height: UiSpacing.lg),
+            ],
+            if (hasRelatedPages) ...[
+              const RecallSectionLabel(title: 'For this card'),
+              const SizedBox(height: UiSpacing.md),
+              const RecallListGroup(children: [_ReadSkeletonRow()]),
+              const SizedBox(height: UiSpacing.xl),
+            ],
+            if (libraryFirst) ...[
+              library,
+              const SizedBox(height: UiSpacing.xl),
+            ],
+            const RecallSectionLabel(title: 'Recent reading'),
+            const SizedBox(height: UiSpacing.md),
+            const RecallListGroup(
+              key: Key('recall_read_skeleton_rows'),
+              children: [
+                _ReadSkeletonRow(),
+                _ReadSkeletonRow(widthFactor: 0.8),
+                _ReadSkeletonRow(widthFactor: 0.5),
+              ],
+            ),
+            const SizedBox(height: UiSpacing.xl),
+            if (!libraryFirst) library,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Static placeholders use the reading rows' height and the theme's type scale.
+class _ReadSkeletonRow extends StatelessWidget {
+  final double widthFactor;
+
+  const _ReadSkeletonRow({this.widthFactor = 0.65});
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: const BoxConstraints(minHeight: 60),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: UiSpacing.sm),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FractionallySizedBox(
+          widthFactor: widthFactor,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: UiColors.panelRaised,
+              borderRadius: BorderRadius.circular(UiSpacing.xs),
+            ),
+            child: Text(' ', style: Theme.of(context).textTheme.bodyMedium),
+          ),
+        ),
+      ),
     ),
   );
 }

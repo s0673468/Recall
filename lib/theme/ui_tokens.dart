@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../core/widgets/recall_motion.dart';
 import 'package:health_anki_flutter/vendored/ui_tokens_canonical.dart'
     show UiMood, UiRadii, UiSpacing;
 
@@ -30,9 +31,11 @@ abstract final class UiColors {
   static const bgCard = panel;
   static const border = Color(0xFF363A3D);
   static const borderSubtle = border;
+  static const borderControl = Color(0xFF72787C);
   static const textPrimary = Color(0xFFEBEAE6);
   static const textSecondary = Color(0xFFBEC2C3);
   static const textMuted = Color(0xFFA0A6A9);
+  static const textDisabled = Color(0xFF8C9194);
   static const primary = Color(0xFFD4C18D);
   static const primaryMuted = Color(0x1FD4C18D);
   static const secondary = panelRaised;
@@ -97,6 +100,8 @@ ThemeData buildRecallTheme() {
   final base = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
+    fontFamily: 'Roboto',
+    disabledColor: UiColors.textDisabled,
     scaffoldBackgroundColor: UiColors.canvas,
     canvasColor: UiColors.canvas,
     colorScheme: const ColorScheme.dark(
@@ -112,7 +117,7 @@ ThemeData buildRecallTheme() {
       onSurface: UiColors.textPrimary,
       onSurfaceVariant: UiColors.textSecondary,
       surfaceContainerHighest: UiColors.panelRaised,
-      outline: UiColors.border,
+      outline: UiColors.borderControl,
       outlineVariant: UiColors.border,
       error: UiColors.danger,
       onError: UiColors.canvas,
@@ -135,34 +140,44 @@ ThemeData buildRecallTheme() {
       fontWeight: FontWeight.w600,
       height: 1.25,
       letterSpacing: -0.25,
+      fontFeatures: const [FontFeature.tabularFigures()],
     ),
     titleLarge: text.titleLarge?.copyWith(
       fontSize: 20,
       fontWeight: FontWeight.w600,
       height: 1.3,
+      fontFeatures: const [FontFeature.tabularFigures()],
     ),
     titleMedium: text.titleMedium?.copyWith(
       fontSize: 16,
       fontWeight: FontWeight.w500,
       height: 1.4,
       letterSpacing: 0,
+      fontFeatures: const [FontFeature.tabularFigures()],
     ),
-    bodyLarge: text.bodyLarge?.copyWith(fontSize: 16, height: 1.55),
+    bodyLarge: text.bodyLarge?.copyWith(
+      fontSize: 16,
+      height: 1.55,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    ),
     bodyMedium: text.bodyMedium?.copyWith(
       fontSize: 14,
       height: 1.5,
       letterSpacing: 0,
+      fontFeatures: const [FontFeature.tabularFigures()],
     ),
     bodySmall: text.bodySmall?.copyWith(
       fontSize: 12,
       color: UiColors.textMuted,
       height: 1.5,
       letterSpacing: 0,
+      fontFeatures: const [FontFeature.tabularFigures()],
     ),
     labelLarge: text.labelLarge?.copyWith(
       fontSize: 14,
       fontWeight: FontWeight.w500,
       letterSpacing: 0,
+      fontFeatures: const [FontFeature.tabularFigures()],
     ),
   );
   final controlShape = RoundedRectangleBorder(
@@ -170,7 +185,7 @@ ThemeData buildRecallTheme() {
   );
   final inputBorder = OutlineInputBorder(
     borderRadius: BorderRadius.circular(UiRadii.control),
-    borderSide: const BorderSide(color: UiColors.border),
+    borderSide: const BorderSide(color: UiColors.borderControl),
   );
   return base.copyWith(
     textTheme: textTheme,
@@ -196,8 +211,9 @@ ThemeData buildRecallTheme() {
       fillColor: Colors.transparent,
       border: inputBorder,
       enabledBorder: inputBorder,
+      disabledBorder: inputBorder,
       focusedBorder: inputBorder.copyWith(
-        borderSide: const BorderSide(color: UiColors.primary, width: 1.5),
+        borderSide: const BorderSide(color: UiColors.borderControl, width: 2),
       ),
       hintStyle: textTheme.bodyMedium?.copyWith(color: UiColors.textMuted),
       contentPadding: const EdgeInsets.symmetric(
@@ -209,6 +225,7 @@ ThemeData buildRecallTheme() {
       style: FilledButton.styleFrom(
         backgroundColor: UiColors.primary,
         foregroundColor: UiColors.canvas,
+        disabledForegroundColor: UiColors.textDisabled,
         minimumSize: const Size(48, 48),
         shape: controlShape,
         textStyle: textTheme.labelLarge,
@@ -218,14 +235,16 @@ ThemeData buildRecallTheme() {
       style: OutlinedButton.styleFrom(
         foregroundColor: UiColors.textPrimary,
         minimumSize: const Size(48, 48),
-        side: const BorderSide(color: UiColors.border),
+        side: const BorderSide(color: UiColors.borderControl),
+        disabledForegroundColor: UiColors.textDisabled,
         shape: controlShape,
         textStyle: textTheme.labelLarge,
       ),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        foregroundColor: UiColors.primary,
+        foregroundColor: UiColors.textSecondary,
+        disabledForegroundColor: UiColors.textDisabled,
         minimumSize: const Size(48, 48),
         textStyle: textTheme.labelLarge,
       ),
@@ -233,11 +252,16 @@ ThemeData buildRecallTheme() {
     chipTheme: ChipThemeData(
       backgroundColor: Colors.transparent,
       selectedColor: UiColors.primaryMuted,
-      side: const BorderSide(color: UiColors.border),
+      side: const BorderSide(color: UiColors.borderControl),
       labelStyle: textTheme.bodyMedium,
       shape: controlShape,
     ),
     expansionTileTheme: ExpansionTileThemeData(
+      expansionAnimationStyle: const AnimationStyle(
+        duration: RecallMotion.base,
+        curve: RecallMotion.standardCurve,
+        reverseCurve: RecallMotion.accelerate,
+      ),
       backgroundColor: Colors.transparent,
       collapsedBackgroundColor: Colors.transparent,
       textColor: UiColors.textPrimary,
