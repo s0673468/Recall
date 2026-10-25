@@ -90,7 +90,10 @@ void main() {
       expect(isCloze('{{c1,2::shared}}'), isTrue);
       final d = _deletions(parseCloze('a {{c1,2::shared}} b')).single;
       expect(_flat(d.content), 'shared');
-      expect(d.index, 1); // first ordinal (index is irrelevant in fallback mode)
+      expect(
+        d.index,
+        1,
+      ); // first ordinal (index is irrelevant in fallback mode)
     });
   });
 
@@ -118,10 +121,14 @@ void main() {
     });
 
     test('balanced LaTeX / JSON braces stay inside the deletion', () {
-      expect(_flat(_deletions(parseCloze(r'{{c1::\frac{a}{b}}}')).single.content),
-          r'\frac{a}{b}');
-      expect(_flat(_deletions(parseCloze('{{c1::{"k": 1}}}')).single.content),
-          '{"k": 1}');
+      expect(
+        _flat(_deletions(parseCloze(r'{{c1::\frac{a}{b}}}')).single.content),
+        r'\frac{a}{b}',
+      );
+      expect(
+        _flat(_deletions(parseCloze('{{c1::{"k": 1}}}')).single.content),
+        '{"k": 1}',
+      );
     });
 
     test('an unbalanced lone } in content is kept, not dropped', () {
@@ -142,6 +149,27 @@ void main() {
   });
 
   group('parseCloze — malformed never throws, renders literally', () {
+    test('a long broken prefix preserves later valid clozes and hints', () {
+      final prefix = List.filled(16000, '{{c1::unclosed ').join();
+      final nodes = parseCloze('$prefix{{c2::\\frac{a}{b} } x::hint}} tail');
+      expect(nodes, [
+        ClozeText(prefix),
+        const ClozeDeletion(
+          index: 2,
+          content: [ClozeText(r'\frac{a}{b} } x')],
+          hint: 'hint',
+        ),
+        const ClozeText(' tail'),
+      ]);
+    });
+
+    test('indexed recovery keeps balanced groups and nested deletions', () {
+      final nodes = parseCloze(
+        r'{{c1::broken {{c2::{a} {{c3::b}} } c::hint}} {{c4::d}}',
+      );
+      expect(_flat(nodes), '{{c1::broken ⟦c2:{a} ⟦c3:b⟧ } c|hint⟧ ⟦c4:d⟧');
+    });
+
     test('unclosed opener passes through as literal text', () {
       final nodes = parseCloze('{{c1::mitochondria');
       expect(nodes, [const ClozeText('{{c1::mitochondria')]);
@@ -184,10 +212,13 @@ void main() {
   });
 
   group('parseCloze — HTML / math survive inside content', () {
-    test('HTML tags are kept raw in the content for the downstream pipeline', () {
-      final d = _deletions(parseCloze('{{c1::<b>bold</b>}}')).single;
-      expect(_flat(d.content), '<b>bold</b>');
-    });
+    test(
+      'HTML tags are kept raw in the content for the downstream pipeline',
+      () {
+        final d = _deletions(parseCloze('{{c1::<b>bold</b>}}')).single;
+        expect(_flat(d.content), '<b>bold</b>');
+      },
+    );
 
     test('inline math delimiters survive', () {
       final d = _deletions(parseCloze(r'{{c1::\(x=5\)}}')).single;
