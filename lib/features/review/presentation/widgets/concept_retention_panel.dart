@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../../core/platform/recall_platform.dart';
 import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
+import '../../data/local_review_store.dart';
+import '../../data/recall_api.dart';
 import '../../domain/stats_models.dart';
 import '../screens/primer_library_screen.dart';
 import '../screens/primer_screen.dart';
@@ -16,6 +18,8 @@ class ConceptRetentionPanel extends StatelessWidget {
   final int totalConcepts;
   final List<ConceptPage> conceptPages;
   final List<ConceptNodeInfo> conceptNodes;
+  final RecallApi? api;
+  final LocalReviewStore Function()? libraryStore;
 
   const ConceptRetentionPanel({
     super.key,
@@ -25,6 +29,8 @@ class ConceptRetentionPanel extends StatelessWidget {
     required this.totalConcepts,
     this.conceptPages = const [],
     this.conceptNodes = const [],
+    this.api,
+    this.libraryStore,
   });
 
   static const int _topN = 5;
@@ -74,6 +80,8 @@ class ConceptRetentionPanel extends StatelessWidget {
                     builder: (_) => PrimerLibraryScreen(
                       pages: conceptPages,
                       conceptNodes: conceptNodes,
+                      api: api,
+                      store: libraryStore?.call(),
                     ),
                   ),
                 ),

@@ -8,11 +8,13 @@ import '../../../../core/widgets/recall_page_header.dart';
 import '../../../../core/widgets/recall_surfaces.dart';
 import '../../../../navigation/recall_page_route.dart';
 import '../../../../theme/ui_tokens.dart';
+import '../../application/list_feedback_service.dart';
 import '../../application/remediation_service.dart';
 import '../../application/stats_service.dart';
 import '../../data/local_review_store.dart';
 import '../../data/recall_api.dart';
 import '../../domain/concept_attribution.dart';
+import '../../domain/list_feedback.dart';
 import '../../domain/stats_models.dart';
 import 'primer_library_screen.dart';
 import 'primer_screen.dart';
@@ -57,6 +59,8 @@ class ReadScreen extends StatefulWidget {
 class ReadScreenState extends State<ReadScreen> {
   late final StatsService _service = StatsService(widget.api);
   late Future<_ReadData> _data;
+  Map<String, ListFeedback> _feedbackByNode = const {};
+  int _feedbackLoad = 0;
   // Keep the query when a failed refresh temporarily replaces the library.
   String _searchQuery = '';
   bool get _searching => _searchQuery.trim().isNotEmpty;
@@ -68,6 +72,8 @@ class ReadScreenState extends State<ReadScreen> {
   }
 
   void _fetch({bool refresh = false}) {
+    final feedbackLoad = ++_feedbackLoad;
+    _feedbackByNode = const {};
     _data = () async {
       final results = await Future.wait<Object>([
         _service.loadReviewLog(refresh: refresh),
@@ -84,6 +90,19 @@ class ReadScreenState extends State<ReadScreen> {
         remediation: results[4] as List<LocalRemediationItem>,
       );
     }();
+    // Feedback is optional: a slow transport or local store must never hold
+    // the reading content on its loading screen. Ignore superseded loads.
+    unawaited(
+      _data.then((data) async {
+        final feedback = await ListFeedbackService(
+          api: widget.api,
+          store: widget.store,
+        ).load(noteTags: data.noteTags, reviewLog: data.reviewLog);
+        if (mounted && feedbackLoad == _feedbackLoad) {
+          setState(() => _feedbackByNode = feedback);
+        }
+      }).catchError((_) {}),
+    );
   }
 
   /// Tab revisits reuse fresh shared data; pull-to-refresh forces a network
@@ -221,6 +240,7 @@ class ReadScreenState extends State<ReadScreen> {
               const SizedBox(height: UiSpacing.md),
               PrimerLibraryContent(
                 pages: data.conceptPages,
+                feedbackByNode: _feedbackByNode,
                 initialQuery: _searchQuery,
                 collapsedBrowse: widget.libraryFirst,
                 conceptNodes: data.conceptNodes,
@@ -272,6 +292,7 @@ class ReadScreenState extends State<ReadScreen> {
                     for (final page in relatedPages)
                       PrimerRow(
                         page: page,
+                        feedback: _feedbackByNode[page.nodeId],
                         module: moduleByNode[page.nodeId],
                         onTap: () =>
                             unawaited(_openPrimer(page, data.conceptNodes)),
@@ -307,6 +328,7 @@ class ReadScreenState extends State<ReadScreen> {
                           for (final page in chatPages)
                             PrimerRow(
                               page: page,
+                              feedback: _feedbackByNode[page.nodeId],
                               onTap: () => unawaited(
                                 _openPrimer(page, data.conceptNodes),
                               ),
@@ -327,6 +349,7 @@ class ReadScreenState extends State<ReadScreen> {
                     if (rereadPages.isNotEmpty)
                       RemediationRows(
                         pages: rereadPages,
+                        feedbackByNode: _feedbackByNode,
                         onTap: (page) => unawaited(
                           _openPrimer(
                             page,
@@ -350,6 +373,7 @@ class ReadScreenState extends State<ReadScreen> {
                           for (final page in todayPages)
                             PrimerRow(
                               page: page,
+                              feedback: _feedbackByNode[page.nodeId],
                               module: moduleByNode[page.nodeId],
                               onTap: () => unawaited(
                                 _openPrimer(page, data.conceptNodes),
