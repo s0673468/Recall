@@ -139,6 +139,9 @@ void main() {
             .first,
         maxScrolls: 80,
       );
+      await tester.ensureVisible(last);
+      await tester.pumpAndSettle();
+      expect(last.hitTestable(), findsOneWidget);
       await tester.tap(last);
       expect(selected.length, 2);
       expect(selected.last, same(_pages.last));
@@ -147,7 +150,7 @@ void main() {
   );
 
   testWidgets(
-    'embedded library preserves collapse exclusions and full-library search',
+    'companion library only shows search results including excluded concepts',
     (tester) async {
       _phone(tester);
       final selected = <ConceptPage>[];
@@ -170,9 +173,12 @@ void main() {
         ),
       );
       expect(find.byType(PrimerRow), findsNothing);
-      await tester.tap(find.byKey(const Key('recall_primer_browse_toggle')));
-      await tester.pumpAndSettle();
-      expect(find.byType(PrimerRow), findsNWidgets(2));
+      expect(
+        find.byKey(const Key('recall_primer_browse_toggle')),
+        findsNothing,
+      );
+      expect(find.text('Browse library'), findsNothing);
+      expect(find.text('Hide library'), findsNothing);
       expect(
         find.byKey(const ValueKey('recall_primer_row_synthetic-2')),
         findsNothing,
@@ -189,13 +195,56 @@ void main() {
       expect(queries.last, 'Synthetic primer 002');
       await tester.tap(find.byTooltip('Clear search'));
       await tester.pumpAndSettle();
-      expect(find.byType(PrimerRow), findsNWidgets(2));
-      await tester.tap(find.byKey(const Key('recall_primer_browse_toggle')));
+      expect(find.byType(PrimerRow), findsNothing);
+      expect(queries.last, isEmpty);
+      final search = find.byKey(const Key('recall_primer_search'));
+      expect(tester.widget<TextField>(search).focusNode!.hasFocus, isTrue);
+      await tester.enterText(search, 'unmatched synthetic query');
       await tester.pumpAndSettle();
+      expect(find.text('No primers match your search.'), findsOneWidget);
+      expect(find.byType(PrimerRow), findsNothing);
+      await tester.enterText(search, '   ');
+      await tester.pumpAndSettle();
+      expect(find.text('No primers match your search.'), findsNothing);
       expect(find.byType(PrimerRow), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final pages in [<ConceptPage>[], _pages.take(3).toList()]) {
+    testWidgets(
+      'idle companion has no list or empty message (${pages.length})',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildRecallTheme(),
+            home: Scaffold(
+              body: PrimerLibraryContent(
+                pages: pages,
+                conceptNodes: _nodes,
+                browseExcludedNodeIds: {for (final page in pages) page.nodeId},
+                collapsedBrowse: true,
+              ),
+            ),
+          ),
+        );
+        expect(find.byKey(const Key('recall_primer_search')), findsOneWidget);
+        expect(find.byType(PrimerRow), findsNothing);
+        expect(
+          find.byKey(const Key('recall_primer_browse_toggle')),
+          findsNothing,
+        );
+        for (final message in [
+          'No primers match your search.',
+          'No primers available.',
+          'All available primers are in your reading list.',
+          'All available primers are shown above.',
+        ]) {
+          expect(find.text(message), findsNothing);
+        }
+      },
+    );
+  }
 
   for (final scale in [1.0, 2.0]) {
     testWidgets('synthetic 390px library preview at text scale $scale', (

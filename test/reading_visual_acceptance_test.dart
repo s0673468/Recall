@@ -256,8 +256,17 @@ void main() {
         greaterThanOrEqualTo(48),
       );
       expect(
+        find.byKey(const Key('recall_primer_browse_toggle')),
+        findsNothing,
+      );
+      await tester.enterText(
+        find.byKey(const Key('recall_primer_search')),
+        'Vector',
+      );
+      await tester.pumpAndSettle();
+      expect(
         tester
-            .getSize(find.byKey(const Key('recall_primer_browse_toggle')))
+            .getSize(find.byKey(const Key('recall_primer_row_vectors')))
             .height,
         greaterThanOrEqualTo(48),
       );

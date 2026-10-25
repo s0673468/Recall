@@ -291,9 +291,11 @@ void main() {
         ),
       );
 
-      final m00 = tester.getTopLeft(find.text('M00')).dy;
-      final m02 = tester.getTopLeft(find.text('M02')).dy;
+      final m00 = tester.getTopLeft(find.text('Vector geometry primer')).dy;
+      final m02 = tester.getTopLeft(find.text('Loss functions')).dy;
       expect(m00, lessThan(m02));
+      expect(find.text('M00'), findsNothing);
+      expect(find.text('M02'), findsNothing);
       expect(find.text('Vector geometry primer'), findsOneWidget);
       expect(find.text('Loss functions'), findsOneWidget);
     });

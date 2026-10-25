@@ -157,7 +157,11 @@ void main() {
       expect(inReadTab(find.text('Recent reading')), findsOneWidget);
       expect(inReadTab(find.text('More from the library')), findsOneWidget);
       expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
-      expect(inReadTab(find.text('M00')), findsOneWidget);
+      expect(inReadTab(find.text('M00')), findsNothing);
+      expect(
+        inReadTab(find.text('From what you reviewed in the last 3 days.')),
+        findsNothing,
+      );
       expect(
         inReadTab(
           find.text(
@@ -235,7 +239,7 @@ void main() {
         findsOneWidget,
       );
       expect(inReadTab(find.text('Vector geometry primer')), findsOneWidget);
-      expect(inReadTab(find.text('M00')), findsOneWidget);
+      expect(inReadTab(find.text('M00')), findsNothing);
     });
 
     testWidgets('shows queued reread rows and clears one after reading', (
