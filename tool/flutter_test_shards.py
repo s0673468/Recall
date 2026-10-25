@@ -44,7 +44,7 @@ def file_costs(root, files, use_timings=True):
                 raise ValueError(f"invalid duration for {name}")
             if hashlib.sha256((root / name).read_bytes()).hexdigest() == row["sha256"]:
                 measured[name] = seconds
-    except (KeyError, TypeError, AttributeError, json.JSONDecodeError) as error:
+    except (KeyError, TypeError, AttributeError, OverflowError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid Flutter timing manifest: {error}") from error
     if not measured:
         return sizes

@@ -1,221 +1,227 @@
 # Test gate performance
 
-PR notes for the Recall test-gate throughput change, measured on 2026-10-24.
+Continuation validation for Recall test-gate throughput, 2026-10-25.
+The unverified WIP's timing tables have been replaced with measurements from
+this checkout. No hosted workflow or PR was dispatched.
 
 ## Change and coverage
 
-The hosted Flutter matrix increases from three whole-file shards to four, with
-four workers per runner. Shards now use measured per-file loading/body costs
-from `tool/flutter_test_timings.json`. A test-source SHA-256 and the Flutter pin
-must match before a measured time is used. Each shard starts its most expensive
-files first to overlap their compilation and body work. New or edited files
-use source size, scaled by the median valid seconds/byte ratio; a missing profile, a different
-SDK or no matching hashes falls back entirely to source-size weights. Deleted
-profile entries never affect test discovery. `--no-timings` reproduces the old
-partitioning for comparisons. The metadata is advisory scheduling data, not a
-benchmark or passing-gate receipt: changes to imported application code can
-change costs without changing a test file's hash.
+Keep the WIP's four whole-file Flutter shards, timing-based balancing and
+expensive-file-first order. Test-source SHA-256 and the Flutter version must
+match before using a stored cost. New or edited tests use source size scaled
+by valid timings; missing, stale or other-SDK profiles fall back to size.
+Malformed profiles stop the shard listing before Flutter runs.
+`--no-timings` reproduces the pre-WIP source-size partition and file order.
+Timing data never selects or excludes tests.
 
-File discovery, test assertions, benchmark fixtures and benchmark source pins
-are unchanged. The analyzer uses `--no-pub` after dependency resolution. The
-optimizer installs CPU-only PyTorch before its unchanged full requirements,
-avoiding CUDA/toolkit dependencies on the hosted CPU runner.
+Keep `analyze --no-pub` after the existing dependency resolution, and install
+CPU-only PyTorch before the optimizer's unchanged requirements. The local
+optimizer suite passes with FSRS 6.1.1 and Torch 2.14.1+cpu. CUDA dependencies
+are unnecessary on the hosted CPU runner; no dependency-install speedup was
+measured here.
 
-Five new Python integration tests execute the actual workflow shell with
-synthetic Dart files and a fake Flutter executable. They verify that all four
-matrix indices run every file exactly once, refuse an empty shard before Flutter
-starts, propagate a failing Flutter exit status, reject unsuccessful dependency
-results in the required gate, pass `--no-pub` to analysis, and preserve optimizer
-requirements while failing closed if CPU-wheel installation fails. Six additional
-timing tests cover measured weighting, the old baseline mode, hash/SDK fallback, malformed
-data, and complete discovery after adding, editing, renaming or deleting files.
-The existing tests also partition the real repository for one through four shards.
+The continuation fixes an uncaught `OverflowError` for oversized JSON integer
+durations. It now becomes a normal manifest validation error. Three added
+regressions cover that error, ignoring malformed data in baseline mode, and
+ignoring obsolete rows after an SDK mismatch. The oversized-integer regression
+was confirmed to error against the unmodified WIP and pass after the fix.
+All eleven WIP regressions remain: measured weighting, hash/SDK fallback,
+discovery after file changes, actual workflow shell execution, failure
+propagation and the required check's dependency results.
 
-No application code or existing tests changed. Android, browser, Python and
-required-check dependencies remain enabled. Existing Apple exclusions remain;
-no Apple build, simulator or test was run. Fixtures use synthetic data and fake
-transports; no account, production configuration or external test service is used.
+Both matrices passed **1,637 tests with the same four existing exclusions**.
+The tooling suite ran **216 cases with its one existing retired-Apple exclusion**,
+including all benchmark source pins and the real 34,623-vector VM/JS scheduler
+parity check. Existing test assertions, fixtures, benchmark pins and application/native
+source are unchanged. No existing test was edited, deleted or newly excluded.
+Tests use synthetic fixtures and fake transports; no real account, personal
+study data, credentials or external test service was used. No iOS build or
+validation ran.
 
 ## Measurement method
 
-The repository's installed Flutter 3.47.1 / Dart 3.13.1 SDK was copied into the
-ignored checkout-local `.tools/sdk/flutter-3.47.1` directory. Dependency, Python,
-Android, Chromium, Gradle, Java user-state and temporary directories were also
-checkout-local, following the setup in `sync-scheduling-test-hardening.md`.
-Python is 3.12.3 with the declared tool dependencies and CPU-only PyTorch; hosted
-CI retains its existing Python 3.14/3.13 versions. Numerical thread pools were
-bounded to two workers. No hosted workflow was dispatched.
+Flutter 3.47.1 / Dart 3.13.1, the Python 3.12.3 environment, Android SDK,
+Chrome, package caches, Java user state and temporary files were isolated in
+this checkout. The installed JDK 17 was used read-only. Flutter was
+provisioned from its exact pin into `.tools/flutter-3.47.1`; the maintained
+Android SDK and Chrome installations were copied into `.tools` before use.
+Android SDK platform 37 was installed in that copy. Setup/download time is
+outside the measurements below.
 
-The initial unsharded run passed 1,637 tests with the four existing exclusions.
-The final paired comparison waited for the native and Python checks to finish,
-then ran every original three-shard command and every candidate four-shard
-command sequentially with four workers. SDK and package caches remained warm.
-Before **each** shard, only the task-created `build/test_cache` directory was
-removed. Flutter initializes its incremental compiler from a dill file there;
-sharing it across local shard commands would make later commands artificially
-fast compared with independent hosted checkouts. No `flutter clean` was used.
-The final advisory profile was recorded from all three successful baseline
-shards before running the candidate matrix, without changing any test source.
+Every baseline shard ran sequentially, followed by every candidate shard,
+using **two Flutter workers** on this shared box. No Python suite or native
+build overlapped the comparison. SDK/package caches stayed warm. Before each
+shard, only this task's disposable `build/test_cache` was removed so later
+shards could not reuse the earlier shard's incremental compiler dill.
+No `flutter clean` was used.
 
-The JSON reporter supplies elapsed test-run and per-file loading/body times;
-`/usr/bin/time -p` supplies command wall time. Provisioning downloads are outside
-the paired Flutter comparison. Preliminary warm-cache measurements are excluded
-from the before/after figures below.
+The stored advisory timing manifest remains the WIP's four-worker profile.
+All 201 stored test hashes match this checkout; new/unprofiled files still run.
+Its original raw logs were unavailable, so its numeric costs are not presented
+as independently verified measurements. The complete successful comparison
+below verifies the resulting partition with two workers. Hosted CI retains
+four workers per runner; these local times do not measure hosted queue/setup
+time or establish an end-to-end merge latency improvement.
 
-On independent hosted runners the Flutter-test lane duration is the slowest
-shard, plus setup and runner queue time. Sequential local shard command times
-must not be summed and described as hosted elapsed time. These measurements do
-not establish hosted queue time or an end-to-end merge latency improvement;
-Android or another required job may still determine the full gate's finish time.
+## Flutter before and after
+
+JSON reporter `done.time` supplies test-run time. Command wall time additionally
+includes the pinned-SDK wrapper and Flutter startup. On separate hosted runners
+the test lane's critical path is its slowest shard plus setup/queue time; the
+sum of sequential local commands is **not** hosted elapsed time.
 
 | Matrix | Per-shard test-run seconds | Slowest shard | Sum of test-run seconds |
 | --- | --- | ---: | ---: |
-| Before: 3 shards | 33.788, 24.995, 70.645 | 70.645 s | 129.428 s |
-| After: 4 shards | 20.665, 44.668, 20.484, 18.320 | 44.668 s | 104.137 s |
+| Before: 3 source-size shards | 55.910, 54.210, 54.196 | 55.910 s | 164.316 s |
+| After: 4 timing-based shards | 33.042, 40.617, 44.747, 42.465 | 44.747 s | 160.871 s |
 
-The measured Flutter test-run critical path falls **36.8%**. Both matrices
-execute the same 1,637 passing tests and 4 existing exclusions.
-The command wall times, including SDK verification/startup and any local lock
-wait, were 37.99, 29.20, 78.51 s before and
-24.90, 48.90, 24.85, 19.43 s after. The test-run clock is
-the comparison used above; local startup contention is not a hosted saving.
+The measured test-run critical path falls **20.0%**. Aggregate test-run time
+falls 2.1%; the fourth shard increases hosted setup and runner usage, which
+are outside this comparison.
 
-Command wall time (including the pinned-SDK wrapper and Flutter startup):
+| Matrix | Per-shard command wall seconds | Slowest command | Sum of commands |
+| --- | --- | ---: | ---: |
+| Before | 58.211, 55.427, 55.275 | 58.211 s | 168.913 s |
+| After | 34.081, 41.406, 45.806, 43.515 | 45.806 s | 164.808 s |
 
-| Matrix | Slowest command | Sum of all shard commands |
-| --- | ---: | ---: |
-| Before | 78.51 s | 145.70 s |
-| After | 48.90 s | 118.08 s |
-
-The slowest local command is **37.7% shorter**. Hosted setup, queuing and the
-other required jobs are outside this measurement.
+The slowest local command is **21.3% shorter**.
 
 ## Twenty slowest Flutter files
 
-Each row includes file compilation/loading, setup, test bodies and teardown,
-using the interval from the JSON suite event to its last test completion.
-Files are ranked by the original three-shard run. Times from concurrently loaded
-files overlap, so adding these rows is not a wall-time total.
+Ranked by baseline duration, from each JSON `suite` event through its last test
+completion. This includes loading/compilation, setup, bodies and teardown.
+Concurrent file intervals overlap and depend on compiler warmup and ordering;
+the rows must not be summed or treated as isolated per-test speedups.
 
 | File (`test/`) | Before (s) | After (s) |
 | --- | ---: | ---: |
-| `semantic_review_tool_test.dart` | 11.720 | 5.650 |
-| `native_shell_test.dart` | 10.503 | 6.958 |
-| `offline_deck_counts_uncertain_ack_test.dart` | 10.204 | 4.859 |
-| `mutation_sweep_regressions_test.dart` | 10.132 | 4.262 |
-| `recall_revalidation_holdout_test.dart` | 9.843 | 8.239 |
-| `recall_decks_stats_screens_test.dart` | 8.474 | 7.942 |
-| `app_unlock_policy_test.dart` | 8.082 | 7.685 |
-| `android_accessibility_test.dart` | 7.877 | 10.482 |
-| `web_shell_test.dart` | 7.553 | 14.234 |
-| `recall_read_tab_test.dart` | 7.376 | 10.451 |
-| `background_sync_coordinator_test.dart` | 7.240 | 8.064 |
-| `recall_api_queue_round_trips_test.dart` | 7.025 | 5.940 |
-| `recall_api_null_ack_test.dart` | 6.996 | 8.797 |
-| `recall_suspended_test.dart` | 6.965 | 7.124 |
-| `recall_visual_benchmark_test.dart` | 6.923 | 10.662 |
-| `recall_hidden_sync_paging_test.dart` | 6.882 | 5.279 |
-| `recall_ui_widgets_test.dart` | 6.857 | 5.960 |
-| `audit_hide_undo_recovery_test.dart` | 6.711 | 0.684 |
-| `local_server_ack_drain_test.dart` | 6.611 | 2.943 |
-| `recall_prefs_controller_test.dart` | 6.608 | 1.100 |
+| `android_accessibility_test.dart` | 16.977 | 12.047 |
+| `android_sync_recovery_hunt_test.dart` | 13.208 | 0.703 |
+| `app_switcher_test.dart` | 9.545 | 0.983 |
+| `web_shell_test.dart` | 8.760 | 9.439 |
+| `background_outbox_read_failure_test.dart` | 7.625 | 0.815 |
+| `android_config_test.dart` | 7.456 | 0.430 |
+| `reading_visual_acceptance_test.dart` | 6.795 | 6.896 |
+| `acknowledged_cached_flags_test.dart` | 6.582 | 0.620 |
+| `production_scale_acceptance_test.dart` | 5.985 | 9.214 |
+| `app_unlock_policy_test.dart` | 5.558 | 10.169 |
+| `decks_lazy_list_test.dart` | 5.180 | 5.046 |
+| `ux_accessibility_hunt_test.dart` | 4.994 | 4.672 |
+| `recall_revalidation_holdout_test.dart` | 4.849 | 13.048 |
+| `card_quality_tool_test.dart` | 4.036 | 3.014 |
+| `recall_read_tab_test.dart` | 3.996 | 7.130 |
+| `study_flow_polish_test.dart` | 3.763 | 3.788 |
+| `study_flow_browser_acceptance_test.dart` | 3.652 | 4.066 |
+| `card_face_test.dart` | 3.564 | 2.708 |
+| `concept_primer_extra_figures_test.dart` | 3.521 | 1.246 |
+| `quiet_settings_test.dart` | 3.182 | 2.411 |
 
 ## Python tooling profile
 
-`--durations 0` records every unittest case, including setup and teardown.
-The twenty slowest cases in `tool/tests` are listed below. Those files and the
-benchmark inputs are unchanged; differences here are run-to-run variation, not
-claimed optimizations. The eleven new regressions increase the suite
-from 202 to 213 tests, with its one existing retired-Apple discovery exclusion.
-The scheduler still compiles the real engine and verifies all 34,623 VM/JS
-vectors, including exact due dates and unchanged floating-point tolerance.
+`--durations 0` measures each unittest including setup/teardown. The full
+`tool/tests` command took 6.426 s wall time (6.215 s in unittest), with all
+216 cases accounted for and the one unchanged exclusion. No baseline Python
+speedup is claimed: existing test bodies and benchmark inputs are unchanged.
 
-| Tool unittest case | Before (s) | After (s) |
-| --- | ---: | ---: |
-| `test_mutation_sweep_lock.test_completion_and_failures_release_ownership` | 12.667 | 5.123 |
-| `test_mutation_sweep_recall.test_restores_exact_bytes_on_success_failure_and_interrupt` | 6.347 | 0.004 |
-| `test_scheduler_build.test_compiled_engine_matches_every_synthetic_vm_vector` | 5.890 | 6.010 |
-| `test_mutation_sweep_recall.test_test_failure_is_distinguished_from_compilation_and_timeout` | 5.458 | 2.704 |
-| `test_mutation_sweep_lock.test_owner_excludes_other_phases_and_batches_until_restored` | 3.630 | 1.246 |
-| `test_affected_tests.test_includes_committed_staged_unstaged_untracked_and_both_rename_paths` | 3.148 | 0.106 |
-| `test_mutation_sweep_lock.test_termination_restores_source_and_releases_ownership` | 2.685 | 1.282 |
-| `test_mutation_sweep_lock.test_owner_excludes_competitors_during_baseline` | 2.035 | 1.330 |
-| `test_mutation_sweep_recall.test_missing_or_ambiguous_match_never_modifies_source` | 1.723 | 0.001 |
-| `test_native_offline_driver.test_apk_bytes_changed_after_install_are_refused` | 1.300 | 0.084 |
-| `test_mutation_sweep_recall.test_termination_unwinds_and_restores_planted_source` | 1.051 | 1.016 |
-| `test_mutation_controller_tap_clock.test_c03_preserves_the_review_entry_and_retry_branches` | 0.473 | 0.106 |
-| `test_affected_tests.test_changed_test_and_transitive_test_helper` | 0.403 | 0.176 |
-| `test_flutterw.test_invalid_version_file_is_rejected` | 0.328 | 1.191 |
-| `test_affected_tests.test_deleted_module_still_selects_its_consumers` | 0.246 | <0.001 |
-| `test_native_checkpoint_cost.test_destination_symlink_escape_and_modified_store_refuse_before_copy` | 0.206 | 0.166 |
-| `test_native_checkpoint_cost.test_both_variant_technical_copies_preserve_source_and_exclude_data` | 0.086 | 0.547 |
-| `test_bootstrap_flutter.test_install_is_atomic_and_idempotent` | 0.079 | 0.068 |
-| `test_affected_tests.test_conditional_import_selects_both_platform_consumers` | 0.078 | 0.001 |
-| `test_flutter_test_shards.test_repository_shards_partition_every_test_file` | 0.046 | 0.050 |
-
-Total unittest execution: 48.185 s / 202 tests before; 21.970 s / 213 tests
-after (one unchanged exclusion in each). Command wall time: 55.46 s before,
-28.30 s after. The baseline overlapped initial Flutter compilation, so this
-Python difference is not attributed to the change. All benchmark pins pass.
+| Tool unittest case | Seconds |
+| --- | ---: |
+| `test_scheduler_build.SharedSchedulerBuildTest.test_compiled_engine_matches_every_synthetic_vm_vector` | 4.565 |
+| `test_mutation_sweep_lock.MutationSweepLockTest.test_completion_and_failures_release_ownership` | 0.281 |
+| `test_ci_gate_execution.CiGateExecutionTests.test_four_hosted_shards_run_every_file_once` | 0.131 |
+| `test_mutation_sweep_recall.MutationSweepTest.test_test_failure_is_distinguished_from_compilation_and_timeout` | 0.115 |
+| `test_flutter_shard_timings.TimingShardTests.test_invalid_durations_and_malformed_manifests_fail_closed` | 0.115 |
+| `test_mutation_sweep_lock.MutationSweepLockTest.test_owner_excludes_other_phases_and_batches_until_restored` | 0.112 |
+| `test_mutation_sweep_lock.MutationSweepLockTest.test_termination_restores_source_and_releases_ownership` | 0.083 |
+| `test_bootstrap_flutter.BootstrapFlutterTest.test_install_is_atomic_and_idempotent` | 0.081 |
+| `test_mutation_sweep_lock.MutationSweepLockTest.test_owner_excludes_competitors_during_baseline` | 0.072 |
+| `test_flutter_test_shards.ShardTests.test_repository_shards_partition_every_test_file` | 0.068 |
+| `test_ci_gate_execution.CiGateExecutionTests.test_failed_listing_never_launches_flutter_and_failed_tests_fail_the_job` | 0.066 |
+| `test_bootstrap_flutter.BootstrapFlutterTest.test_fresh_sdk_is_primed_before_machine_metadata_is_validated` | 0.046 |
+| `test_bootstrap_flutter.BootstrapFlutterTest.test_wrong_download_is_not_promoted_and_stage_is_removed` | 0.044 |
+| `test_flutterw.FlutterWrapperTest.test_malformed_sdk_metadata_is_rejected` | 0.041 |
+| `test_flutterw.FlutterWrapperTest.test_exact_environment_sdk_forwards_arguments` | 0.038 |
+| `test_flutterw.FlutterWrapperTest.test_cached_sdk_wins_over_path` | 0.038 |
+| `test_flutterw.FlutterWrapperTest.test_wrong_environment_sdk_is_rejected` | 0.037 |
+| `test_mutation_sweep_recall.MutationSweepTest.test_termination_unwinds_and_restores_planted_source` | 0.033 |
+| `test_affected_tests.GitChangesTests.test_includes_committed_staged_unstaged_untracked_and_both_rename_paths` | 0.028 |
+| `test_flutterw.FlutterWrapperTest.test_missing_sdk_has_bootstrap_instruction` | 0.023 |
 
 ## Android profile
 
-The first debug build with a fresh local Gradle cache took 779.62 s; the
-cache-warm verification took 103.92 s. Release-policy probes took 53.88 s, and
-unit/lint/instrumentation compilation took 189.76 s. Their serial command total
-is 347.56 s. Native sources and task selection are unchanged, so the cold/warm
-difference is not attributed to this PR. CI retains its two parallel Android
-lanes and hosted-only daemon reuse for release probes. All 38 JVM tests passed
-without exclusions; lint and both APK builds passed. Instrumentation was not run
-on a device. A disposable Gradle init listener captured the twenty longest task
-executions below; its data never enters the source or passing-gate logic.
+The unchanged Android debug command passed in 287.126 s with a fresh local
+Gradle cache. All four signed/unsigned release-policy probes passed in 47.221 s.
+Native unit/lint/instrumentation compilation passed in 139.542 s measured by the
+parent monotonic clock. All 38 JVM tests passed with zero failures, errors or
+exclusions, verified from all four JUnit XML suites. Instrumentation was compiled,
+not run on a device. These serial Android commands total **473.889 s**; no
+native speedup is attributed to this change.
 
-| Command | Task | Seconds |
-| --- | --- | ---: |
-| Unit/lint/instrumentation | `:app:testDebugUnitTest` | 46.647 |
-| Unit/lint/instrumentation | `:app:compileFlutterBuildDebug` | 24.478 |
-| Unit/lint/instrumentation | `:app:compileDebugUnitTestKotlin` | 22.610 |
-| Unit/lint/instrumentation | `:shared_preferences_android:lintAnalyzeDebug` | 14.826 |
-| Unit/lint/instrumentation | `:app:generateDebugUnitTestLintModel` | 12.882 |
-| Unit/lint/instrumentation | `:flutter_secure_storage:lintAnalyzeDebug` | 8.100 |
-| Unit/lint/instrumentation | `:app_links:lintAnalyzeDebug` | 7.704 |
-| Unit/lint/instrumentation | `:shared_preferences_android:generateDebugUnitTestLintModel` | 7.155 |
-| Unit/lint/instrumentation | `:url_launcher_android:lintAnalyzeDebug` | 7.002 |
-| Unit/lint/instrumentation | `:app:lintAnalyzeDebug` | 6.944 |
-| Unit/lint/instrumentation | `:app:compileDebugUnitTestJavaWithJavac` | 6.533 |
-| Unit/lint/instrumentation | `:app:generateDebugAndroidTestLintModel` | 4.114 |
-| Debug APK | `:app:compileFlutterBuildDebug` | 4.052 |
-| Unit/lint/instrumentation | `:jni:lintAnalyzeDebug` | 2.783 |
-| Unit/lint/instrumentation | `:app:mergeExtDexDebugAndroidTest` | 2.688 |
-| Unit/lint/instrumentation | `:app:generateDebugAndroidTestGlobalSynthetics` | 1.948 |
-| Unit/lint/instrumentation | `:url_launcher_android:generateDebugUnitTestLintModel` | 1.666 |
-| Unit/lint/instrumentation | `:app:lintAnalyzeDebugUnitTest` | 1.636 |
-| Unit/lint/instrumentation | `:app:configureCMakeDebug[x86_64]` | 1.616 |
-| Unit/lint/instrumentation | `:app:configureCMakeDebug[arm64-v8a]` | 1.539 |
+A disposable Gradle init listener recorded the twenty longest task executions
+in the native command. Task intervals overlap across two workers and exclude
+configuration/startup; their sum is not command wall time.
 
-Task intervals can overlap and omit configuration/startup; their sum is not a
-command wall time. These native timings identify remaining costs, including
-JVM startup, Kotlin test compilation and lint. No native test or signing-policy
-assertion was removed to reduce them.
+| Android task | Seconds |
+| --- | ---: |
+| `:app:testDebugUnitTest` | 26.405 |
+| `:shared_preferences_android:lintAnalyzeDebug` | 17.569 |
+| `:app:compileFlutterBuildDebug` | 17.366 |
+| `:app:compileDebugUnitTestKotlin` | 15.986 |
+| `:app:generateDebugUnitTestLintModel` | 13.644 |
+| `:flutter_secure_storage:lintAnalyzeDebug` | 11.841 |
+| `:app_links:lintAnalyzeDebug` | 9.963 |
+| `:url_launcher_android:lintAnalyzeDebug` | 8.751 |
+| `:app:lintAnalyzeDebug` | 6.705 |
+| `:shared_preferences_android:generateDebugUnitTestLintModel` | 6.552 |
+| `:app:generateDebugAndroidTestLintModel` | 3.838 |
+| `:app:mergeExtDexDebugAndroidTest` | 3.075 |
+| `:jni:lintAnalyzeDebug` | 2.852 |
+| `:app:lintAnalyzeDebugUnitTest` | 2.529 |
+| `:app:generateDebugAndroidTestGlobalSynthetics` | 1.822 |
+| `:url_launcher_android:generateDebugUnitTestLintModel` | 1.591 |
+| `:shared_preferences_android:lintAnalyzeDebugUnitTest` | 1.591 |
+| `:app:configureCMakeDebug[arm64-v8a]` | 1.415 |
+| `:app:configureCMakeDebug[armeabi-v7a]` | 1.391 |
+| `:app:configureCMakeDebug[x86_64]` | 1.362 |
 
-## Optimizer dependency setup
+The listener was supplied only for profiling, without changing task selection,
+application sources or assertions:
 
-The default FSRS resolver was inspected without installing the CUDA stack:
-it selected Torch 2.14.1, CUDA toolkit and NVIDIA packages. It announced a
-554.6 MB Torch wheel for Python 3.12; the installed same-version CPU wheel is
-196.3 MB and needs no CUDA runtime. The official CPU index also supplies a
-Python 3.13 Linux x86-64 wheel. All eight optimizer tests, including real fitting
-against the synthetic generation, pass with Torch 2.14.1+cpu. No hosted dependency
-installation timing or GPU-vs-CPU computation speedup is claimed.
+```groovy
+// build/test-speed/task-timings.gradle
+def started = new java.util.concurrent.ConcurrentHashMap<String, Long>()
+gradle.taskGraph.beforeTask { task -> started[task.path] = System.nanoTime() }
+gradle.taskGraph.afterTask { task, state ->
+    def elapsed = (System.nanoTime() - started[task.path]) / 1000000000.0
+    println "RECALL_TASK_TIMING ${task.path} ${elapsed}"
+}
+```
 
 ## Reproduce and verify
 
-After preparing the copied pinned SDK and checkout-local caches as above, profile
-both matrix sizes with the repository's existing commands:
+Keep mutable state checkout-local and use the pinned SDK. The test comparison
+uses the actual repository shard-listing and Flutter commands:
 
 ```bash
 set -euo pipefail
-mkdir -p build
+export CI=true FLUTTER_SUPPRESS_ANALYTICS=true DART_SUPPRESS_ANALYTICS=true
+export RECALL_FLUTTER_ROOT="$PWD/.tools/flutter-3.47.1"
+export DART="$RECALL_FLUTTER_ROOT/bin/dart"
+export PATH="$PWD/build/test-speed/venv/bin:$RECALL_FLUTTER_ROOT/bin:$PATH"
+export PUB_CACHE="$PWD/.pub-cache"
+export TMPDIR="$PWD/build/test-speed/tmp"
+export XDG_CONFIG_HOME="$PWD/build/test-speed/config"
+export XDG_CACHE_HOME="$PWD/build/test-speed/cache"
+export XDG_DATA_HOME="$PWD/build/test-speed/data"
+export GRADLE_USER_HOME="$PWD/build/test-speed/gradle"
+export ANDROID_USER_HOME="$PWD/build/test-speed/android"
+export ANDROID_HOME="$PWD/.tools/android-sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export CHROME_EXECUTABLE="$PWD/.tools/chrome-linux64/chrome"
+export JAVA_TOOL_OPTIONS="-Djava.io.tmpdir=$TMPDIR -Duser.home=$PWD/build/test-speed/java-home -XX:-UsePerfData"
+export GRADLE_OPTS='-Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dorg.gradle.project.kotlin.compiler.execution.strategy=in-process'
+export OMP_NUM_THREADS=2 MKL_NUM_THREADS=2 OPENBLAS_NUM_THREADS=2 NUMEXPR_NUM_THREADS=2
+export PYTHONDONTWRITEBYTECODE=1
+mkdir -p "$TMPDIR" build/t build/test-speed/java-home
 for total in 3 4; do
   for ((index=0; index<total; index++)); do
     flags=()
@@ -223,55 +229,54 @@ for total in 3 4; do
     rm -rf build/test_cache  # disposable compiler cache created by these runs
     shard_files="$(python3 tool/flutter_test_shards.py --total "$total" --index "$index" "${flags[@]}")"
     /usr/bin/time -p ./tool/flutterw test --reporter=json \
-      --exclude-tags apple-mobile --no-pub --concurrency=4 $shard_files \
-      > "build/shards-$total-$index.jsonl" 2> "build/shards-$total-$index.time"
+      --exclude-tags apple-mobile --no-pub --concurrency=2 $shard_files \
+      > "build/test-speed/flutter-$total-$index.jsonl"
   done
 done
 ```
 
-The complete maintained local equivalent of `.github/workflows/ci.yml` consists
-of all four candidate shards plus the checks below. Python commands used
-`--durations 0` only to expose timing; they execute the same unittest discovery
-as CI. Chromium uses the checkout-local Chrome for Testing headless shell.
-Android instrumentation is compiled, not executed on a device.
+Recorded command wall times use Python's monotonic clock around subprocess
+execution; `/usr/bin/time -p` above is an equivalent way to reproduce them.
+The following commands plus the four candidate shards are the maintained
+local equivalent of `.github/workflows/ci.yml`. They ran sequentially on the
+final code tree. Chromium ran one file in one headless browser; Flutter ignores
+`--concurrency` for web tests.
 
-Every maintained local gate command exited 0. Each row was timed with
-`/usr/bin/time -p`; timeout/environment wrappers are shown where used.
-
-| Lane | Exact command | Result and command wall time |
+| Lane | Exact command | Result and wall time |
 | --- | --- | --- |
-| Flutter shard 0 | `total=4`, `index=0` in the loop above | Exit 0; 419 passed, existing exclusions: 1; 24.90 s |
-| Flutter shard 1 | `total=4`, `index=1` in the loop above | Exit 0; 368 passed, existing exclusions: 2; 48.90 s |
-| Flutter shard 2 | `total=4`, `index=2` in the loop above | Exit 0; 351 passed, existing exclusions: 1; 24.85 s |
-| Flutter shard 3 | `total=4`, `index=3` in the loop above | Exit 0; 499 passed, existing exclusions: 0; 19.43 s |
-| Analyzer | `./tool/flutterw analyze --no-pub` | Exit 0; no issues; 12.98 s |
-| Chromium | `env TMPDIR=build/t timeout --signal=INT --kill-after=10s 180s ./tool/flutterw test --no-pub --platform chrome --concurrency=1 --reporter=json test/local_review_quota_classifier_web_test.dart` | Exit 0; 4 passed; 68.01 s |
-| tool/tests | `python3 -m unittest discover -s tool/tests -p 'test_*.py' --durations 0` | Exit 0; 213 tests; 1 existing exclusion; 28.30 s |
-| tools/recall_sync/tests | `python3 -m unittest discover -s tools/recall_sync/tests -p 'test_*.py' --durations 0` | Exit 0; 63 tests; 8.24 s |
-| tools/anki_revision/tests | `python3 -m unittest discover -s tools/anki_revision/tests -p 'test_*.py' --durations 0` | Exit 0; 63 tests; 5.30 s |
-| tools/semantic_review/tests | `python3 -m unittest discover -s tools/semantic_review/tests -p 'test_*.py' --durations 0` | Exit 0; 36 tests; 0.86 s |
-| tools/flag_report/tests | `python3 -m unittest discover -s tools/flag_report/tests -p 'test_*.py' --durations 0` | Exit 0; 13 tests; 0.10 s |
-| tools/fsrs_optimize/tests | `python3 -m unittest discover -s tools/fsrs_optimize/tests -p 'test_*.py' --durations 0` | Exit 0; 8 tests; 6.69 s |
-| Android debug | `timeout --signal=TERM --kill-after=10s 900 ./tool/flutterw build apk --debug --no-pub` | Exit 0; APK compiled; 103.92 s |
-| Release policy | `timeout --signal=TERM --kill-after=10s 1400 python3 tool/check_android_release_policy.py` | Exit 0; all 4 probes passed; 53.88 s |
-| Android native | `timeout --signal=TERM --kill-after=10s 1800 ./android/gradlew -p android :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2` | Exit 0; 38 JVM tests, lint and instrumentation compilation passed; 189.76 s |
+| Analyzer | `./tool/flutterw analyze --no-pub` | Exit 0; no issues; 22.860 s |
+| Chromium | `env TMPDIR=build/t timeout --signal=INT --kill-after=10s 180s ./tool/flutterw test --no-pub --platform chrome --concurrency=1 --reporter=json test/local_review_quota_classifier_web_test.dart` | Exit 0; 4 passed; 90.340 s |
+| Tooling | `python3 -m unittest discover -s tool/tests -p 'test_*.py' --durations 0` | Exit 0; 216 cases, 1 existing exclusion; 6.426 s |
+| Concept sync | `python3 -m unittest discover -s tools/recall_sync/tests -p 'test_*.py' --durations 0` | Exit 0; 63 passed; 4.171 s |
+| Anki revision | `python3 -m unittest discover -s tools/anki_revision/tests -p 'test_*.py' --durations 0` | Exit 0; 63 passed; 3.619 s |
+| Semantic review | `python3 -m unittest discover -s tools/semantic_review/tests -p 'test_*.py' --durations 0` | Exit 0; 36 passed; 0.636 s |
+| Flag report | `python3 -m unittest discover -s tools/flag_report/tests -p 'test_*.py' --durations 0` | Exit 0; 13 passed; 0.114 s |
+| FSRS optimizer | `python3 -m unittest discover -s tools/fsrs_optimize/tests -p 'test_*.py' --durations 0` | Exit 0; 8 passed; 4.721 s |
+| Android debug | `timeout --signal=TERM --kill-after=10s 900s ./tool/flutterw build apk --debug --no-pub` | Exit 0; APK built; 287.126 s |
+| Release policy | `timeout --signal=TERM --kill-after=10s 1400s python3 tool/check_android_release_policy.py` | Exit 0; all four probes passed; 47.221 s |
+| Android native | `timeout --signal=TERM --kill-after=10s 1800s ./android/gradlew -p android :app:testDebugUnitTest :app:lintDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2 --init-script "$PWD/build/test-speed/task-timings.gradle"` | Exit 0; 38 JVM tests, lint and instrumentation compilation passed; 139.542 s |
 
-Sum of these successful command wall times: **596.12 s**. This is a
-serial work total, excluding provisioning and profiling repeats. Hosted CI
-runs its lanes in parallel; this total is not a measured hosted gate duration.
-Raw disposable caches, logs, SDK copies and build artifacts were removed after
-recording these results. No server, browser or Gradle daemon was retained.
+All **15 final gate commands exited 0**, including the four candidate Flutter
+shards. Their serial command total is **771.584 s**, excluding SDK/dependency
+provisioning and baseline/profiling repeats. This is a local equivalent of the
+maintained CI gate, not measured hosted gate duration or a hosted CI receipt.
+Raw reporter logs, command arguments/statuses and timing summaries remain in
+`build/test-speed/` for this checkout's reviewer; they are disposable task
+output, not committed source. Task-created SDK copies, dependency caches and
+build artifacts were removed after verification. No server, browser or Gradle
+daemon was retained.
 
 ## Remaining opportunities
 
-Compilation/loading dominates the Flutter lane; individual test bodies are
-usually much shorter. The existing instant-backoff fixture already preserves
-all PostgREST retries without sleeping. Native release probes already reuse a
-warm daemon only on disposable hosted runners. Neither needs a broader rewrite
-for this change. Some Python suites also run through Dart wrapper tests; removing
-that duplication would need a separate coverage/ownership decision.
+Android build/lint/startup costs remain unchanged. The profile identifies JVM
+test startup, plugin lint and repeated Flutter compilation as remaining costs.
+The existing instant-backoff fixture already preserves every PostgREST retry
+without real waits. Some Python suites also run through Dart wrappers; removing
+that duplication needs a separate coverage/ownership decision. Further matrix
+expansion and fixture rewrites remain outside this change.
 
-A fourth runner increases SDK setup and aggregate runner work. This public
-repository retains free hosted runners and its existing caches; there is no
-self-hosted runner or paid-service change. Measure the next hosted run before
-claiming a whole-gate throughput improvement or adding further shards.
+Measure the next hosted run before claiming a full-gate or merge-throughput
+improvement: Android and other required jobs can determine the finish time.
+The public repository retains hosted runners and its existing caches; no
+self-hosted runner or paid service was introduced. No push, PR or remote change
+was made; the runner owns the final commit on top of the WIP.
