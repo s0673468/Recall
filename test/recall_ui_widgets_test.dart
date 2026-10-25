@@ -224,7 +224,17 @@ void main() {
       expect(find.text('Show answer'), findsOneWidget);
       expect(find.textContaining('eramos'), findsNothing);
 
-      await tester.tap(find.byType(SingleChildScrollView));
+      await tester.tap(
+        find
+            .descendant(
+              of: find.byKey(const Key('recall_study_card')),
+              matching: find.byType(SingleChildScrollView),
+            )
+            .first,
+      );
+      await tester.pump();
+      expect(find.textContaining('eramos'), findsNothing);
+      await tester.tap(find.byKey(const Key('recall_study_card_footer')));
       await tester.pump();
       expect(find.textContaining('eramos'), findsNothing);
 
@@ -404,20 +414,24 @@ void main() {
       );
 
       final scrollable = tester.state<ScrollableState>(
-        find.descendant(
-          of: find.byKey(const Key('recall_study_card')),
-          matching: find.byType(Scrollable),
-        ),
+        find
+            .descendant(
+              of: find.byKey(const Key('recall_study_card')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
       );
       expect(scrollable.position.maxScrollExtent, greaterThan(0));
 
       final card = tester.getRect(find.byKey(const Key('recall_study_card')));
       final answer = tester.getRect(find.byType(CardFace).last);
       final scrollViewport = tester.getRect(
-        find.descendant(
-          of: find.byKey(const Key('recall_study_card')),
-          matching: find.byType(Scrollable),
-        ),
+        find
+            .descendant(
+              of: find.byKey(const Key('recall_study_card')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
       );
       final dragStart = Offset(
         answer.center.dx,

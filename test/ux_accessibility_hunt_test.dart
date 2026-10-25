@@ -29,7 +29,15 @@ void main() {
       final controller = _StudyFixture();
       addTearDown(controller.dispose);
       await _pump(tester, StudyScreen(controller: controller), scale: scale);
-      final title = find.text(_deckName);
+      final title = find.byKey(const Key('recall_study_title'));
+      expect(tester.widget<Text>(title).data, _deckName);
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('recall_study_card_footer')),
+          matching: find.text(_deckName),
+        ),
+        findsOneWidget,
+      );
       final paragraph = tester.renderObject<RenderParagraph>(title);
       expect(paragraph.didExceedMaxLines, isFalse);
       expect(tester.takeException(), isNull);

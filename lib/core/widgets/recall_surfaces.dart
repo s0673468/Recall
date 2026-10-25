@@ -243,6 +243,9 @@ class RecallListRow extends StatelessWidget {
   final Color iconColor;
   final String title;
   final String? subtitle;
+
+  /// Optional supporting content when a row needs a reserved layout slot.
+  final Widget? subtitleWidget;
   final Widget? trailing;
   final VoidCallback onTap;
 
@@ -252,6 +255,7 @@ class RecallListRow extends StatelessWidget {
     this.iconColor = UiColors.textMuted,
     required this.title,
     this.subtitle,
+    this.subtitleWidget,
     this.trailing,
     required this.onTap,
   });
@@ -287,14 +291,14 @@ class RecallListRow extends StatelessWidget {
                         fontWeight: FontWeight.w400,
                       ),
                     ),
-                    if (subtitle != null) ...[
+                    if (subtitle != null || subtitleWidget != null) ...[
                       const SizedBox(height: 2),
-                      Text(
-                        subtitle!,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: UiColors.textMuted,
-                        ),
-                      ),
+                      subtitleWidget ??
+                          Text(
+                            subtitle!,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: UiColors.textMuted),
+                          ),
                     ],
                   ],
                 ),

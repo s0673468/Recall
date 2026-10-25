@@ -46,8 +46,12 @@ class DecksScreenState extends State<DecksScreen> {
         : OfflineDeckCounts(api: widget.api, store: store);
   }
 
-  Future<Map<int, ({int due, int neu})>> _loadCounts({bool tryServer = false}) =>
-      _offlineCounts?.load(offline: widget.controller.state.offline && !tryServer) ??
+  Future<Map<int, ({int due, int neu})>> _loadCounts({
+    bool tryServer = false,
+  }) =>
+      _offlineCounts?.load(
+        offline: widget.controller.state.offline && !tryServer,
+      ) ??
       widget.api.fetchDeckCounts();
   final _searchController = TextEditingController();
   String _query = '';
@@ -99,7 +103,9 @@ class DecksScreenState extends State<DecksScreen> {
     // FutureBuilder presents failures, so this notification listener must also
     // consume reload's error rather than leaking an unhandled async failure.
     unawaited(
-      reload(tryServer: drained || force || decksChanged).catchError((Object _) {}),
+      reload(
+        tryServer: drained || force || decksChanged,
+      ).catchError((Object _) {}),
     );
   }
 
@@ -198,13 +204,19 @@ class DecksScreenState extends State<DecksScreen> {
                           child: snap.hasError
                               ? _CountError(onRetry: _retry)
                               : snap.connectionState == ConnectionState.done
-                              ? const SizedBox.shrink(
+                              ? const SizedBox(
                                   key: ValueKey('deck_counts_ready'),
+                                  height: UiSpacing.sm + 2,
                                 )
-                              : const Padding(
+                              : const SizedBox(
                                   key: ValueKey('deck_counts_loading'),
-                                  padding: EdgeInsets.only(bottom: UiSpacing.sm),
-                                  child: LinearProgressIndicator(minHeight: 2),
+                                  height: UiSpacing.sm + 2,
+                                  child: Align(
+                                    alignment: Alignment.topCenter,
+                                    child: LinearProgressIndicator(
+                                      minHeight: 2,
+                                    ),
+                                  ),
                                 ),
                         ),
                         if (query.isEmpty)
@@ -360,8 +372,8 @@ class DecksScreenState extends State<DecksScreen> {
     required VoidCallback onTap,
   }) {
     final labels = [
-      if (due != null) '$due due',
-      if (neu != null && neu > 0) '$neu new',
+      due == null ? '— due' : '$due due',
+      if (neu == null || neu > 0) neu == null ? '— new' : '$neu new',
     ];
     return KeyedSubtree(
       key: ValueKey('recall_deck_row_$label'),
@@ -370,24 +382,48 @@ class DecksScreenState extends State<DecksScreen> {
           final stackCounts =
               constraints.maxWidth < 300 ||
               MediaQuery.textScalerOf(context).scale(14) > 18;
+          final caption = Theme.of(
+            context,
+          ).textTheme.bodySmall!.copyWith(color: UiColors.textMuted);
           return RecallListRow(
             title: label,
-            subtitle: stackCounts && labels.isNotEmpty
-                ? labels.join(' · ')
+            subtitleWidget: stackCounts
+                ? SizedBox(
+                    // Wrapped counts get the same two-line slot before and
+                    // after loading, even when there are no new cards.
+                    height:
+                        MediaQuery.textScalerOf(
+                          context,
+                        ).scale(caption.fontSize!) *
+                        caption.height! *
+                        2,
+                    child: SingleChildScrollView(
+                      child: Text(labels.join(' · '), style: caption),
+                    ),
+                  )
                 : null,
-            trailing: stackCounts || labels.isEmpty
+            trailing: stackCounts
                 ? null
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      for (final label in labels)
-                        Text(
-                          label,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: UiColors.textMuted),
-                        ),
-                    ],
+                : SizedBox(
+                    // Reserve both the caption width and its two lines while
+                    // counts load, including decks with no new cards.
+                    width: MediaQuery.textScalerOf(context).scale(64),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        for (final label in [
+                          labels.first,
+                          labels.length > 1 ? labels.last : '',
+                        ])
+                          Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: caption,
+                          ),
+                      ],
+                    ),
                   ),
             onTap: onTap,
           );
@@ -452,6 +488,9 @@ class _OptionalDecksState extends State<_OptionalDecks> {
           ),
           sliver: SliverToBoxAdapter(
             child: ExpansionTile(
+              expansionAnimationStyle: MediaQuery.disableAnimationsOf(context)
+                  ? AnimationStyle.noAnimation
+                  : null,
               key: ValueKey('recall_optional_decks_${widget.searching}'),
               initiallyExpanded: _expanded,
               shape: tileTheme.collapsedShape,
@@ -459,9 +498,7 @@ class _OptionalDecksState extends State<_OptionalDecks> {
                 setState(() => _expanded = expanded);
                 widget.onExpansionChanged(expanded);
               },
-              tilePadding: const EdgeInsets.symmetric(
-                horizontal: UiSpacing.xs,
-              ),
+              tilePadding: const EdgeInsets.symmetric(horizontal: UiSpacing.xs),
               childrenPadding: EdgeInsets.zero,
               title: Row(
                 children: [

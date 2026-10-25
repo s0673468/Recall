@@ -201,21 +201,6 @@ class _AuthGateState extends State<AuthGate> {
                     onSubmitted: (_) => _submit(),
                     decoration: const InputDecoration(labelText: 'Password'),
                   ),
-                  if (error != null) ...[
-                    const SizedBox(height: UiSpacing.md),
-                    _Message(
-                      text: error,
-                      color: theme.colorScheme.error,
-                      icon: Icons.error_outline,
-                    ),
-                  ] else if (notice != null) ...[
-                    const SizedBox(height: UiSpacing.md),
-                    _Message(
-                      text: notice,
-                      color: theme.colorScheme.tertiary,
-                      icon: Icons.check_circle_outline,
-                    ),
-                  ],
                   const SizedBox(height: UiSpacing.lg),
                   FilledButton(
                     onPressed: busy ? null : _submit,
@@ -228,6 +213,32 @@ class _AuthGateState extends State<AuthGate> {
                       _creating
                           ? (busy ? 'Creating account…' : 'Create account')
                           : (busy ? 'Signing in…' : 'Sign in'),
+                    ),
+                  ),
+                  const SizedBox(height: UiSpacing.md),
+                  // The centered form must keep the same height when feedback
+                  // arrives. Reserve four scaled caption lines below submit;
+                  // longer messages wrap and scroll inside the card.
+                  SizedBox(
+                    height:
+                        MediaQuery.textScalerOf(context).scale(13) * 1.3 * 4,
+                    child: SingleChildScrollView(
+                      child: Semantics(
+                        liveRegion: true,
+                        child: error != null
+                            ? _Message(
+                                text: error,
+                                color: theme.colorScheme.error,
+                                icon: Icons.error_outline,
+                              )
+                            : notice != null
+                            ? _Message(
+                                text: notice,
+                                color: theme.colorScheme.tertiary,
+                                icon: Icons.check_circle_outline,
+                              )
+                            : const SizedBox.shrink(),
+                      ),
                     ),
                   ),
                 ],
