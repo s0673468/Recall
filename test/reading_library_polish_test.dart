@@ -278,10 +278,11 @@ void main() {
       size: const Size(280, 800),
       scale: 2,
     );
-    await tester.tap(find.byKey(const Key('recall_primer_browse_toggle')));
+    await tester.enterText(_search, _pages[0].title);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text(_pages[0].title));
-    await tester.tap(find.text(_pages[0].title));
+    final row = find.byKey(ValueKey('recall_primer_row_${_pages[0].nodeId}'));
+    await tester.ensureVisible(row);
+    await tester.tap(row);
     await tester.pumpAndSettle();
     expect(find.byTooltip('Back to reading'), findsOneWidget);
     expect(tester.takeException(), isNull);

@@ -128,7 +128,6 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
   late final TextEditingController _searchController;
   final _searchFocus = FocusNode();
   late String _query;
-  bool _browseExpanded = false;
 
   @override
   void initState() {
@@ -155,6 +154,7 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
       for (final node in widget.conceptNodes) node.nodeId: node.module,
     };
     final query = _query.trim().toLowerCase();
+    final showResults = !widget.collapsedBrowse || query.isNotEmpty;
     final pages =
         widget.pages.where((page) {
           if (query.isEmpty) {
@@ -208,21 +208,7 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
             onChanged: _setQuery,
           ),
         ),
-        const SizedBox(height: UiSpacing.sm),
-        if (widget.collapsedBrowse && query.isEmpty)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              key: const Key('recall_primer_browse_toggle'),
-              onPressed: () =>
-                  setState(() => _browseExpanded = !_browseExpanded),
-              icon: Icon(
-                _browseExpanded ? Icons.expand_less : Icons.expand_more,
-                size: 18,
-              ),
-              label: Text(_browseExpanded ? 'Hide library' : 'Browse library'),
-            ),
-          ),
+        if (showResults) const SizedBox(height: UiSpacing.sm),
       ],
     );
     final empty = Padding(
@@ -232,8 +218,6 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
             ? 'No primers match your search.'
             : widget.pages.isEmpty
             ? 'No primers available.'
-            : widget.collapsedBrowse
-            ? 'All available primers are in your reading list.'
             : 'All available primers are shown above.',
         style: const TextStyle(color: UiColors.textMuted),
       ),
@@ -241,7 +225,6 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
     PrimerRow buildRow(ConceptPage page) => PrimerRow(
       page: page,
       feedback: widget.feedbackByNode[page.nodeId],
-      module: moduleByNode[page.nodeId],
       onTap: () => widget.onOpenPrimer != null
           ? widget.onOpenPrimer!(page)
           : Navigator.of(context).push(
@@ -305,7 +288,7 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         controls,
-        if (query.isNotEmpty || !widget.collapsedBrowse || _browseExpanded)
+        if (showResults)
           if (pages.isEmpty)
             empty
           else
@@ -319,14 +302,12 @@ class _PrimerLibraryContentState extends State<PrimerLibraryContent> {
 
 class PrimerRow extends StatelessWidget {
   final ConceptPage page;
-  final String? module;
   final VoidCallback onTap;
   final ListFeedback? feedback;
 
   const PrimerRow({
     super.key,
     required this.page,
-    this.module,
     required this.onTap,
     this.feedback,
   });
@@ -336,7 +317,6 @@ class PrimerRow extends StatelessWidget {
     key: ValueKey('recall_primer_row_${page.nodeId}'),
     child: RecallListRow(
       title: page.title,
-      subtitle: module?.isNotEmpty == true ? module : null,
       trailing: feedback == null
           ? null
           : ListFeedbackIndicator(feedback: feedback!),

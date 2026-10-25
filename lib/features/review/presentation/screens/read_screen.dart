@@ -223,9 +223,6 @@ class ReadScreenState extends State<ReadScreen> {
           final relatedPages = [
             for (final id in widget.relatedNodeIds) ?pageByNode[id],
           ];
-          final moduleByNode = {
-            for (final node in data.conceptNodes) node.nodeId: node.module,
-          };
           final chatPages = ConceptAttribution.recentChatPages(
             conceptPages: data.conceptPages,
             now: now,
@@ -280,13 +277,6 @@ class ReadScreenState extends State<ReadScreen> {
               ],
               if (relatedPages.isNotEmpty && !_searching) ...[
                 const RecallSectionLabel(title: 'For this card'),
-                const SizedBox(height: UiSpacing.xs),
-                Text(
-                  'Open a concept when you want more context.',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: UiColors.textMuted),
-                ),
                 const SizedBox(height: UiSpacing.md),
                 RecallListGroup(
                   key: const Key('recall_read_related'),
@@ -295,7 +285,6 @@ class ReadScreenState extends State<ReadScreen> {
                       PrimerRow(
                         page: page,
                         feedback: _feedbackByNode[page.nodeId],
-                        module: moduleByNode[page.nodeId],
                         onTap: () =>
                             unawaited(_openPrimer(page, data.conceptNodes)),
                       ),
@@ -316,13 +305,6 @@ class ReadScreenState extends State<ReadScreen> {
                   children: [
                     if (chatPages.isNotEmpty) ...[
                       const RecallSectionLabel(title: 'From your chats'),
-                      const SizedBox(height: UiSpacing.xs),
-                      Text(
-                        'Weekly notes from your ChatGPT and Claude study discussions.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: UiColors.textMuted,
-                        ),
-                      ),
                       const SizedBox(height: UiSpacing.md),
                       RecallListGroup(
                         key: const Key('recall_read_chats'),
@@ -340,13 +322,6 @@ class ReadScreenState extends State<ReadScreen> {
                       const SizedBox(height: UiSpacing.xl),
                     ],
                     const RecallSectionLabel(title: 'Recent reading'),
-                    const SizedBox(height: UiSpacing.xs),
-                    Text(
-                      'From what you reviewed in the last 3 days.',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: UiColors.textMuted,
-                      ),
-                    ),
                     const SizedBox(height: UiSpacing.md),
                     if (rereadPages.isNotEmpty)
                       RemediationRows(
@@ -376,7 +351,6 @@ class ReadScreenState extends State<ReadScreen> {
                             PrimerRow(
                               page: page,
                               feedback: _feedbackByNode[page.nodeId],
-                              module: moduleByNode[page.nodeId],
                               onTap: () => unawaited(
                                 _openPrimer(page, data.conceptNodes),
                               ),

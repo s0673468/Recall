@@ -255,18 +255,19 @@ void main() {
             find.text('Opt-in  ›  Synthetic optional curriculum'),
           );
         case 'Read':
-          await _scrollTo(tester, find.text('Browse library'));
-          await tester.tap(find.text('Browse library'));
-          await tester.pumpAndSettle();
           await _scrollTo(
             tester,
-            find.text('Synthetic reading topic for large text'),
+            find.byKey(const Key('recall_primer_search')),
           );
           await tester.enterText(
             find.byKey(const Key('recall_primer_search')),
             'Synthetic',
           );
           await tester.pumpAndSettle();
+          await _scrollTo(
+            tester,
+            find.text('Synthetic reading topic for large text'),
+          );
           final clear = find.byTooltip('Clear search');
           await tester.ensureVisible(clear);
           expect(tester.getSize(clear).shortestSide, greaterThanOrEqualTo(48));

@@ -155,6 +155,22 @@ void main() {
     expect(find.text('For this card'), findsOneWidget);
     expect(find.text('From your chats'), findsOneWidget);
     expect(find.text('Recent reading'), findsOneWidget);
+    for (final explanation in [
+      'Open a concept when you want more context.',
+      'Weekly notes from your ChatGPT and Claude study discussions.',
+      'From what you reviewed in the last 3 days.',
+    ]) {
+      expect(find.text(explanation), findsNothing);
+    }
+    expect(find.text('M00'), findsNothing);
+    expect(find.text('M01'), findsNothing);
+    final semantics = tester.ensureSemantics();
+    expect(find.bySemanticsLabel('Vector geometry'), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const Key('recall_primer_row_vectors'))).height,
+      greaterThanOrEqualTo(48),
+    );
+    semantics.dispose();
     final originalCard = controller.state.current;
     await tester.tap(
       find.descendant(
@@ -175,7 +191,7 @@ void main() {
   });
 
   testWidgets(
-    'companion search precedes recent reading and browse starts collapsed',
+    'companion search precedes recent reading and results require a query',
     (tester) async {
       await pumpPane(tester);
       expect(
@@ -183,12 +199,23 @@ void main() {
         lessThan(tester.getTopLeft(find.text('From your chats')).dy),
       );
       expect(find.byKey(const Key('recall_primer_row_models')), findsNothing);
-      await tester.tap(find.byKey(const Key('recall_primer_browse_toggle')));
+      expect(
+        find.byKey(const Key('recall_primer_browse_toggle')),
+        findsNothing,
+      );
+      expect(find.text('Browse library'), findsNothing);
+      expect(find.text('Hide library'), findsNothing);
+      final search = find.byKey(const Key('recall_primer_search'));
+      await tester.enterText(search, 'Generalization');
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('recall_primer_row_models')), findsOneWidget);
-      await tester.tap(find.byKey(const Key('recall_primer_browse_toggle')));
+      expect(find.text('M01'), findsNothing);
+      expect(find.text('From your chats'), findsNothing);
+      await tester.tap(find.byTooltip('Clear search'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('recall_primer_row_models')), findsNothing);
+      expect(find.text('From your chats'), findsOneWidget);
+      expect(tester.widget<TextField>(search).focusNode!.hasFocus, isTrue);
     },
   );
 
