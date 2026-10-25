@@ -243,7 +243,7 @@ void main() {
     };
     addTearDown(() async {
       if (!releaseSender.isCompleted) releaseSender.complete();
-      await controller.syncPending();
+      await tester.runAsync(controller.syncPending);
     });
     store.release();
     await _reveal(tester);
@@ -278,7 +278,7 @@ void main() {
     );
 
     releaseSender.complete();
-    await controller.syncPending();
+    await tester.runAsync(controller.syncPending);
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
     expect(api.applied, hasLength(2));
