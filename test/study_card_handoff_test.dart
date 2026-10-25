@@ -53,7 +53,9 @@ class _HeldReviewStore extends LocalReviewStore {
   }
 }
 
-Future<({ReviewController controller, FakeRecallApi api, _HeldReviewStore store})>
+Future<
+  ({ReviewController controller, FakeRecallApi api, _HeldReviewStore store})
+>
 _pumpStudy(
   WidgetTester tester, {
   Size size = const Size(800, 700),
