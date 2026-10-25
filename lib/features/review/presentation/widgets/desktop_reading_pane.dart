@@ -114,11 +114,8 @@ class _DesktopReadingPaneState extends State<DesktopReadingPane> {
       onPointerDown: (_) {
         if (!_focusNode.hasFocus) _focusNode.requestFocus();
       },
-      child: DecoratedBox(
+      child: SizedBox(
         key: const Key('recall_desktop_reading_pane'),
-        decoration: const BoxDecoration(
-          border: Border(left: BorderSide(color: UiColors.border)),
-        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
