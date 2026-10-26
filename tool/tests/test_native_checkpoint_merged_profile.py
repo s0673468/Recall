@@ -26,7 +26,7 @@ class MergedProfileTests(unittest.TestCase):
         ).decode()
         # Both the intermediate checkpoint and final drain must retain the
         # receipt before discarding the only durable pending review.
-        flush = checkpoint.split('Future<bool> _flushOnce() async {', 1)[1]
+        flush = checkpoint.split('Future<bool> _flushOnce(', 1)[1]
         flush = flush.split('Future<Set<Object>> _markRemainingAttempted(', 1)[0]
         self.assertEqual(flush.count('await store.dailyReviewEvents('), 2)
         self.assertEqual(flush.count('await store.removeAcknowledgedReviews('), 2)
@@ -38,6 +38,13 @@ class MergedProfileTests(unittest.TestCase):
 
     def test_pre_merge_daily_and_likes_profiles_are_refused(self):
         profiles = (
+            ('db373fcb69685179a1b7f67cb3bfef17b88a64cc',
+             '8baf4fd799179931ef0d2ec01ae0debbf8b40c60b9f7ddea69a96d33e29325f6',
+             'e410a39de0ba992336e0f962cacf9d2f2fb51bed2b4e8b552ffac589dd619e7b',
+             '74b2d7e24f91a8dc32d0075692b5d098d6fb67e7e7a8cd29329112a3e4d0fd83',
+             '6b971b395d5b63b82cdf66134667e0eedb50ee30',
+             '127f56cd22c1047f460708799ce112361ec76f36b370dbc4675eea53e254297f',
+             'afc6b63285c5b79c25e6720d2f83b3003f37c207c84030fc56a472f1aeea81f3'),
             ('3e64b782e2b86e422bd15fcc9e767390dd2df081',
              'fbc440a788599df24d193a252764bd0ffc33753f687a7e32d2e8672f5ee64ec7',
              'f89393d4ffc2751792fb19e07884532c22dbdb963b6a3c29e33e045cf415583e',
@@ -64,6 +71,8 @@ class MergedProfileTests(unittest.TestCase):
                 if variant == 'checkpoint':
                     stale['patch_sha256'] = patch
                 for key, value in stale.items():
+                    if value == receipt(variant)[key]:
+                        continue  # Unchanged Store bytes are still valid.
                     with self.subTest(source=source, variant=variant, pin=key):
                         for count in (128, 512):
                             with self.assertRaises(contract.Refused):
@@ -79,6 +88,8 @@ class MergedProfileTests(unittest.TestCase):
                 for key, value in dict(
                     baseline_controller_sha256=baseline, store_sha256=store,
                 ).items():
+                    if value == source_proof(variant)[key]:
+                        continue
                     with self.subTest(source=source, variant=variant, pin=key):
                         with self.assertRaises(contract.Refused):
                             contract.validate_provenance(
