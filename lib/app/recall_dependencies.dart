@@ -93,6 +93,8 @@ class RecallDependencies {
         store: store,
         clock: clock,
         prefs: prefs,
+        reviewSyncDelay: ReviewController.interactiveReviewSyncDelay,
+        reviewUndoLimit: ReviewController.interactiveReviewUndoLimit,
         beforeSessionLoad: () async {
           final owner = api.currentUser;
           if (owner == null) return;
@@ -126,7 +128,7 @@ class RecallDependencies {
       final browserSync = BrowserForegroundSyncCoordinator(
         platform: createBrowserSyncPlatform(),
         hasSession: () => controller.currentUser != null,
-        syncPending: controller.syncPending,
+        syncPending: () => controller.syncPending(preserveUndo: true),
         refreshIfIdle: () => controller.refreshIfIdle(maxAge: Duration.zero),
       )..start();
 

@@ -172,15 +172,22 @@ counter, and a random suffix: the outbox outlives a restart while in-memory
 counters reset, so a purely clock-derived id could repeat after a clock
 rollback and the server would discard a genuine review as a replay.
 
-### Known divergence from strict server-wins
+### Undo and review sync
 
-- **Undo restores its local pre-rating snapshot unconditionally**
-  (`RecallApi.undoReview`). Undo is a single-level, session-scoped affordance
-  for the rating you just made, so it deliberately writes the exact state it
-  captured; a second device's review landing in that window would be overwritten.
+The Android study flow keeps the last three ratings undoable in its durable
+local outbox. Older ratings sync while study continues; after a one-minute
+pause, the remaining ratings sync too. Foreground, reconnect and background
+sync respect this correction window. Reload, Keep going and sign-out explicitly
+drain the outbox before leaving the session. The Undo control remains visible
+and disables when no action can be reverted; sync never replaces the daily
+completed count with a temporary message.
 
-This is tolerable for a single user across a handful of devices and is recorded
-here so the doctrine matches real behavior.
+Undo removes only a never-attempted local rating and restores its session
+progress. Once transport starts, a lost response may still represent a committed
+review, so that rating cannot be undone. Undo history is session-only; pending
+ratings survive a restart and replay using their original event identities.
+The controller's noninteractive default retains immediate delivery; the Android
+composition root supplies the correction window explicitly.
 
 ## Operational diagnostics
 
