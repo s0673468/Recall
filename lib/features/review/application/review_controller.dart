@@ -81,8 +81,7 @@ class _SignOutAttempt {
 ///  - time-on-card: a wall-clock stopwatch starts when a card's front becomes
 ///    visible and stops at the rating tap (revealing the answer does not
 ///    reset it), stamped into the review as `elapsed_ms`;
-///  - single-level undo: the most recent rating can be reverted until the
-///    next rating lands or the queue is reloaded (see [undo]).
+///  - recent ratings remain undoable while held in the durable local outbox.
 class ReviewController extends ChangeNotifier {
   /// Shown in the study header when device storage refused a rating or flag,
   /// or a thrown write left nothing in native truth. Nothing was saved, so
@@ -93,6 +92,9 @@ class ReviewController extends ChangeNotifier {
   /// It may be stored, so a redo of the same rating reuses its id.
   static const saveUnconfirmedNotice =
       "Couldn't confirm that save — try again.";
+
+  static const interactiveReviewSyncDelay = Duration(minutes: 1);
+  static const interactiveReviewUndoLimit = 3;
 
   static const _accountSetupError =
       'Recall could not prepare this account. Try again.';
@@ -115,6 +117,13 @@ class ReviewController extends ChangeNotifier {
   /// waiting on a flag send after it (see [_flushFlagOutboxBounded]).
   /// Injectable so tests need not wait the full bound.
   final Duration reviewSendTimeout;
+
+  /// Keep a small rolling window local while studying. Older ratings sync as
+  /// the window advances; a pause eventually sends the remaining ratings.
+  /// The interactive app configures this window at its composition root;
+  /// zero retains immediate delivery for noninteractive callers.
+  final Duration reviewSyncDelay;
+  final int reviewUndoLimit;
 
   /// Study preferences (new-card limit, retention, ordering). Optional so the
   /// existing test harness can construct the controller without one.
@@ -145,7 +154,11 @@ class ReviewController extends ChangeNotifier {
     OperationalEventRecorder? diagnostics,
     DateTime Function()? clock,
     this.reviewSendTimeout = const Duration(seconds: 15),
-  }) : haptics = haptics ?? ReviewHaptics.forPlatform(),
+    this.reviewSyncDelay = Duration.zero,
+    this.reviewUndoLimit = 1,
+  }) : assert(!reviewSyncDelay.isNegative),
+       assert(reviewUndoLimit > 0),
+       haptics = haptics ?? ReviewHaptics.forPlatform(),
        diagnostics = diagnostics ?? RecallDiagnostics.instance,
        clock = clock ?? DateTime.now {
     // Supabase emits auth errors (e.g. an offline token refresh) as STREAM
@@ -324,7 +337,7 @@ class ReviewController extends ChangeNotifier {
       unawaited(release);
       _invalidateActiveSession();
       engine.resetToDefaults();
-      _undo = null; // the session (and its undo snapshot) is gone
+      _undoHistory.clear(); // the session (and its undo snapshot) is gone
       _hideUndo = null;
       _set(const ReviewState(loading: false));
       // Auth events can be queued: a new login may already be current when
@@ -503,8 +516,9 @@ class ReviewController extends ChangeNotifier {
       if (identical(_signOutAttempt, attempt)) _signOutAttempt = null;
     });
     _signOutAttempt = attempt;
-    _runSignOut(attempt)
-        .then(completion.complete, onError: completion.completeError);
+    _runSignOut(
+      attempt,
+    ).then(completion.complete, onError: completion.completeError);
     return attempt.task;
   }
 
@@ -579,7 +593,7 @@ class ReviewController extends ChangeNotifier {
     _catchUpProgressRevision++;
     _dailyEvents.clear();
     _dailyEventsRevision++;
-    _undo = null;
+    _undoHistory.clear();
     _hideUndo = null;
     _ratedCatchUpCardIds.clear();
     _hiddenCardIds = const {};
@@ -753,7 +767,7 @@ class ReviewController extends ChangeNotifier {
     final loadToken = ++_loadSequence;
     // Reloading (refresh/deck switch) leaves the session the last rating was
     // made in — its queue position stops meaning anything, so undo expires.
-    _undo = null;
+    _undoHistory.clear();
     _hideUndo = null;
     // NB: load() always applies [deckId] as the new filter (null = all decks),
     // so any difference from the current filter is a deck switch.
@@ -1527,6 +1541,7 @@ class ReviewController extends ChangeNotifier {
     }
     final updatedAt = _state.globalDueUpdatedAt;
     if (_state.current == null &&
+        _heldReviewIds.isEmpty &&
         (updatedAt == null ||
             clock().toUtc().difference(updatedAt) >= maxAge)) {
       return _loadSafely(deckId: _state.deckFilter);
@@ -1646,7 +1661,7 @@ class ReviewController extends ChangeNotifier {
     _catchUpRatingProgress = null;
     _catchUpProgressRevision++;
     _interactionGeneration++;
-    _undo = null;
+    _undoHistory.clear();
     _hideUndo = null;
     // A local choice proves nothing about the network: keep offline (and its
     // server-error label), or the next rating is sent into a dead connection
@@ -1684,7 +1699,7 @@ class ReviewController extends ChangeNotifier {
     // bypass it with cards due later or new cards.
     if (_state.catchUp.isActive) return;
     final loadToken = ++_loadSequence;
-    _undo = null; // the finished queue's positions stop meaning anything
+    _undoHistory.clear(); // the finished queue's positions stop meaning anything
     _hideUndo = null;
     _set(_state.copyWith(loading: true, error: null));
     _previewForCardId = null;
@@ -1756,8 +1771,8 @@ class ReviewController extends ChangeNotifier {
   /// Flush queued reviews AND queued flags without reloading the queue — safe
   /// on foreground/app-resume. The two loops run concurrently and each swallows
   /// its own failures, so a stuck flag flush can never delay the review flush.
-  Future<void> syncPending() => Future.wait<void>([
-    _flushOutbox(),
+  Future<void> syncPending({bool preserveUndo = false}) => Future.wait<void>([
+    _flushOutbox(preserveUndo: preserveUndo),
     // The web timer and Android's reconnect are single-flight on this call,
     // so a hung flag send must not stop them retrying reviews.
     _flushFlagOutboxBounded(),
@@ -1777,7 +1792,7 @@ class ReviewController extends ChangeNotifier {
     final beforeReviews = (await store.outbox(ownerScope: ownerScope)).length;
     final beforeFlags = (await store.flagOutbox(ownerScope: ownerScope)).length;
     final attempted = beforeReviews + beforeFlags;
-    await syncPending();
+    await syncPending(preserveUndo: true);
     final pending =
         (await store.outbox(ownerScope: ownerScope)).length +
         (await store.flagOutbox(ownerScope: ownerScope)).length;
@@ -2022,21 +2037,26 @@ class ReviewController extends ChangeNotifier {
     // A background refresh within the original load may have expanded the
     // source, so restore the live pre-progress backlog rather than the cache
     // captured before enqueue waited for its native acknowledgement.
-    _undo = loadToken != _loadSequence || entry['delivery_attempted'] == true
-        ? null
-        : _UndoRecord(
-            clientId: clientId,
-            card: card,
-            index: session.index,
-            catchUp: catchUpBefore.view,
-            catchUpStream: catchUpBefore.stream,
-            catchUpSourceQueue: catchUpBefore.source,
-            previousLastReviewedAt: session.lastReviewedAt,
-            previousReviewActivityKnown: session.reviewActivityKnown,
-            reducedGlobalDue:
-                countsTowardsGlobalDue && (_state.globalDueCount ?? 0) > 0,
-            updatesSnapshot: updatesSnapshot,
-          );
+    if (loadToken != _loadSequence || entry['delivery_attempted'] == true) {
+      _undoHistory.clear();
+    } else {
+      _undoHistory.add(
+        _UndoRecord(
+          clientId: clientId,
+          card: card,
+          index: session.index,
+          catchUp: catchUpBefore.view,
+          catchUpStream: catchUpBefore.stream,
+          catchUpSourceQueue: catchUpBefore.source,
+          previousLastReviewedAt: session.lastReviewedAt,
+          previousReviewActivityKnown: session.reviewActivityKnown,
+          reducedGlobalDue:
+              countsTowardsGlobalDue && (_state.globalDueCount ?? 0) > 0,
+          updatesSnapshot: updatesSnapshot,
+        ),
+      );
+      if (_undoHistory.length > reviewUndoLimit) _undoHistory.removeAt(0);
+    }
     _hideUndo = null;
     _clearFlagNotice();
     if (!ratingCurrent()) return;
@@ -2075,8 +2095,12 @@ class ReviewController extends ChangeNotifier {
         ),
       );
     }
-    // Sync behind the UI — the next card must never wait on the network.
-    if (!_state.offline) _syncInBackground(_flushOutbox());
+    // The local ACK already protects this rating across process death. Give
+    // recent mistakes time to be corrected before handing them to transport.
+    _scheduleReviewSync();
+    if (!_state.offline) {
+      _syncInBackground(_flushOutbox(preserveUndo: true));
+    }
   }
 
   Future<({CatchUpView view, String? stream, List<ReviewCard> source})?>
@@ -2318,30 +2342,34 @@ class ReviewController extends ChangeNotifier {
   }
 
   void _refreshCatchUpUndo(List<ReviewCard> source, CatchUpView view) {
-    final undo = _undo;
-    if (undo == null || _undoInFlight) return;
-    final containsRatedCard = source.any((card) => card.id == undo.card.id);
-    _undo = _UndoRecord(
-      clientId: undo.clientId,
-      card: undo.card,
-      index: undo.index,
-      catchUp: view.copyWith(
-        mode: undo.catchUp.mode,
-        dueCount:
-            view.dueCount +
-            (!containsRatedCard && _countsTowardsGlobalDue(undo.card) ? 1 : 0),
-        completedToday: undo.catchUp.completedToday,
-      ),
-      catchUpStream: undo.catchUpStream,
-      catchUpSourceQueue: List<ReviewCard>.unmodifiable([
-        if (!containsRatedCard) undo.card,
-        ...source,
-      ]),
-      previousLastReviewedAt: undo.previousLastReviewedAt,
-      previousReviewActivityKnown: undo.previousReviewActivityKnown,
-      reducedGlobalDue: undo.reducedGlobalDue,
-      updatesSnapshot: undo.updatesSnapshot,
-    );
+    if (_undoHistory.isEmpty || _undoInFlight) return;
+    for (var index = 0; index < _undoHistory.length; index++) {
+      final undo = _undoHistory[index];
+      final restored = [
+        for (final record in _undoHistory.skip(index))
+          if (!source.any((card) => card.id == record.card.id)) record.card,
+      ];
+      _undoHistory[index] = _UndoRecord(
+        clientId: undo.clientId,
+        card: undo.card,
+        index: undo.index,
+        catchUp: view.copyWith(
+          mode: undo.catchUp.mode,
+          dueCount:
+              view.dueCount + restored.where(_countsTowardsGlobalDue).length,
+          completedToday: undo.catchUp.completedToday,
+        ),
+        catchUpStream: undo.catchUpStream,
+        catchUpSourceQueue: List<ReviewCard>.unmodifiable([
+          ...restored,
+          ...source,
+        ]),
+        previousLastReviewedAt: undo.previousLastReviewedAt,
+        previousReviewActivityKnown: undo.previousReviewActivityKnown,
+        reducedGlobalDue: undo.reducedGlobalDue,
+        updatesSnapshot: undo.updatesSnapshot,
+      );
+    }
   }
 
   // --- Flag a bad card (report to the desktop revision pipeline) ---
@@ -2621,7 +2649,7 @@ class ReviewController extends ChangeNotifier {
         );
         return;
       }
-      _undo = null;
+      _undoHistory.clear();
       final countsTowardsGlobalDue = _countsTowardsGlobalDue(card);
       _hideUndo = _HideUndoRecord(
         card: card,
@@ -3072,16 +3100,43 @@ class ReviewController extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- Undo (single-level, session-only) ---
+  // --- Undo (bounded, session-only) ---
 
-  _UndoRecord? _undo;
+  final List<_UndoRecord> _undoHistory = [];
+  _UndoRecord? get _undo => _undoHistory.lastOrNull;
+
+  Timer? _reviewSyncTimer;
+
+  void _scheduleReviewSync() {
+    _reviewSyncTimer?.cancel();
+    _reviewSyncTimer = null;
+    if (reviewSyncDelay == Duration.zero || _disposed) return;
+    final ownerScope = store.activeOwnerScope;
+    final ownerId = api.currentUser?.id;
+    _reviewSyncTimer = Timer(reviewSyncDelay, () {
+      _reviewSyncTimer = null;
+      if (!_disposed &&
+          !_state.offline &&
+          ownerId == api.currentUser?.id &&
+          _flushStillOwnsSession(ownerId, ownerScope)) {
+        _syncInBackground(_flushOutbox(preserveUndo: true));
+      }
+    });
+  }
+
+  Set<Object> get _heldReviewIds => {
+    if (_reviewSyncTimer?.isActive == true)
+      for (final undo in _undoHistory) undo.clientId,
+    ?_ratingClientId,
+    if (_unconfirmedReview != null) _unconfirmedReview!.clientId,
+  };
   bool _undoInFlight = false;
 
   /// Whether the most recent rating or hide can still be reverted.
   bool get canUndo => !_rateInFlight && (_undo != null || _hideUndo != null);
 
   /// True while [undo] is completing. [rate] is blocked for the duration and
-  /// the UI hides the undo affordance, so nothing can interleave with the
+  /// the UI disables Undo, so nothing can interleave with the
   /// queue restore.
   bool get undoInFlight => _undoInFlight;
 
@@ -3113,7 +3168,7 @@ class ReviewController extends ChangeNotifier {
     bool undoCurrent() => sessionOwned() && session.index == _state.index;
 
     _undoInFlight = true;
-    notifyListeners(); // hide the undo affordance for the duration
+    notifyListeners(); // disable Undo for the duration
     try {
       // A sender closes the Undo slot before its RPC. Wait for an already
       // running sender; never treat a missing acknowledgement as unsent.
@@ -3124,7 +3179,7 @@ class ReviewController extends ChangeNotifier {
         if (!undoCurrent()) return;
       }
       if (!undoCurrent() || !identical(_undo, u)) return;
-      _undo = null;
+      _undoHistory.removeLast();
       _interactionGeneration++;
       // The user's local removal remains valid in its original namespace even
       // if a load or account change supersedes its presentation while waiting.
@@ -3136,6 +3191,10 @@ class ReviewController extends ChangeNotifier {
       if (!result.removed) {
         _showFlagNotice('Synced reviews cannot be undone');
         return;
+      }
+      if (result.remaining == 0) {
+        _reviewSyncTimer?.cancel();
+        _reviewSyncTimer = null;
       }
       await _restoreCatchUpState(
         u.catchUp,
@@ -3199,13 +3258,16 @@ class ReviewController extends ChangeNotifier {
   /// so entries enqueued after the outbox was read still go out.
   Future<void>? _flushTask;
   bool _flushFollowUp = false;
+  bool _flushPreservesUndo = false;
 
-  Future<void> _flushOutbox() {
+  Future<void> _flushOutbox({bool preserveUndo = false}) {
     final running = _flushTask;
     if (running != null) {
       _flushFollowUp = true;
+      if (!preserveUndo) _flushPreservesUndo = false;
       return running;
     }
+    _flushPreservesUndo = preserveUndo;
     final task = _runFlushLoop().whenComplete(() => _flushTask = null);
     _flushTask = task;
     return task;
@@ -3217,7 +3279,7 @@ class ReviewController extends ChangeNotifier {
       // After a send timed out, a follow-up pass would only repeat the wait
       // that Undo, Keep going and sign-out are already joining. The next
       // rating, resume or reconnect retries instead.
-      if (await _flushOnce()) break;
+      if (await _flushOnce(preserveUndo: _flushPreservesUndo)) break;
     } while (_flushFollowUp);
   }
 
@@ -3233,7 +3295,7 @@ class ReviewController extends ChangeNotifier {
   /// a stale delivered count must never remove a later queued action.
   ///
   /// Returns true when a send timed out (see [reviewSendTimeout]).
-  Future<bool> _flushOnce() async {
+  Future<bool> _flushOnce({required bool preserveUndo}) async {
     final ownerScope = store.activeOwnerScope;
     final ownerId = api.currentUser?.id;
     if (!_flushStillOwnsSession(ownerId, ownerScope)) return false;
@@ -3273,6 +3335,7 @@ class ReviewController extends ChangeNotifier {
       var sending = false;
       try {
         final eventId = entry['client_id'];
+        if (preserveUndo && _heldReviewIds.contains(eventId)) continue;
         // Persist before transport. If Undo already removed it, skip this
         // stale read; otherwise this event remains replayable after any loss.
         if (eventId != null &&
@@ -3296,10 +3359,10 @@ class ReviewController extends ChangeNotifier {
             rating: unconfirmed.rating,
           );
         }
-        final u = _undo;
-        if (u != null && u.clientId == eventId) {
-          _undo = null;
-          _showFlagNotice('Synced reviews cannot be undone');
+        final undoCount = _undoHistory.length;
+        _undoHistory.removeWhere((undo) => undo.clientId == eventId);
+        if (_undoHistory.length != undoCount) {
+          notifyListeners();
         }
         // A dead connection can hold a request open for minutes, and Undo,
         // Keep going and sign-out wait for this pass. Stop waiting after the
@@ -3407,7 +3470,7 @@ class ReviewController extends ChangeNotifier {
     String? ownerScope,
   ) {
     final undoable = {
-      _undo?.clientId,
+      for (final undo in _undoHistory) undo.clientId,
       _ratingClientId,
       _unconfirmedReview?.clientId,
     };
@@ -3558,6 +3621,7 @@ class ReviewController extends ChangeNotifier {
   @override
   void dispose() {
     _studyDayTimer?.cancel();
+    _reviewSyncTimer?.cancel();
     _disposed = true;
     _flagNoticeTimer?.cancel();
     _authSub?.cancel();

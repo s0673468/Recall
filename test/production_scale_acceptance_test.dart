@@ -236,8 +236,17 @@ void main() {
     await tester.tap(find.text('Good'));
     await tester.pumpAndSettle();
     expect(dependencies.reviewController.state.reviewedThisSession, 1);
-    expect(find.byTooltip('Undo').hitTestable(), findsNothing);
-    expect(find.text('Synced reviews cannot be undone'), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('recall_study_undo')))
+          .onPressed,
+      isNull,
+    );
+    expect(find.text('Synced reviews cannot be undone'), findsNothing);
+    expect(
+      find.text('${dependencies.reviewController.state.reviewedToday} done'),
+      findsOneWidget,
+    );
     await dependencies.reviewController.undo();
     expect(dependencies.reviewController.state.reviewedThisSession, 1);
     await tester.pump(const Duration(seconds: 3));

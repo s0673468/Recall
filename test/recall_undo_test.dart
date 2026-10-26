@@ -101,7 +101,7 @@ void main() {
         expect(api.server.reviewLog, logs);
         expect(api.undone, isEmpty);
         expect(controller.canUndo, isFalse);
-        expect(controller.flagNotice, 'Synced reviews cannot be undone');
+        expect(controller.flagNotice, isNull);
       },
     );
 
@@ -320,7 +320,9 @@ void main() {
     });
   });
 
-  testWidgets('sync Undo notice fits phone width and expires', (tester) async {
+  testWidgets('sync keeps the daily count and disables visible Undo quietly', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -348,8 +350,14 @@ void main() {
     await controller.rate(Rating.good);
     await controller.syncPending();
     await tester.pumpAndSettle();
-    expect(find.text('Synced reviews cannot be undone'), findsOneWidget);
-    expect(find.byTooltip('Undo').hitTestable(), findsNothing);
+    expect(find.text('Synced reviews cannot be undone'), findsNothing);
+    expect(find.text('1 done'), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const Key('recall_study_undo')))
+          .onPressed,
+      isNull,
+    );
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(seconds: 3));
     await tester.pumpAndSettle();
@@ -383,7 +391,12 @@ void main() {
           home: Scaffold(body: StudyScreen(controller: controller)),
         ),
       );
-      expect(find.byTooltip('Undo').hitTestable(), findsNothing);
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('recall_study_undo')))
+            .onPressed,
+        isNull,
+      );
 
       await tester.tap(find.text('Show answer'));
       await tester.pump();
@@ -398,7 +411,12 @@ void main() {
 
       expect(find.textContaining('first question'), findsOneWidget);
       expect(find.text('Show answer'), findsOneWidget);
-      expect(find.byTooltip('Undo').hitTestable(), findsNothing);
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('recall_study_undo')))
+            .onPressed,
+        isNull,
+      );
     });
 
     testWidgets('the all-caught-up screen still offers undo', (tester) async {

@@ -105,7 +105,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     } else {
       await runRecallForegroundSync(
         diagnostics: widget.diagnostics,
-        syncPending: widget.controller.syncPending,
+        syncPending: () => widget.controller.syncPending(preserveUndo: true),
         refreshIfIdle: widget.controller.refreshIfIdle,
       );
     }

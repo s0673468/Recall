@@ -140,8 +140,8 @@ class StudyScreen extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         final s = controller.state;
-        // Hidden while nothing is undoable AND while an undo is completing
-        // (rate() is blocked then too — nothing may interleave the restore).
+        // Disable Undo while unavailable or completing a restore; the control
+        // keeps its place so the study header never moves.
         final undoable = controller.canUndo && !controller.undoInFlight;
         final undoLabel = s.undoRestoresHiddenCard
             ? 'Undo hide'
@@ -465,18 +465,11 @@ class _Header extends StatelessWidget {
           final actions = Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Reserve Undo before the four main actions so they stay evenly
-              // spaced and never shift when a hide or rating becomes undoable.
-              Visibility(
-                visible: onUndo != null,
-                maintainSize: true,
-                maintainAnimation: true,
-                maintainState: true,
-                child: IconButton(
-                  tooltip: 'Undo',
-                  icon: const Icon(Icons.undo, size: 20),
-                  onPressed: onUndo,
-                ),
+              IconButton(
+                key: const Key('recall_study_undo'),
+                tooltip: 'Undo',
+                icon: const Icon(Icons.undo, size: 20),
+                onPressed: onUndo,
               ),
               IconButton(
                 key: const Key('recall_flag_like'),
@@ -553,37 +546,27 @@ class _Header extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          // The flag confirmation takes this slot for a moment instead of a
-          // popup, so nothing ever covers the card or the rating buttons.
           Flexible(
             child: Align(
               alignment: Alignment.centerRight,
-              child: AnimatedSwitcher(
-                duration: RecallMotion.duration(context, RecallMotion.quick),
+              child: Semantics(
+                // Preserve session feedback for ratings/Undo; expose the
+                // durable daily total as its own accessible metric below.
+                liveRegion: true,
+                label:
+                    '$session ${session == 1 ? 'card' : 'cards'} reviewed this session',
+                container: true,
+                explicitChildNodes: true,
                 child: Semantics(
-                  key: ValueKey(notice ?? 'session'),
-                  // Preserve session feedback for ratings/Undo; expose the
-                  // durable daily total as its own accessible metric below.
-                  liveRegion: true,
                   label:
-                      notice ??
-                      '$session ${session == 1 ? 'card' : 'cards'} reviewed this session',
-                  container: true,
-                  explicitChildNodes: true,
-                  child: Semantics(
-                    label: notice == null
-                        ? '$today ${today == 1 ? 'card' : 'cards'} reviewed today'
-                        : '',
-                    excludeSemantics: true,
-                    child: Text(
-                      notice ?? '$today done',
-                      textAlign: TextAlign.end,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: notice == null
-                            ? UiColors.textMuted
-                            : UiColors.textSecondary,
-                      ),
-                    ),
+                      '$today ${today == 1 ? 'card' : 'cards'} reviewed today',
+                  excludeSemantics: true,
+                  child: Text(
+                    '$today done',
+                    textAlign: TextAlign.end,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: UiColors.textMuted),
                   ),
                 ),
               ),
@@ -609,11 +592,12 @@ class _Header extends StatelessWidget {
                 child: Semantics(
                   liveRegion: true,
                   child: Text(
-                    offline
-                        ? (pendingSync > 0
-                              ? '$offlineLabel · $pendingSync waiting to sync'
-                              : offlineLabel)
-                        : (pendingSync > 0 ? _onlineSyncLine : ''),
+                    notice ??
+                        (offline
+                            ? (pendingSync > 0
+                                  ? '$offlineLabel · $pendingSync waiting to sync'
+                                  : offlineLabel)
+                            : (pendingSync > 0 ? _onlineSyncLine : '')),
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: UiColors.textSecondary,
                     ),
@@ -803,6 +787,7 @@ class _CardPanel extends StatelessWidget {
         children: [
           Expanded(
             child: SingleChildScrollView(
+              key: ValueKey('study_content_${card.id}'),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -820,49 +805,33 @@ class _CardPanel extends StatelessWidget {
                     // and is often just a summary). A no-op for non-cloze fronts.
                     revealCloze: showBack,
                   ),
-                  AnimatedSize(
-                    duration: RecallMotion.duration(context),
-                    curve: RecallMotion.curve,
-                    alignment: Alignment.topCenter,
-                    child: RecallMotionSwap(
-                      duration: RecallMotion.quick,
-                      child: showBack
-                          ? Column(
-                              key: ValueKey('study_answer_${card.id}'),
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.symmetric(
-                                    vertical: UiSpacing.lg,
-                                  ),
-                                  child: Divider(
-                                    color: UiColors.border,
-                                    height: 1,
-                                  ),
-                                ),
-                                CardFace(
-                                  html: card.back,
-                                  hasLatex: card.hasLatex,
-                                  latexSvg: card.latexSvg,
-                                  cacheKey: '${card.id}:back',
-                                  selectable: false,
-                                  textAlign: TextAlign.start,
-                                  style: Theme.of(context).textTheme.titleLarge!
-                                      .copyWith(
-                                        color: UiColors.textSecondary,
-                                        height: 1.6,
-                                        fontWeight: FontWeight.w400,
-                                      ),
-                                  // The answer face reveals any cloze deletions it carries.
-                                  revealCloze: true,
-                                ),
-                              ],
-                            )
-                          : const SizedBox(
-                              key: ValueKey('study_answer_hidden'),
-                            ),
+                  if (showBack)
+                    Column(
+                      key: ValueKey('study_answer_${card.id}'),
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: UiSpacing.lg),
+                          child: Divider(color: UiColors.border, height: 1),
+                        ),
+                        CardFace(
+                          html: card.back,
+                          hasLatex: card.hasLatex,
+                          latexSvg: card.latexSvg,
+                          cacheKey: '${card.id}:back',
+                          selectable: false,
+                          textAlign: TextAlign.start,
+                          style: Theme.of(context).textTheme.titleLarge!
+                              .copyWith(
+                                color: UiColors.textSecondary,
+                                height: 1.6,
+                                fontWeight: FontWeight.w400,
+                              ),
+                          // The answer face reveals any cloze deletions it carries.
+                          revealCloze: true,
+                        ),
+                      ],
                     ),
-                  ),
                   const SizedBox(height: UiSpacing.sm),
                 ],
               ),

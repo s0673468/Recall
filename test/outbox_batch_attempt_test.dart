@@ -365,7 +365,7 @@ void main() {
         // mark first + batch + mark Undo review + drain; per-review was 5.
         expect(native.outboxWrites, 4);
         await controller.undo();
-        expect(controller.flagNotice, 'Synced reviews cannot be undone');
+        expect(controller.flagNotice, isNull);
         expect(controller.state.index, 4);
         expect(api.undone, isEmpty);
       },
@@ -605,7 +605,7 @@ void main() {
       expect(seen[0].canUndo, isTrue);
       expect(seen[1].marks, [true, true]);
       expect(seen[1].canUndo, isFalse);
-      expect(controller.flagNotice, 'Synced reviews cannot be undone');
+      expect(controller.flagNotice, isNull);
       expect(controller.state.current?.id, isNot(cardId));
       expect(await native.outbox(), isEmpty);
       expect(loggedEvents(api), [...ids, unconfirmed]);

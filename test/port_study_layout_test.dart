@@ -417,13 +417,12 @@ void main() {
     controller.flagNotice = 'Synthetic saved confirmation';
     controller.notifyListeners();
     await tester.pump();
-    final switcher = find
-        .ancestor(
-          of: find.text('Synthetic saved confirmation'),
-          matching: find.byType(AnimatedSwitcher),
-        )
-        .first;
-    expect(tester.widget<AnimatedSwitcher>(switcher).duration, Duration.zero);
+    final switcher = find.ancestor(
+      of: find.text('Synthetic saved confirmation'),
+      matching: find.byType(AnimatedSwitcher),
+    );
+    expect(switcher, findsNothing);
+    expect(find.text('0 done'), findsOneWidget);
     await tester.tap(find.byTooltip('More options'));
     await tester.pump();
     final sheetContext = tester.element(find.text('Options'));
