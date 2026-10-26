@@ -31,6 +31,8 @@ typedef _ReadData = ({
 typedef OpenReadingPrimer =
     Future<void> Function(ConceptPage page, List<ConceptNodeInfo> conceptNodes);
 
+const kRecentReadingLimit = 5;
+
 /// Recent concept reading with library results shown only while searching.
 class ReadScreen extends StatefulWidget {
   final RecallApi api;
@@ -196,6 +198,34 @@ class ReadScreenState extends State<ReadScreen> {
             conceptPages: data.conceptPages,
             readTodayPages: todayPages,
           );
+          // Attribution groups by day, then title. Order the displayed rows by
+          // their latest review time without changing shared attribution rules.
+          final lastReviewed = <String, DateTime>{};
+          final tomorrow = DateTime(now.year, now.month, now.day + 1);
+          for (final review in data.reviewLog) {
+            if (review.guid == null || !review.at.isBefore(tomorrow)) continue;
+            for (final nodeId in ConceptAttribution.nodeTags(
+              data.noteTags[review.guid],
+            )) {
+              final previous = lastReviewed[nodeId];
+              if (previous == null || review.at.isAfter(previous)) {
+                lastReviewed[nodeId] = review.at;
+              }
+            }
+          }
+          final newestPages = [...todayPages]
+            ..sort((a, b) {
+              final byReview = lastReviewed[b.nodeId]!.compareTo(
+                lastReviewed[a.nodeId]!,
+              );
+              return byReview != 0 ? byReview : a.title.compareTo(b.title);
+            });
+          final recentRereadPages = rereadPages
+              .take(kRecentReadingLimit)
+              .toList();
+          final recentTodayPages = newestPages
+              .take(kRecentReadingLimit - recentRereadPages.length)
+              .toList();
           final pageByNode = {
             for (final page in data.conceptPages) page.nodeId: page,
           };
@@ -298,9 +328,9 @@ class ReadScreenState extends State<ReadScreen> {
                     ],
                     const RecallSectionLabel(title: 'Recent reading'),
                     const SizedBox(height: UiSpacing.md),
-                    if (rereadPages.isNotEmpty)
+                    if (recentRereadPages.isNotEmpty)
                       RemediationRows(
-                        pages: rereadPages,
+                        pages: recentRereadPages,
                         feedbackByNode: _feedbackByNode,
                         onTap: (page) => unawaited(
                           _openPrimer(
@@ -310,17 +340,18 @@ class ReadScreenState extends State<ReadScreen> {
                           ),
                         ),
                       ),
-                    if (rereadPages.isNotEmpty && todayPages.isNotEmpty)
+                    if (recentRereadPages.isNotEmpty &&
+                        recentTodayPages.isNotEmpty)
                       const SizedBox(height: UiSpacing.md),
-                    if (todayPages.isEmpty && rereadPages.isEmpty)
+                    if (recentTodayPages.isEmpty && recentRereadPages.isEmpty)
                       const Text(
                         'No recent reading yet.',
                         style: TextStyle(color: UiColors.textMuted),
                       ),
-                    if (todayPages.isNotEmpty)
+                    if (recentTodayPages.isNotEmpty)
                       RecallListGroup(
                         children: [
-                          for (final page in todayPages)
+                          for (final page in recentTodayPages)
                             PrimerRow(
                               page: page,
                               feedback: _feedbackByNode[page.nodeId],
