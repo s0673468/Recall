@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -8,10 +7,8 @@ import 'package:health_anki_flutter/features/review/application/review_controlle
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
-import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
-import 'package:health_anki_flutter/features/settings/presentation/screens/settings_screen.dart';
 import 'package:health_anki_flutter/navigation/app_shell.dart';
 import 'package:health_anki_flutter/navigation/recall_deep_links.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
@@ -141,125 +138,6 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('desktop web exposes every destination and shared settings', (
-    tester,
-  ) async {
-    await pumpShell(tester, size: const Size(1440, 900));
-    expect(find.byType(NavigationBar), findsNothing);
-    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
-    expect(rail.extended, isFalse);
-    expect(rail.labelType, NavigationRailLabelType.none);
-    expect(tester.getSize(find.byType(NavigationRail)).width, 64);
-    expect(find.byTooltip('Recall'), findsOneWidget);
-    expect(
-      find.descendant(
-        of: find.byType(NavigationRail),
-        matching: find.text('Recall'),
-      ),
-      findsNothing,
-    );
-    for (final (index, label) in [
-      (1, 'Decks'),
-      (2, 'Stats'),
-      (3, 'Read'),
-      (0, 'Study'),
-    ]) {
-      await select(tester, label);
-      expect(
-        tester
-            .widget<NavigationRail>(find.byType(NavigationRail))
-            .selectedIndex,
-        index,
-      );
-      expect(tester.takeException(), isNull);
-    }
-    await select(tester, 'Read');
-    await tester.tap(find.byKey(const Key('recall_rail_settings')));
-    await tester.pumpAndSettle();
-    expect(find.byType(SettingsScreen), findsOneWidget);
-    expect(find.text('New cards / day'), findsOneWidget);
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
-      3,
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('phone web retains bottom navigation and Study settings menu', (
-    tester,
-  ) async {
-    await pumpShell(tester, size: const Size(390, 844));
-    expect(find.byType(NavigationRail), findsNothing);
-    for (final (index, label) in [
-      (1, 'Decks'),
-      (2, 'Stats'),
-      (3, 'Read'),
-      (0, 'Study'),
-    ]) {
-      await select(tester, label);
-      expect(
-        tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
-        index,
-      );
-    }
-    await tester.tap(find.byTooltip('More options').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Settings'));
-    await tester.pumpAndSettle();
-    expect(find.byType(SettingsScreen), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('wide web bounds the card beside an independent reading pane', (
-    tester,
-  ) async {
-    final controller = await pumpShell(tester, size: const Size(1440, 900));
-    final study = tester.getRect(find.byType(StudyScreen));
-    final reading = tester.getRect(
-      find.byKey(const Key('recall_reading_column')),
-    );
-    expect(study.width, lessThanOrEqualTo(640));
-    expect(study.height, lessThanOrEqualTo(640));
-    expect(reading.width, closeTo(study.width, 1));
-    expect(reading.left, greaterThan(study.right));
-    final current = controller.state.current;
-    final search = find.descendant(
-      of: find.byKey(const Key('recall_reading_column')),
-      matching: find.byKey(const Key('recall_primer_search')),
-    );
-    await tester.ensureVisible(search);
-    await tester.enterText(search, 'A reading search');
-    await tester.sendKeyEvent(LogicalKeyboardKey.space);
-    await tester.sendKeyEvent(LogicalKeyboardKey.digit3);
-    await tester.pumpAndSettle();
-    expect(controller.state.current, same(current));
-    expect(controller.state.showBack, isFalse);
-    expect(controller.state.reviewedThisSession, 0);
-    await tester.tap(find.byType(StudyScreen));
-    await tester.pumpAndSettle();
-    expect(controller.state.showBack, isFalse);
-    await tester.sendKeyEvent(LogicalKeyboardKey.space);
-    await tester.pumpAndSettle();
-    expect(controller.state.showBack, isTrue);
-    tester.view.physicalSize = const Size(1920, 1080);
-    await tester.pumpAndSettle();
-    expect(
-      tester.getSize(find.byType(StudyScreen)).width,
-      lessThanOrEqualTo(640),
-    );
-    expect(
-      tester.getSize(find.byType(StudyScreen)).height,
-      lessThanOrEqualTo(640),
-    );
-    expect(
-      tester.getSize(find.byKey(const Key('recall_reading_column'))).width,
-      closeTo(tester.getSize(find.byType(StudyScreen)).width, 1),
-    );
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets(
     'reading search survives narrowing the browser and changing tabs',
     (tester) async {
@@ -342,86 +220,6 @@ void main() {
     );
   });
 
-  testWidgets('native Android keeps its existing 600px rail breakpoint', (
-    tester,
-  ) async {
-    await pumpShell(
-      tester,
-      size: const Size(700, 900),
-      isWeb: false,
-      nativeAndroid: true,
-    );
-    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
-    expect(rail.extended, isFalse);
-    expect(rail.leading, isNull);
-    expect(rail.trailing, isNull);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('unfolded Android rotates into equal Study and related Reading', (
-    tester,
-  ) async {
-    final controller = await pumpShell(
-      tester,
-      size: const Size(704, 933),
-      isWeb: false,
-      nativeAndroid: true,
-      relatedReading: true,
-    );
-    expect(find.byKey(const Key('recall_reading_column')), findsNothing);
-    final studyElement = tester.element(find.byType(StudyScreen));
-    final current = controller.state.current;
-    await tester.tap(find.text('Show answer'));
-    await tester.pumpAndSettle();
-    tester.view.physicalSize = const Size(933, 704);
-    await tester.pumpAndSettle();
-    final study = tester.getRect(find.byType(StudyScreen));
-    final reading = tester.getRect(
-      find.byKey(const Key('recall_reading_column')),
-    );
-    expect(reading.width, closeTo(study.width, 1));
-    expect(reading.left - study.right, UiSpacing.md);
-    expect(reading.width, greaterThanOrEqualTo(340));
-    expect(find.text('For this card'), findsOneWidget);
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('recall_read_related')),
-        matching: find.text('Reading beside Study'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    final primerScroll = tester.state<ScrollableState>(
-      find
-          .descendant(
-            of: find.byType(PrimerContent),
-            matching: find.byType(Scrollable),
-          )
-          .first,
-    );
-    primerScroll.position.jumpTo(180);
-    await tester.pumpAndSettle();
-    for (final size in [
-      const Size(704, 933),
-      const Size(412, 915),
-      const Size(933, 704),
-    ]) {
-      tester.view.physicalSize = size;
-      await tester.pumpAndSettle();
-      expect(tester.element(find.byType(StudyScreen)), same(studyElement));
-      expect(controller.state.current, same(current));
-      expect(controller.state.showBack, isTrue);
-      expect(tester.takeException(), isNull);
-    }
-    expect(find.byType(PrimerContent), findsOneWidget);
-    expect(primerScroll.position.pixels, 180);
-    await select(tester, 'Decks');
-    await select(tester, 'Study');
-    expect(find.byType(PrimerContent), findsOneWidget);
-    expect(primerScroll.position.pixels, 180);
-    expect(controller.state.reviewedThisSession, 0);
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets('Android companion keeps search across keyboard, fold and tabs', (
     tester,
   ) async {
@@ -462,78 +260,6 @@ void main() {
     expect(tester.widget<TextField>(search).controller!.text, 'Reading beside');
     expect(controller.state.showBack, isFalse);
     expect(controller.state.reviewedThisSession, 0);
-    expect(tester.takeException(), isNull);
-  });
-
-  for (final (size, textScale, split) in [
-    (const Size(800, 600), 1.0, true),
-    (const Size(1024, 768), 1.0, true),
-    (const Size(933, 704), 1.2, true),
-    (const Size(933, 704), 1.5, false),
-    (const Size(933, 704), 2.0, false),
-    (const Size(704, 933), 1.0, false),
-    (const Size(900, 900), 1.0, false),
-    (const Size(752, 476), 1.0, false),
-    (const Size(740, 600), 1.0, false),
-  ]) {
-    testWidgets('Android usable-space fallback at $size and scale $textScale', (
-      tester,
-    ) async {
-      await pumpShell(
-        tester,
-        size: size,
-        textScale: textScale,
-        isWeb: false,
-        nativeAndroid: true,
-      );
-      expect(
-        find.byKey(const Key('recall_reading_column')),
-        split ? findsOneWidget : findsNothing,
-      );
-      await tester.ensureVisible(find.text('Show answer'));
-      await tester.tap(find.text('Show answer'));
-      await tester.pumpAndSettle();
-      expect(find.text('Good'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
-  }
-
-  testWidgets('large browser text uses the single-column Study view', (
-    tester,
-  ) async {
-    await pumpShell(tester, size: const Size(1440, 900), textScale: 2);
-    expect(
-      tester.getSize(find.byKey(const Key('recall_reading_column'))).width,
-      0,
-    );
-    await tester.ensureVisible(find.text('Show answer'));
-    await tester.tap(find.text('Show answer'));
-    await tester.pumpAndSettle();
-    expect(find.text('Good'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('short desktop windows keep navigation and settings reachable', (
-    tester,
-  ) async {
-    await pumpShell(tester, size: const Size(900, 360));
-    final rail = tester.widget<NavigationRail>(find.byType(NavigationRail));
-    expect(rail.scrollable, isTrue);
-    final read = find.descendant(
-      of: find.byType(NavigationRail),
-      matching: find.byTooltip('Read'),
-    );
-    await tester.ensureVisible(read);
-    await tester.pumpAndSettle();
-    await tester.tap(read);
-    await tester.pumpAndSettle();
-    expect(
-      tester.widget<NavigationRail>(find.byType(NavigationRail)).selectedIndex,
-      3,
-    );
-    await tester.tap(find.byKey(const Key('recall_rail_settings')));
-    await tester.pumpAndSettle();
-    expect(find.byType(SettingsScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

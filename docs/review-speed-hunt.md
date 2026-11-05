@@ -8,13 +8,9 @@ validation-card priority, the new-card gate, and daily limits are preserved.
 The general `orderDue` helper also traverses arbitrary iterables once instead of
 repeatedly evaluating `length` and `elementAt`.
 
-Reproduce the synthetic benchmark with the pinned Flutter SDK and dependencies:
-
-```sh
-./tool/flutterw test --no-pub --reporter=expanded \
-  --dart-define=RECALL_SPEED_BENCHMARK=true \
-  test/review_speed_benchmark_test.dart
-```
+The synthetic benchmark file (`test/review_speed_benchmark_test.dart`) was retired
+on 2026-11-04 with the lean-tests pass; restore it from git history to reproduce
+these numbers. `test/review_speed_regressions_test.dart` keeps the correctness checks.
 
 The fixture generates 2,000 and 20,000 cards, two decks, 10% new cards, a fixed
 clock and repeatable FSRS inputs. SharedPreferences is mocked and the API is an

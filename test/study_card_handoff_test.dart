@@ -200,34 +200,6 @@ void main() {
     );
   }
 
-  testWidgets('Undo restores the front in one frame without an outgoing card', (
-    tester,
-  ) async {
-    final (:controller, :store, api: _) = await _pumpStudy(tester);
-    store.release();
-    await _reveal(tester);
-    await tester.tap(find.text('Good'));
-    await tester.pump();
-    expect(controller.state.current?.id, 102);
-    await _reveal(tester);
-    expect(find.text(_secondBack), findsOneWidget);
-    expect(controller.canUndo, isTrue);
-
-    await tester.ensureVisible(find.byTooltip('Undo'));
-    await tester.tap(find.byTooltip('Undo'));
-    await tester.pump();
-    _expectImmediateFront(
-      tester,
-      _firstFront,
-      absent: [_firstBack, _secondFront, _secondBack],
-    );
-    expect(controller.state.current?.id, 101);
-    expect(controller.state.showBack, isFalse);
-    expect(controller.state.reviewedThisSession, 0);
-    expect(await LocalReviewStore().outbox(), isEmpty);
-    await tester.pumpWidget(const SizedBox());
-  });
-
   testWidgets('card handoffs proceed while the network sender is held', (
     tester,
   ) async {

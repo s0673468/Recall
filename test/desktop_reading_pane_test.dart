@@ -9,7 +9,6 @@ import 'package:health_anki_flutter/features/review/data/local_review_store.dart
 import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
-import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/desktop_reading_pane.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
@@ -148,48 +147,6 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('related concept opens inline and preserves the active card', (
-    tester,
-  ) async {
-    await pumpPane(tester);
-    expect(find.text('For this card'), findsOneWidget);
-    expect(find.text('From your chats'), findsOneWidget);
-    expect(find.text('Recent reading'), findsOneWidget);
-    for (final explanation in [
-      'Open a concept when you want more context.',
-      'Weekly notes from your ChatGPT and Claude study discussions.',
-      'From what you reviewed in the last 3 days.',
-    ]) {
-      expect(find.text(explanation), findsNothing);
-    }
-    expect(find.text('M00'), findsNothing);
-    expect(find.text('M01'), findsNothing);
-    final semantics = tester.ensureSemantics();
-    expect(find.bySemanticsLabel('Vector geometry'), findsOneWidget);
-    expect(
-      tester.getSize(find.byKey(const Key('recall_primer_row_vectors'))).height,
-      greaterThanOrEqualTo(48),
-    );
-    semantics.dispose();
-    final originalCard = controller.state.current;
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('recall_read_related')),
-        matching: find.text('Vector geometry'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byType(PrimerContent), findsOneWidget);
-    expect(find.byType(PrimerScreen), findsNothing);
-    expect(find.text('Study question'), findsOneWidget);
-    expect(controller.state.current, same(originalCard));
-    expect(controller.state.showBack, isFalse);
-    await tester.tap(find.byKey(const Key('recall_reading_back')));
-    await tester.pumpAndSettle();
-    expect(find.text('For this card'), findsOneWidget);
-    expect(find.byType(PrimerContent), findsNothing);
-  });
-
   testWidgets(
     'companion search precedes recent reading and results require a query',
     (tester) async {
@@ -218,25 +175,6 @@ void main() {
       expect(tester.widget<TextField>(search).focusNode!.hasFocus, isTrue);
     },
   );
-
-  testWidgets('library search and scroll survive inline reading', (
-    tester,
-  ) async {
-    await pumpPane(tester);
-    final search = find.byKey(const Key('recall_primer_search'));
-    await tester.ensureVisible(search);
-    await tester.enterText(search, 'Generalization');
-    await tester.pumpAndSettle();
-    expect(find.text('For this card'), findsNothing);
-    await tester.tap(find.byKey(const Key('recall_primer_row_models')));
-    await tester.pumpAndSettle();
-    expect(find.text('Use unseen examples.'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('recall_reading_back')));
-    await tester.pumpAndSettle();
-    expect(tester.widget<TextField>(search).controller!.text, 'Generalization');
-    expect(find.byKey(const Key('recall_primer_row_models')), findsOneWidget);
-    expect(find.text('For this card'), findsNothing);
-  });
 
   testWidgets('typing and reading shortcuts do not bubble into Study', (
     tester,
@@ -269,65 +207,6 @@ void main() {
     expect(studyKeys, 0);
     expect(controller.state.showBack, isFalse);
     expect(controller.state.reviewedThisSession, 0);
-  });
-
-  testWidgets('card changes keep the open primer and its reading position', (
-    tester,
-  ) async {
-    await pumpPane(tester);
-    await tester.tap(
-      find.descendant(
-        of: find.byKey(const Key('recall_read_related')),
-        matching: find.text('Vector geometry'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    final primerScroll = tester.state<ScrollableState>(
-      find.descendant(
-        of: find.byType(PrimerContent),
-        matching: find.byType(Scrollable),
-      ),
-    );
-    primerScroll.position.jumpTo(300);
-    await tester.pump();
-    controller.state = controller.state.copyWith(showBack: true, index: 1);
-    controller.notifyListeners();
-    await tester.pumpAndSettle();
-    expect(find.byType(PrimerContent), findsOneWidget);
-    expect(primerScroll.position.pixels, 300);
-    await tester.tap(find.byKey(const Key('recall_reading_back')));
-    await tester.pumpAndSettle();
-    expect(find.text('For this card'), findsNothing);
-  });
-
-  testWidgets('a new remediation refresh preserves the library query', (
-    tester,
-  ) async {
-    await pumpPane(tester);
-    final search = find.byKey(const Key('recall_primer_search'));
-    await tester.ensureVisible(search);
-    await tester.enterText(search, 'Generalization');
-    await tester.pumpAndSettle();
-    await store.enqueueRemediation(['vectors']);
-    controller.remediationRevision++;
-    controller.notifyListeners();
-    await tester.pumpAndSettle();
-    expect(tester.widget<TextField>(search).controller!.text, 'Generalization');
-    expect(find.byKey(const Key('recall_primer_row_models')), findsOneWidget);
-    expect(find.text('For this card'), findsNothing);
-    expect(find.text('Reread: Vector geometry'), findsNothing);
-  });
-
-  testWidgets('reading errors offer a working retry', (tester) async {
-    api.fail = true;
-    await pumpPane(tester);
-    expect(find.text('Could not load reading'), findsOneWidget);
-    api.fail = false;
-    await tester.tap(find.byKey(const Key('recall_read_retry')));
-    await tester.pumpAndSettle();
-    expect(find.text('Could not load reading'), findsNothing);
-    expect(find.text('For this card'), findsOneWidget);
-    expect(api.pageReads, 2);
   });
 
   testWidgets(

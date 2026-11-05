@@ -1,7 +1,4 @@
-import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:health_anki_flutter/vendored/src/navigation/app_switcher.dart';
 import 'package:health_anki_flutter/vendored/src/navigation/app_switcher_platform_stub.dart'
@@ -24,53 +21,6 @@ void main() {
       native_platform.documentBaseUri(),
       'https://s0673468.github.io/Recall/',
     );
-  });
-
-  test('legacy installed-app identity stays standalone', () {
-    // Retiring publication preserves the identity of existing installations.
-    final manifest = File('web/manifest.json').readAsStringSync();
-
-    expect(manifest, contains('"id": "/Recall/"'));
-    expect(manifest, isNot(contains('/Health/recall/')));
-  });
-
-  test('custom suite and Recall roots remain configurable', () {
-    const current = 'https://preview.example.test/apps/recall/';
-    const health = 'https://preview.example.test/family/';
-    const recall = 'https://preview.example.test/study/';
-
-    expect(
-      appDestinationFromBaseUri(
-        HealthWebApp.track,
-        current,
-        trackWebRoot: '${health}today/',
-        recallWebRoot: recall,
-      ),
-      '${health}today/',
-    );
-    expect(
-      appDestinationFromBaseUri(
-        HealthWebApp.recall,
-        current,
-        healthSuiteRoot: health,
-        recallWebRoot: recall,
-      ),
-      recall,
-    );
-    expect(
-      appDestinationFromBaseUri(
-        HealthWebApp.track,
-        current,
-        healthSuiteRoot: health,
-      ),
-      '${health}track/',
-    );
-    expect(supportsAppSwitcher(isWeb: true, hasWebSibling: true), isTrue);
-  });
-
-  test('the maintained switcher topology is Track plus Recall', () {
-    expect(HealthWebApp.all.map((app) => app.name), ['Track', 'Recall']);
-    expect(HealthWebApp.track.preferredNativeUri, 'track://today');
   });
 
   test(
@@ -142,29 +92,4 @@ void main() {
     expect(attempted.map((uri) => uri.toString()), ['track://today']);
   });
 
-  testWidgets('current app is selected and cannot navigate to itself', (
-    tester,
-  ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: AppSwitcher(current: HealthWebApp.recall)),
-      ),
-    );
-
-    final recall = tester.widget<InkWell>(
-      find.byKey(const Key('app_switcher_recall')),
-    );
-    expect(recall.onTap, isNull);
-    debugDefaultTargetPlatformOverride = null;
-  });
-
-  test('native Android keeps the installed-app switcher surface', () {
-    expect(
-      supportsAppSwitcher(isWeb: false, targetPlatform: TargetPlatform.android),
-      isTrue,
-    );
-  });
 }

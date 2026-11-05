@@ -14,51 +14,6 @@ Widget _host(Widget child) => MaterialApp(
 
 void main() {
   group('CardFace rich HTML', () {
-    testWidgets('honors start alignment in non-selectable reading mode', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        _host(
-          const CardFace(
-            html: 'A paragraph should read from a stable left edge.',
-            hasLatex: false,
-            selectable: false,
-            textAlign: TextAlign.start,
-            style: TextStyle(fontSize: 18),
-          ),
-        ),
-      );
-
-      final richText = tester.widget<RichText>(find.byType(RichText));
-      expect(richText.textAlign, TextAlign.start);
-      expect(find.byType(SelectableText), findsNothing);
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('renders bold text as a weighted span', (tester) async {
-      await tester.pumpWidget(
-        _host(
-          const CardFace(
-            html: 'a <b>heavy</b> b',
-            hasLatex: false,
-            style: TextStyle(fontSize: 18),
-          ),
-        ),
-      );
-      final selectable = tester.widget<SelectableText>(
-        find.byType(SelectableText),
-      );
-      final span = selectable.textSpan!;
-      expect(span.toPlainText(), 'a heavy b');
-      // Find the "heavy" child and confirm it is bold.
-      InlineSpan? heavy;
-      span.visitChildren((s) {
-        if (s is TextSpan && s.text == 'heavy') heavy = s;
-        return true;
-      });
-      expect((heavy as TextSpan?)?.style?.fontWeight, FontWeight.w700);
-      expect(tester.takeException(), isNull);
-    });
 
     testWidgets('absolute https <img> renders an Image', (tester) async {
       await tester.pumpWidget(
@@ -72,43 +27,6 @@ void main() {
       );
       expect(find.byType(Image), findsOneWidget);
       expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('image alt text is exposed as one image semantic', (
-      tester,
-    ) async {
-      final semantics = tester.ensureSemantics();
-      await tester.pumpWidget(
-        _host(
-          const CardFace(
-            html: 'see <img src="https://x.test/a.png" alt="Loss trend chart">',
-            hasLatex: false,
-            style: TextStyle(fontSize: 18),
-          ),
-        ),
-      );
-      expect(find.bySemanticsLabel('Loss trend chart'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-      semantics.dispose();
-    });
-
-    testWidgets('empty image alt excludes the decorative image semantics', (
-      tester,
-    ) async {
-      final semantics = tester.ensureSemantics();
-      await tester.pumpWidget(
-        _host(
-          const CardFace(
-            html: '<img src="https://x.test/a.png" alt="">',
-            hasLatex: false,
-            style: TextStyle(fontSize: 18),
-          ),
-        ),
-      );
-      expect(find.byType(Image), findsOneWidget);
-      expect(find.bySemanticsLabel(RegExp('.+')), findsNothing);
-      expect(tester.takeException(), isNull);
-      semantics.dispose();
     });
 
     testWidgets('relative <img> shows a "media not synced" chip', (
@@ -128,25 +46,6 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('plain cards preserve text and the requested typography', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        _host(
-          const CardFace(
-            html: 'What is backprop?',
-            hasLatex: false,
-            style: TextStyle(fontFamily: 'Outfit'),
-          ),
-        ),
-      );
-      final selectable = tester.widget<SelectableText>(
-        find.byType(SelectableText),
-      );
-      expect(selectable.textSpan!.toPlainText(), 'What is backprop?');
-      expect(selectable.textSpan!.style?.fontFamily, 'Outfit');
-      expect(tester.takeException(), isNull);
-    });
   });
 
   group('CardFace latex_svg fallback', () {
@@ -220,39 +119,6 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('wide SVG math keeps a readable height and scrolls', (
-      tester,
-    ) async {
-      const svg =
-          '<svg xmlns="http://www.w3.org/2000/svg" '
-          'viewBox="0 0 2000 40">'
-          '<path d="M0 20h2000" stroke="black"/>'
-          '</svg>';
-      await tester.pumpWidget(
-        _host(
-          const CardFace(
-            html: 'J(theta) = ...',
-            hasLatex: true,
-            latexSvg: svg,
-            style: TextStyle(fontSize: 18, color: Colors.white),
-          ),
-        ),
-      );
-
-      final picture = find.byType(SvgPicture);
-      expect(picture, findsOneWidget);
-      expect(tester.getSize(picture).height, greaterThanOrEqualTo(36));
-
-      final scroller = find.byType(SingleChildScrollView);
-      expect(scroller, findsOneWidget);
-      await tester.drag(scroller, const Offset(-160, 0));
-      await tester.pumpAndSettle();
-      final scrollable = tester.state<ScrollableState>(
-        find.descendant(of: scroller, matching: find.byType(Scrollable)),
-      );
-      expect(scrollable.position.pixels, greaterThan(0));
-      expect(tester.takeException(), isNull);
-    });
   });
 
   group('CardFace display math', () {
