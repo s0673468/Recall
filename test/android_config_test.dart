@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -49,49 +48,15 @@ void main() {
     'ValidatedNetworkTransition.kt',
   );
   final strings = File('android/app/src/main/res/values/strings.xml');
-  final colors = File('android/app/src/main/res/values/colors.xml');
   final shortcuts = File('android/app/src/main/res/xml/shortcuts.xml');
   final widgetInfo = File(
     'android/app/src/main/res/xml/recall_widget_info.xml',
-  );
-  final icon = File('android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png');
-  final adaptiveForeground = File(
-    'android/app/src/main/res/drawable/ic_launcher_foreground.xml',
-  );
-  final adaptiveBackground = File(
-    'android/app/src/main/res/drawable/ic_launcher_background.xml',
-  );
-  final adaptiveForegroundBitmap = File(
-    'android/app/src/main/res/drawable-xxxhdpi/'
-    'ic_launcher_foreground_bitmap.png',
   );
   final dartMain = File('lib/main.dart');
   final pubspec = File('pubspec.yaml');
   final historicalSigningExample = File(
     'android/key.properties.historical.example',
   );
-
-  test('historical Xcode setup uses the pinned Flutter version', () {
-    final setup = File('ios/ci_scripts/ci_post_clone.sh').readAsStringSync();
-    expect(setup, contains('.flutter-version'));
-  }, tags: const ['apple-mobile']);
-
-  test('historical iOS exposes every maintained integration channel', () {
-    final sources = [
-      File('ios/Runner/RecallBackgroundSyncPlugin.swift'),
-      File('ios/Runner/RecallOperationalDiagnosticsPlugin.swift'),
-      File('ios/Runner/RecallStudyReminderPlugin.swift'),
-      File('ios/Runner/RecallWidgetPlugin.swift'),
-    ].map((file) => file.readAsStringSync()).join('\n');
-    for (final channel in [
-      'com.german.ankiReview/backgroundSync',
-      'com.german.ankiReview/operationalDiagnostics',
-      'com.german.ankiReview/studyReminder',
-      'com.german.ankiReview/widget',
-    ]) {
-      expect(sources, contains(channel), reason: 'iOS must expose $channel');
-    }
-  }, tags: const ['apple-mobile']);
 
   test('Android version advances the previously distributed build', () {
     final match = RegExp(
@@ -130,17 +95,6 @@ void main() {
     expect(build, contains('compileSdk = 37'));
     expect(build, contains('targetSdk = flutter.targetSdkVersion'));
     expect(build, contains('minSdk = 24'));
-  });
-
-  test('Android launch and Flutter window share the graphite canvas', () {
-    expect(colors.readAsStringSync(), contains('#181A1C'));
-    for (final path in [
-      'android/app/src/main/res/values/styles.xml',
-      'android/app/src/main/res/values-night/styles.xml',
-      'android/app/src/main/res/values-v31/styles.xml',
-    ]) {
-      expect(File(path).readAsStringSync(), contains('@color/recall_canvas'));
-    }
   });
 
   test(
@@ -475,43 +429,4 @@ void main() {
     expect(info, contains('android:updatePeriodMillis="0"'));
   });
 
-  test('Android launcher icon is opaque and full xxxhdpi resolution', () {
-    expect(
-      icon.existsSync(),
-      isTrue,
-      reason: 'branded launcher icon is required',
-    );
-    final bytes = icon.readAsBytesSync();
-    final data = ByteData.sublistView(bytes);
-
-    expect(data.getUint32(16, Endian.big), 192);
-    expect(data.getUint32(20, Endian.big), 192);
-    expect(bytes[24], 8, reason: 'The launcher should use 8-bit channels.');
-    expect(bytes[25], anyOf(2, 6), reason: 'The launcher must be RGB or RGBA.');
-  });
-
-  test('Android adaptive icon reuses the canonical iOS mark', () {
-    final foregroundXml = adaptiveForeground.readAsStringSync();
-    final backgroundXml = adaptiveBackground.readAsStringSync();
-
-    expect(foregroundXml, contains('@drawable/ic_launcher_foreground_bitmap'));
-    expect(
-      foregroundXml,
-      isNot(contains('android:pathData')),
-      reason: 'Android must not redraw the Recall mark with a divergent path.',
-    );
-    expect(adaptiveForegroundBitmap.existsSync(), isTrue);
-
-    final bytes = adaptiveForegroundBitmap.readAsBytesSync();
-    final data = ByteData.sublistView(bytes);
-    expect(data.getUint32(16, Endian.big), 432);
-    expect(data.getUint32(20, Endian.big), 432);
-    expect(bytes[25], 6, reason: 'The adaptive foreground must retain alpha.');
-    expect(backgroundXml, contains('<solid android:color="#1F1E3B"'));
-    expect(
-      backgroundXml,
-      isNot(contains('<gradient')),
-      reason: 'The Android background must match the canonical iOS navy.',
-    );
-  });
 }

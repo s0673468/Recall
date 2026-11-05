@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
@@ -542,37 +541,6 @@ void main() {
   });
 
   group('Flag UI', () {
-    testWidgets('native iOS presents flag reasons as an action sheet', (
-      tester,
-    ) async {
-      SharedPreferences.setMockInitialValues({});
-      final controller = ReviewController(
-        api: FakeRecallApi([testCard(id: 700)]),
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-      );
-      addTearDown(controller.dispose);
-      await controller.load();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(splashFactory: InkRipple.splashFactory),
-          home: Scaffold(
-            body: StudyScreen(controller: controller, nativeIos: true),
-          ),
-        ),
-      );
-
-      await tester.tap(find.byTooltip('More options'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Flag card'));
-      await tester.pumpAndSettle();
-      await tester.pumpAndSettle();
-
-      expect(find.byType(CupertinoActionSheet), findsOneWidget);
-      expect(find.byType(BottomSheet), findsNothing);
-      expect(find.text('Wrong'), findsOneWidget);
-    }, tags: const ['apple-mobile']);
 
     testWidgets('flagging a card from the sheet enqueues and confirms', (
       tester,

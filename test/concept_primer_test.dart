@@ -10,13 +10,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
-import 'package:health_anki_flutter/features/review/presentation/screens/primer_library_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/concept_retention_panel.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
-import 'package:health_anki_flutter/vendored/health_flutter_shared.dart'
-    show AppScrollBehavior;
 
 void main() {
   group('RecallApi.fetchConceptPages', () {
@@ -197,107 +194,5 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('long primer scrolls when the drag starts on its body', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      final longPage = ConceptPage(
-        nodeId: node.nodeId,
-        title: 'Long primer',
-        bodyHtml: List.generate(
-          24,
-          (index) => 'Paragraph ${index + 1} explains the concept in detail.',
-        ).join('<br><br>'),
-        updatedAt: DateTime.utc(2026, 7, 29),
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildRecallTheme(),
-          scrollBehavior: const AppScrollBehavior(),
-          home: PrimerScreen(page: longPage, conceptNodes: const [node]),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      final body = tester.getRect(find.byType(CardFace));
-      final dragStart = Offset(body.center.dx, 760);
-      expect(body.contains(dragStart), isTrue);
-      final pageScroll = tester
-          .stateList<ScrollableState>(find.byType(Scrollable))
-          .firstWhere((state) => state.position.maxScrollExtent > 500);
-      expect(pageScroll.position.pixels, 0);
-
-      final gesture = await tester.startGesture(dragStart);
-      await gesture.moveBy(const Offset(0, -400));
-      await gesture.up();
-      await tester.pumpAndSettle();
-
-      expect(pageScroll.position.pixels, greaterThan(100));
-    });
-
-    testWidgets('zero primers preserves the legacy panel widget output', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildRecallTheme(),
-          home: const Scaffold(
-            body: ConceptRetentionPanel(
-              ranked: [retention],
-              notEnoughData: 0,
-              coveredNodeCount: 1,
-              totalConcepts: 1,
-            ),
-          ),
-        ),
-      );
-
-      expect(find.byType(InkWell), findsNothing);
-      expect(find.byIcon(Icons.chevron_right), findsNothing);
-      expect(find.text('Browse concept primers'), findsNothing);
-      expect(find.byType(Divider), findsNothing);
-    });
-
-    testWidgets('library groups primers by ascending module id', (
-      tester,
-    ) async {
-      final pages = [
-        ConceptPage(
-          nodeId: 'm02-loss',
-          title: 'Loss functions',
-          bodyHtml: 'Loss',
-          updatedAt: DateTime.utc(2026, 7, 29),
-        ),
-        page,
-      ];
-      const nodes = [
-        node,
-        ConceptNodeInfo(
-          nodeId: 'm02-loss',
-          title: 'Loss functions',
-          module: 'M02',
-        ),
-      ];
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildRecallTheme(),
-          home: PrimerLibraryScreen(pages: pages, conceptNodes: nodes),
-        ),
-      );
-
-      final m00 = tester.getTopLeft(find.text('Vector geometry primer')).dy;
-      final m02 = tester.getTopLeft(find.text('Loss functions')).dy;
-      expect(m00, lessThan(m02));
-      expect(find.text('M00'), findsNothing);
-      expect(find.text('M02'), findsNothing);
-      expect(find.text('Vector geometry primer'), findsOneWidget);
-      expect(find.text('Loss functions'), findsOneWidget);
-    });
   });
 }

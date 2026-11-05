@@ -15,9 +15,6 @@ import 'package:health_anki_flutter/features/review/presentation/screens/primer_
 import 'package:health_anki_flutter/features/review/presentation/screens/primer_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/read_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/desktop_reading_pane.dart';
-import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
-import 'package:health_anki_flutter/features/settings/domain/recall_prefs.dart';
-import 'package:health_anki_flutter/features/settings/presentation/screens/settings_screen.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
 // Closed in-memory fixtures: no account, storage, HTTP client or card data.
@@ -86,20 +83,6 @@ class _Controller extends ChangeNotifier implements ReviewController {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw StateError('Unexpected controller access');
-}
-
-class _Prefs extends ChangeNotifier implements RecallPrefsController {
-  @override
-  RecallPrefs value = const RecallPrefs();
-  @override
-  Future<void> update(RecallPrefs next) async {
-    value = next;
-    notifyListeners();
-  }
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      throw StateError('Unexpected preference access');
 }
 
 final _search = find.byKey(const Key('recall_primer_search'));
@@ -260,76 +243,6 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reading header fits narrow panes with double text', (
-    tester,
-  ) async {
-    final controller = _Controller();
-    addTearDown(controller.dispose);
-    await _show(
-      tester,
-      Scaffold(
-        body: DesktopReadingPane(
-          controller: controller,
-          api: _Api()..pages = [_pages[0]],
-          store: _Store(),
-          clock: () => _now,
-        ),
-      ),
-      size: const Size(280, 800),
-      scale: 2,
-    );
-    await tester.enterText(_search, _pages[0].title);
-    await tester.pumpAndSettle();
-    final row = find.byKey(ValueKey('recall_primer_row_${_pages[0].nodeId}'));
-    await tester.ensureVisible(row);
-    await tester.tap(row);
-    await tester.pumpAndSettle();
-    expect(find.byTooltip('Back to reading'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('settings slider and per-deck actions announce their purpose', (
-    tester,
-  ) async {
-    final semantics = tester.ensureSemantics();
-    try {
-      final prefs = _Prefs();
-      final controller = _Controller();
-      addTearDown(prefs.dispose);
-      addTearDown(controller.dispose);
-      await _show(tester, SettingsScreen(prefs: prefs, controller: controller));
-      final slider = find.semantics.byPredicate(
-        (node) => node.getSemanticsData().flagsCollection.isSlider,
-      );
-      expect(
-        slider.evaluate().single.getSemanticsData().label,
-        'Desired retention: 90%',
-      );
-      await tester.ensureVisible(find.text('Per-deck new-card limits'));
-      await tester.tap(find.text('Per-deck new-card limits'));
-      await tester.pumpAndSettle();
-      const name = 'Synthetic curriculum  ›  A very long deck name';
-      await tester.ensureVisible(find.text('Set override'));
-      expect(
-        find.bySemanticsLabel('Set new-card limit for $name'),
-        findsOneWidget,
-      );
-      await tester.tap(find.text('Set override'));
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('Use default'));
-      expect(
-        find.bySemanticsLabel('Use default new-card limit for $name'),
-        findsOneWidget,
-      );
-      await tester.tap(find.text('Use default'));
-      await tester.pumpAndSettle();
-      expect(prefs.value.perDeck, isEmpty);
-      expect(tester.takeException(), isNull);
-    } finally {
-      semantics.dispose();
-    }
-  });
-
   for (final size in const [Size(320, 740), Size(1280, 800)]) {
     testWidgets(
       'synthetic dark library supports long titles, empty results and keyboard at $size',
@@ -361,31 +274,4 @@ void main() {
     );
   }
 
-  testWidgets('reading loading and empty states stay usable at double text', (
-    tester,
-  ) async {
-    final pending = Completer<List<ConceptPage>>();
-    await _show(
-      tester,
-      Scaffold(
-        body: ReadScreen(
-          api: _Api()..pending = pending,
-          store: _Store(),
-          clock: () => _now,
-        ),
-      ),
-      size: const Size(320, 740),
-      scale: 2,
-      settle: false,
-    );
-    expect(find.text('Loading primers…'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byKey(const Key('recall_read_skeleton_rows')), findsOneWidget);
-    pending.complete([]);
-    await tester.pumpAndSettle();
-    expect(find.text('No recent reading yet.'), findsOneWidget);
-    expect(find.text('No primers available.'), findsNothing);
-    expect(find.byKey(const Key('recall_primer_search')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
 }

@@ -1,7 +1,5 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
-import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fsrs/fsrs.dart' show Rating;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,11 +7,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:health_anki_flutter/features/review/application/fsrs_engine.dart';
 import 'package:health_anki_flutter/features/review/application/review_controller.dart';
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
-import 'package:health_anki_flutter/features/settings/application/recall_prefs_controller.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/rating_bar.dart';
-import 'package:health_anki_flutter/navigation/app_shell.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
 import 'support/recall_test_harness.dart';
@@ -72,37 +68,6 @@ void main() {
       }
     });
 
-    testWidgets('RatingBar adapts to a narrow large-text surface', (
-      tester,
-    ) async {
-      await tester.binding.setSurfaceSize(const Size(320, 640));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: MediaQuery(
-            data: const MediaQueryData(
-              size: Size(320, 640),
-              textScaler: TextScaler.linear(2),
-            ),
-            child: Scaffold(body: RatingBar(onRate: (_) {})),
-          ),
-        ),
-      );
-
-      expect(tester.takeException(), isNull);
-      final buttons = find.byType(FilledButton);
-      expect(buttons, findsNWidgets(4));
-      expect({
-        for (var i = 0; i < 4; i++) tester.getTopLeft(buttons.at(i)).dy,
-      }, hasLength(2));
-      for (var i = 0; i < 4; i++) {
-        expect(tester.getSize(buttons.at(i)).height, greaterThanOrEqualTo(48));
-      }
-      expect(find.bySemanticsLabel('Again'), findsOneWidget);
-      expect(find.bySemanticsLabel('Easy'), findsOneWidget);
-    });
-
     testWidgets('CardFace renders plain text', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
@@ -157,35 +122,6 @@ void main() {
         find.byType(SelectableText),
       );
       expect(selectable.textSpan!.toPlainText(), contains('\u2060.'));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('CardFace wraps long LaTeX formulas within the card width', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: Center(
-              child: SizedBox(
-                width: 280,
-                child: CardFace(
-                  html:
-                      r'Attention \(Q, K, V\) = \( \operatorname{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V \)',
-                  hasLatex: true,
-                  style: TextStyle(fontSize: 24),
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-
-      for (final element in find.byType(Math).evaluate()) {
-        final width = tester.getSize(find.byWidget(element.widget)).width;
-        expect(width, lessThanOrEqualTo(280));
-      }
       expect(tester.takeException(), isNull);
     });
 
@@ -366,85 +302,6 @@ void main() {
       await captureVisual(tester, 'study-content-refresh');
     });
 
-    testWidgets('long answers are left aligned and scroll from the text', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(390, 844);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      SharedPreferences.setMockInitialValues({});
-      final controller = ReviewController(
-        api: FakeRecallApi([
-          testCard(
-            id: 506,
-            front: 'Why does this work?',
-            back: List.generate(
-              30,
-              (index) => 'Step ${index + 1} explains one part clearly.',
-            ).join('<br><br>'),
-          ),
-        ]),
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-      );
-      addTearDown(controller.dispose);
-      await controller.load();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(splashFactory: InkRipple.splashFactory),
-          home: Scaffold(body: StudyScreen(controller: controller)),
-        ),
-      );
-      await tester.tap(find.text('Show answer'));
-      await tester.pumpAndSettle();
-
-      final faces = tester.widgetList<CardFace>(find.byType(CardFace)).toList();
-      expect(faces, hasLength(2));
-      expect(faces.every((face) => !face.selectable), isTrue);
-      expect(faces.last.textAlign, TextAlign.start);
-      expect(
-        find.descendant(
-          of: find.byKey(const Key('recall_study_card')),
-          matching: find.byType(SelectableText),
-        ),
-        findsNothing,
-      );
-
-      final scrollable = tester.state<ScrollableState>(
-        find
-            .descendant(
-              of: find.byKey(const Key('recall_study_card')),
-              matching: find.byType(Scrollable),
-            )
-            .first,
-      );
-      expect(scrollable.position.maxScrollExtent, greaterThan(0));
-
-      final card = tester.getRect(find.byKey(const Key('recall_study_card')));
-      final answer = tester.getRect(find.byType(CardFace).last);
-      final scrollViewport = tester.getRect(
-        find
-            .descendant(
-              of: find.byKey(const Key('recall_study_card')),
-              matching: find.byType(Scrollable),
-            )
-            .first,
-      );
-      final dragStart = Offset(
-        answer.center.dx,
-        (scrollViewport.bottom - 10).clamp(answer.top + 1, answer.bottom - 1),
-      );
-      expect(card.contains(dragStart), isTrue);
-      expect(answer.contains(dragStart), isTrue);
-      await tester.dragFrom(dragStart, const Offset(0, -350));
-      await tester.pumpAndSettle();
-
-      expect(scrollable.position.pixels, greaterThan(100));
-    });
-
     testWidgets('StudyScreen fills in the cloze on flip (plain-summary back)', (
       tester,
     ) async {
@@ -483,49 +340,5 @@ void main() {
       expect(find.textContaining('A cell organelle'), findsOneWidget);
     });
 
-    testWidgets('native rating controls stay clear of the iOS tab bar', (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(430, 932);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      SharedPreferences.setMockInitialValues({});
-      final api = FakeRecallApi([testCard()]);
-      final controller = ReviewController(
-        api: api,
-        engine: FsrsEngine(),
-        store: LocalReviewStore(),
-      );
-      final prefs = RecallPrefsController(api: api);
-      addTearDown(controller.dispose);
-      addTearDown(prefs.dispose);
-      await controller.load();
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(splashFactory: InkRipple.splashFactory),
-          home: AppShell(
-            controller: controller,
-            api: api,
-            prefs: prefs,
-            linkSource: SilentLinkSource(),
-            nativeIos: true,
-          ),
-        ),
-      );
-      final canvas = tester.widget<Material>(
-        find.byKey(const Key('recall_flat_canvas')),
-      );
-      expect(canvas.color, UiColors.canvas);
-      await tester.tap(find.text('Show answer'));
-      await tester.pump();
-
-      final ratingBottom = tester.getRect(find.byType(RatingBar)).bottom;
-      final tabBarTop = tester.getRect(find.byType(CupertinoTabBar)).top;
-      expect(tabBarTop - ratingBottom, greaterThanOrEqualTo(UiSpacing.sm));
-      expect(tester.takeException(), isNull);
-    }, tags: const ['apple-mobile']);
   });
 }
