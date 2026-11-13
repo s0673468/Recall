@@ -23,6 +23,40 @@ replace older material markers with `content_revalidate::<revision_at>`;
 wording-only edits leave any unresolved older marker untouched. New cards do
 not need a marker because Recall already schedules them as unseen.
 
+To move an existing card to another concept, the single card of an `edit`
+record may include `tags_remove`:
+
+```json
+{
+  "nid": 7,
+  "action": "edit",
+  "revision_kind": "wording",
+  "cards": [{
+    "front": "Existing front",
+    "back": "Existing back",
+    "tags_remove": ["node::old-concept"],
+    "tags_add": ["node::new-concept"]
+  }]
+}
+```
+
+`tags_remove` must be a list of whitespace-free `node::` tags; other tags
+cannot be removed. A non-empty removal list requires exactly one `node::` tag
+in the same card's `tags_add`, different from every removed tag. Additional
+non-concept tags may still be added. The field is forbidden on `keep`, `add`,
+`split` (including its retained card), and `delete`, or at record level.
+An empty list does nothing. Unchanged front and back are valid for a move
+with `revision_kind: "wording"`.
+
+Both dry run and apply reject the entire job if any removed tag is missing
+from its current note. Apply removes those tags before merging additions,
+the pass tag, and any material-change marker. Unrelated tags retain their
+order; existing card scheduling and review history are preserved. Both
+receipts include a `tag_changes` list for moves, with `nid`, `tags_add`, and
+`tags_remove` together. Jobs without removals retain the existing receipt
+format. `verify_compiled.py` checks that removed tags are absent and moved
+notes have exactly one `node::` tag, even without `--require-concept-tags`.
+
 Dry run first:
 
 ```bash

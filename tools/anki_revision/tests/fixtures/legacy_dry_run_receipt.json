@@ -1,0 +1,20 @@
+{
+  "changeset_digest": "dfc090162d2419f4f6c76337d5bf706e79122f224fd2c7c09013fa0aab91f0cc",
+  "collection_digest_before": "6e2baedd8cea57adde75bf17643fb6faedf6a494d1be3dc3a278e1462a4d2297",
+  "counts": {
+    "add": 0,
+    "delete": 0,
+    "edit": 1,
+    "keep": 0,
+    "new_notes": 0,
+    "split": 0
+  },
+  "created_at": "2026-11-13T12:00:00+00:00",
+  "expected_note_count_after": 1,
+  "handoff_evidence": null,
+  "kind": "dry_run",
+  "note_count_before": 1,
+  "revision_at": null,
+  "schema": "anki-revision-receipt/v1",
+  "tag": "pass::test"
+}
