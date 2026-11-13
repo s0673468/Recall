@@ -108,6 +108,17 @@ begin
     raise exception 'VERIFY FAILED: %', v_missing;
   end if;
 
+  if not exists (
+    select 1
+      from pg_catalog.pg_attribute a
+     where a.attrelid = 'public.notes'::regclass
+       and a.attname = 'guid'
+       and not a.attisdropped
+       and a.attcollation = 'pg_catalog."C"'::regcollation
+  ) then
+    raise exception 'VERIFY FAILED: public.notes.guid must use C collation (apply 011)';
+  end if;
+
   foreach v_table in array array[
     'decks', 'notes', 'cards', 'review_log', 'user_settings', 'note_flags',
     'concept_nodes', 'concept_pages'
