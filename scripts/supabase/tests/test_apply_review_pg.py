@@ -299,5 +299,59 @@ class ApplyReviewPostgresTests(unittest.TestCase):
         self.assertIn("apply 009", str(raised.exception))
 
 
+    def test_011_mixed_case_guids_page_in_bytewise_order(self):
+        expected = ['A-first', 'W3HUq4ElGI', 'a-lower', 'mOSU9FNgyu', 'z-last']
+        for index, guid in enumerate(expected, start=101):
+            self.scalar(
+                "insert into public.notes (id,user_id,guid,deck_id,mid,front,back,tags) "
+                f"values ({index},'{OWNER}','{guid}',1,1,'invented','invented','node::test')")
+        actual = []
+        after = None
+        while True:
+            cursor = f"and guid > '{after}'" if after is not None else ''
+            page = self.owner(
+                f"select guid from public.notes where id >= 101 {cursor} order by guid limit 2")
+            if not page:
+                break
+            rows = page.splitlines()
+            actual.extend(rows)
+            after = rows[-1]
+            self.assertLessEqual(len(actual), len(expected), 'paging must terminate')
+        self.assertEqual(actual, expected)
+        # Exact GUID lookup and the per-owner uniqueness constraint survive.
+        self.assertEqual(self.owner(
+            "select count(*) from public.notes where guid = 'W3HUq4ElGI'"), '1')
+        with self.assertRaisesRegex(SqlError, '23505'):
+            self.scalar(
+                "insert into public.notes (id,user_id,guid,deck_id,mid,front,back) "
+                f"values (201,'{OWNER}','W3HUq4ElGI',1,1,'invented','invented')")
+        self.scalar(
+            "insert into public.notes (id,user_id,guid,deck_id,mid,front,back) "
+            f"values (202,'{OTHER}','W3HUq4ElGI',1,1,'invented','invented')")
+
+    def test_011_rollback_drift_and_idempotent_reapply_preserve_notes_and_indexes(self):
+        rows_sql = "select row_to_json(n)::text from public.notes n order by id"
+        indexes_sql = ("select indexname, indexdef from pg_indexes "
+                       "where schemaname = 'public' and tablename = 'notes' order by indexname")
+        before_rows = self.scalar(rows_sql)
+        before_indexes = self.scalar(indexes_sql)
+        rollback = SUPABASE / 'rollback' / '011_restore_notes_guid_default_collation.sql'
+        migration = SUPABASE / 'migrations' / '011_notes_guid_c_collation.sql'
+        verifier = SUPABASE / 'verify' / 'verify_schema.sql'
+        self.psql(self.db, file=rollback)
+        self.assertEqual(self.scalar(
+            "select attcollation = 'pg_catalog.\"default\"'::regcollation "
+            "from pg_attribute where attrelid = 'public.notes'::regclass and attname = 'guid'"), 't')
+        with self.assertRaisesRegex(SqlError, r'notes.guid must use C collation \(apply 011\)'):
+            self.psql(self.db, file=verifier)
+        self.assertEqual(self.scalar(rows_sql), before_rows)
+        self.assertEqual(self.scalar(indexes_sql), before_indexes)
+        for _ in range(2):
+            self.psql(self.db, file=migration)
+            self.assertIn('VERIFY OK: Recall schema contract', self.psql(self.db, file=verifier))
+            self.assertEqual(self.scalar(rows_sql), before_rows)
+            self.assertEqual(self.scalar(indexes_sql), before_indexes)
+
+
 if __name__ == "__main__":
     unittest.main()

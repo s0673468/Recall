@@ -15,6 +15,7 @@ void main() {
     'scripts/supabase/migrations/008_apply_review_missing_card.sql',
     'scripts/supabase/migrations/009_concept_pages_extra_figures.sql',
     'scripts/supabase/migrations/010_note_flags_like_reason.sql',
+    'scripts/supabase/migrations/011_notes_guid_c_collation.sql',
   ];
 
   const tableContracts = <String>{
@@ -235,6 +236,7 @@ void main() {
       'scripts/supabase/rollback/006_drop_apply_review_rpc.sql',
       'scripts/supabase/rollback/005_drop_event_unique_indexes.sql',
       'scripts/supabase/rollback/007_restore_flag_reasons.sql',
+      'scripts/supabase/rollback/011_restore_notes_guid_default_collation.sql',
     ];
     for (final path in paths) {
       expect(File(path).existsSync(), isTrue, reason: '$path must exist');

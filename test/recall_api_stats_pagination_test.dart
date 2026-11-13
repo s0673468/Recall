@@ -127,6 +127,79 @@ void main() {
       expect(pages, {'review_log': 4, 'notes': 4, 'cards': 4});
     },
   );
+
+  test(
+    'note tags follow server collation across mixed-case page boundaries',
+    () async {
+      final pages = <List<Map<String, dynamic>>>[
+        [
+          for (var i = 0; i < 499; i++)
+            {'guid': 'a$i', 'tags': 'node::first-$i'},
+          {'guid': 'mOSU9FNgyu', 'tags': 'node::first-end'},
+        ],
+        [
+          for (var i = 0; i < 499; i++)
+            {'guid': 'n$i', 'tags': 'node::second-$i'},
+          {'guid': 'W3HUq4ElGI', 'tags': 'node::second-end'},
+        ],
+        [
+          {'guid': 'z-last', 'tags': 'node::short-page'},
+        ],
+        [],
+      ];
+      final queries = <Uri>[];
+      final client = _noteTagClient(pages, queries);
+      addTearDown(client.dispose);
+
+      final tags = await RecallApi(client).fetchNoteTags();
+
+      expect(tags, {
+        for (final page in pages)
+          for (final row in page) row['guid'] as String: row['tags'] as String,
+      });
+      expect(tags, hasLength(1001));
+      expect(queries.map((uri) => uri.queryParameters['guid']), [
+        null,
+        'gt.mOSU9FNgyu',
+        'gt.W3HUq4ElGI',
+        'gt.z-last',
+      ]);
+      for (final uri in queries) {
+        expect(uri.queryParameters['order'], 'guid.asc.nullslast');
+        expect(uri.queryParameters['limit'], '500');
+      }
+    },
+  );
+
+  test(
+    'note tags reject a repeated last GUID instead of paging forever',
+    () async {
+      final queries = <Uri>[];
+      final client = _noteTagClient([
+        [
+          {'guid': 'mOSU9FNgyu', 'tags': 'node::first'},
+        ],
+        [
+          {'guid': 'mOSU9FNgyu', 'tags': 'node::repeated'},
+        ],
+        [],
+      ], queries);
+      addTearDown(client.dispose);
+
+      await expectLater(
+        RecallApi(client).fetchNoteTags(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'Note-tag pagination did not advance',
+          ),
+        ),
+      );
+      expect(queries, hasLength(2));
+      expect(queries.last.queryParameters['guid'], 'gt.mOSU9FNgyu');
+    },
+  );
 }
 
 Map<String, dynamic> _reviewRow(int id) {
@@ -151,3 +224,22 @@ Map<String, dynamic> _dueRow(int id) => {
   'id': id,
   'due': DateTime.utc(2026, 9, 1).add(Duration(minutes: id)).toIso8601String(),
 };
+
+SupabaseClient _noteTagClient(
+  List<List<Map<String, dynamic>>> pages,
+  List<Uri> queries,
+) => SupabaseClient(
+  'https://example.supabase.co',
+  'anon-key',
+  httpClient: MockClient((request) async {
+    queries.add(request.url);
+    final index = queries.length - 1;
+    return http.Response(
+      jsonEncode(index < pages.length ? pages[index] : []),
+      200,
+      request: request,
+      headers: {'content-type': 'application/json'},
+    );
+  }),
+  authOptions: const AuthClientOptions(autoRefreshToken: false),
+);

@@ -1223,7 +1223,9 @@ class RecallApi implements ReviewReplayGateway {
       if (page.isEmpty) break;
       rows.addAll(page);
       final nextGuid = page.last['guid'] as String;
-      if (afterGuid != null && nextGuid.compareTo(afterGuid) <= 0) {
+      // The server orders and filters with its own collation, which may differ
+      // from Dart string order. Only an unchanged cursor proves no progress.
+      if (nextGuid == afterGuid) {
         throw StateError('Note-tag pagination did not advance');
       }
       afterGuid = nextGuid;

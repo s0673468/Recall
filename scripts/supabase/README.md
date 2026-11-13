@@ -16,7 +16,7 @@ same owner default as the deployed single-user project and importer.
 | Object | Required contract | Writer |
 | --- | --- | --- |
 | `decks` | Anki deck id, name, soft deletion, per-user uniqueness | Anki importer |
-| `notes` | content, tags, LaTeX metadata, deck link, soft deletion | Anki importer |
+| `notes` | content, tags, LaTeX metadata, deck link, soft deletion; `guid` uses `C` collation for bytewise keyset pagination | Anki importer |
 | `cards` | note link, FSRS state, `cloud_seen`, `deleted`, `suspended` | importer for identity/content state; Recall for scheduling |
 | `review_log` | review result and timing, `client_event_id` ledger | `apply_review`; Recall undo may delete its one exact row |
 | `user_settings` | JSON `fsrs_params` and `recall_prefs`, unique per user/key | importer seed and Recall |
@@ -45,14 +45,17 @@ Apply each file as one transaction, in this order:
 9. [`migrations/008_apply_review_missing_card.sql`](migrations/008_apply_review_missing_card.sql)
 10. [`migrations/009_concept_pages_extra_figures.sql`](migrations/009_concept_pages_extra_figures.sql)
 11. [`migrations/010_note_flags_like_reason.sql`](migrations/010_note_flags_like_reason.sql)
+12. [`migrations/011_notes_guid_c_collation.sql`](migrations/011_notes_guid_c_collation.sql)
 
 All migrations are idempotent. Re-running them preserves rows. `000` uses
 `CREATE TABLE IF NOT EXISTS`; it intentionally does not guess how to repair a
-wrongly shaped existing table. The verification step reports drift instead.
+wrongly shaped existing table. Later migrations extend that historical base;
+`011` sets `notes.guid` collation without changing `000`. The verification step
+reports drift instead.
 
 ### Fresh project
 
-Create the isolated Recall Supabase project and configure Auth. Apply all ten
+Create the isolated Recall Supabase project and configure Auth. Apply all twelve
 migrations before running the importer or releasing a client. Then create the
 private runtime environment with only `SUPABASE_URL`,
 `SUPABASE_SERVICE_KEY`, and `SUPABASE_USER_ID`; do not commit it.
@@ -64,6 +67,8 @@ authenticated review and flag inserts rely on the table default while RLS still
 requires that owner to equal `auth.uid()`.
 
 ### Existing production project
+
+Migration `011` was applied to production on 2026-11-13.
 
 Repository changes do not authorize a production schema change. Applying any
 migration is a separate high-risk operation that requires German’s explicit
@@ -120,13 +125,22 @@ It creates a throwaway cluster on a private Unix socket with a minimal
 stand-in for Supabase's `auth` schema and roles, applies all ordered migrations, checks
 `apply_review` behaviour (including a card hard-deleted while its review was
 queued, and the pre-008 failure), checks that `009` backfills existing primers
-with `[]`, enforces the array/at-most-3 shape and leaves clients read-only, and
+with `[]`, enforces the array/at-most-3 shape and leaves clients read-only, checks
+`011` mixed-case GUID paging, idempotency, rollback and collation drift, and
 deletes the cluster. Without PostgreSQL
 binaries it skips unless `RECALL_REQUIRE_PG=1`. It never contacts Supabase.
 
 ## Rollback policy
 
 The safe rollback is intentionally asymmetric:
+
+- Roll back `011` with
+  [`rollback/011_restore_notes_guid_default_collation.sql`](rollback/011_restore_notes_guid_default_collation.sql).
+  It restores the database default collation and preserves note values and
+  uniqueness. Ordering returns to the database locale, so older clients can
+  fail the note-tag progress check again; deploy the collation-independent
+  client check first. The schema verifier intentionally fails until `011` is
+  re-applied.
 
 - Roll back `010` with [`rollback/010_restore_flag_reasons.sql`](rollback/010_restore_flag_reasons.sql).
   It refuses while any like rows exist, including closed rows, preserving history.
@@ -167,6 +181,7 @@ or column removal is destructive data work and outside these scripts.
 | `006_apply_review_rpc.sql` | Health `supabase_migrate_recall_review_rpc.sql` |
 | `008_apply_review_missing_card.sql` | Recall-native: `006` with the card read before the log insert |
 | `009_concept_pages_extra_figures.sql` | Recall-native: the 2026-10-21 multi-figure contract shared with METIS and primer publishing |
+| `011_notes_guid_c_collation.sql` | recorded production collation fix, 2026-11-13 |
 | `verify_apply_review.sql` and RPC rollback | matching Health verification/rollback SQL |
 
 The canonical copies remove machine/project identifiers, add explicit grants,

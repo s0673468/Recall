@@ -22,6 +22,8 @@ class LikePreferencesPostgresTests(unittest.TestCase):
         return self.runner.psql(self.db, value, as_user=pg.OWNER)
 
     def test_likes_leave_counts_unchanged_and_dislikes_still_hide(self):
+        # The shared fixture has NULL due dates; make this card count as due.
+        self.sql("update public.cards set due = '2000-01-01T00:00:00Z' where id = 1")
         before = self.sql('select * from public.deck_counts()')
         self.sql("insert into public.note_flags (card_id,guid,reason,flagged_at,client_event_id) "
                  "values (1,'synthetic','like',now(),'synthetic-like')")
