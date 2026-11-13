@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../core/platform/recall_platform.dart';
+import '../../review/domain/study_day.dart';
 
 class StudyReminderSettings {
   final bool enabled;
@@ -229,9 +230,9 @@ class StudyReminderController extends ChangeNotifier {
   });
 
   /// Reconciles the account's preference with the privacy-safe study signals.
-  /// Unknown due count or review activity is treated as ineligible, so stale
-  /// or partial data can suppress a notification but can never create a false
-  /// nudge.
+  /// Unknown due count or review activity is treated as ineligible. A positive
+  /// workload allows native daily, count-free nudges until a new reconciliation
+  /// says otherwise. Studying suppresses today without removing tomorrow.
   Future<void> reconcile({
     required int? dueCount,
     required DateTime? lastReviewedAt,
@@ -305,7 +306,7 @@ class StudyReminderController extends ChangeNotifier {
     final studiedToday =
         _reviewActivityKnown &&
         _lastReviewedAt != null &&
-        _sameLocalDay(_lastReviewedAt!, now);
+        StudyDay.contains(_lastReviewedAt!, now);
     final signature = [
       next.enabled,
       next.hour,
@@ -328,13 +329,14 @@ class StudyReminderController extends ChangeNotifier {
         } else {
           await platform.cancel();
         }
-      } else if (dueCount == null ||
-          dueCount <= 0 ||
-          !_reviewActivityKnown ||
-          studiedToday) {
+      } else if (dueCount == null || dueCount <= 0 || !_reviewActivityKnown) {
         await platform.cancel();
       } else {
-        await platform.apply(next, dueCount: dueCount, studiedToday: false);
+        await platform.apply(
+          next,
+          dueCount: dueCount,
+          studiedToday: studiedToday,
+        );
       }
       _lastAppliedSignature = signature;
     } catch (_) {
@@ -348,7 +350,7 @@ class StudyReminderController extends ChangeNotifier {
     // Native apply or preference persistence can finish after disposal.
     if (_disposed || _ownerId == null) return;
     final now = clock().toLocal();
-    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    final tomorrow = StudyDay.end(now);
     final delay = tomorrow.difference(now) + const Duration(milliseconds: 1);
     _dayBoundaryTimer = Timer(delay, () {
       _dayBoundaryTimer = null;
@@ -366,12 +368,6 @@ class StudyReminderController extends ChangeNotifier {
     final run = _operationTail.then((_) => operation());
     _operationTail = run.then<void>((_) {}, onError: (_) {});
     return run;
-  }
-
-  static bool _sameLocalDay(DateTime first, DateTime second) {
-    final a = first.toLocal();
-    final b = second.toLocal();
-    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
   @override

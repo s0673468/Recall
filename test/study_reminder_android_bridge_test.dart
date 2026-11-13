@@ -196,7 +196,7 @@ void main() {
   testWidgets(
     'midnight reevaluates yesterday study without a foreground event',
     (tester) async {
-      var now = DateTime(2026, 12, 31, 23, 59, 59);
+      var now = DateTime.utc(2027, 1, 1, 2, 59, 59);
       final controller = StudyReminderController(
         platform: platform,
         clock: () => now,
@@ -208,10 +208,11 @@ void main() {
           lastReviewedAt: now,
           reviewActivityKnown: true,
         );
-        expect(calls.last.method, 'cancel');
+        expect(calls.last.method, 'apply');
+        expect((calls.last.arguments as Map)['studiedToday'], isTrue);
         calls.clear();
 
-        now = DateTime(2027, 1, 1);
+        now = DateTime.utc(2027, 1, 1, 3);
         await tester.pump(const Duration(seconds: 1, milliseconds: 1));
         await tester.pump();
 
@@ -225,7 +226,7 @@ void main() {
         });
         // Signing out must cancel the timer rearmed for the following midnight.
         await controller.releaseOwner();
-        now = DateTime(2027, 1, 2);
+        now = DateTime.utc(2027, 1, 2, 3);
         await tester.pump(const Duration(days: 1));
         expect(calls.map((call) => call.method), ['apply', 'cancel']);
       } finally {

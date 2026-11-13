@@ -11,15 +11,36 @@ import android.os.Build
 
 class RecallReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val readiness = RecallReminderNotifications.readiness(context)
-        if (RecallReminderDeliveryEligibility.shouldReschedule(readiness)) {
-            // AlarmManager alarms are one-shot. Keep the durable eligibility
-            // and arm the next daily slot so a later permission/settings change
-            // can recover without requiring an app launch or device reboot.
-            RecallReminderScheduler.restore(context)
-            return
+        onReceiveAt(context, System.currentTimeMillis())
+    }
+
+    internal fun onReceiveAt(context: Context, nowMillis: Long) {
+        deliver(context, nowMillis, RecallReminderNotifications.readiness(context)) {
+            postNotification(context)
         }
-        if (!RecallReminderScheduler.consume(context)) return
+    }
+
+    internal fun deliver(
+        context: Context,
+        nowMillis: Long,
+        readiness: RecallNotificationReadiness,
+        post: () -> Unit,
+    ) {
+        val deliver = RecallReminderDeliveryEligibility.canAttemptDelivery(readiness) &&
+            RecallReminderScheduler.consume(context, nowMillis)
+        // Every one-shot attempt arms the next slot, including ignored nudges
+        // and blocked permission/channel settings. No Flutter engine is needed.
+        RecallReminderScheduler.restore(context, nowMillis)
+        if (!deliver) return
+        try {
+            post()
+        } catch (_: SecurityException) {
+            // Permission can be revoked between the readiness check and notify.
+            // Tomorrow is already armed; never crash or retry twice today.
+        }
+    }
+
+    private fun postNotification(context: Context) {
         val manager = RecallReminderNotifications.ensureChannel(context)
         val openStudy = Intent(Intent.ACTION_VIEW, Uri.parse(RecallContracts.studyUri), context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)

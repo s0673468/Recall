@@ -243,7 +243,7 @@ void main() {
   });
 
   test(
-    'studied today suppresses the reminder even when work remains',
+    'studied today passes suppression while preserving future work',
     () async {
       final platform = _FakeStudyReminderPlatform();
       final controller = StudyReminderController(platform: platform);
@@ -258,10 +258,65 @@ void main() {
         reviewActivityKnown: true,
       );
 
-      expect(platform.cancellations, cancellationsBeforeToday + 1);
-      expect(platform.appliedContexts, isEmpty);
+      expect(platform.cancellations, cancellationsBeforeToday);
+      expect(platform.applied.last.enabled, isTrue);
+      expect(platform.appliedContexts.last, (dueCount: 4, studiedToday: true));
     },
   );
+
+  test('unknown due work cancels a previously active reminder', () async {
+    final platform = _FakeStudyReminderPlatform();
+    final controller = StudyReminderController(platform: platform);
+    addTearDown(controller.dispose);
+    await controller.initialize(ownerId: 'user-1');
+    await controller.reconcile(
+      dueCount: 3,
+      lastReviewedAt: null,
+      reviewActivityKnown: true,
+    );
+    await controller.setEnabled(true);
+    final cancellations = platform.cancellations;
+
+    await controller.reconcile(
+      dueCount: null,
+      lastReviewedAt: null,
+      reviewActivityKnown: true,
+    );
+    expect(platform.cancellations, cancellations + 1);
+  });
+
+  test('disabling forwards cancellation despite remaining work', () async {
+    final platform = _FakeStudyReminderPlatform();
+    final controller = StudyReminderController(platform: platform);
+    addTearDown(controller.dispose);
+    await controller.initialize(ownerId: 'user-1');
+    await controller.reconcile(
+      dueCount: 3,
+      lastReviewedAt: null,
+      reviewActivityKnown: true,
+    );
+    await controller.setEnabled(true);
+    await controller.setEnabled(false);
+    expect(platform.applied.last.enabled, isFalse);
+    expect(controller.value.enabled, isFalse);
+  });
+
+  test('study suppression follows BRT rather than the device date', () async {
+    final platform = _FakeStudyReminderPlatform();
+    final controller = StudyReminderController(
+      platform: platform,
+      clock: () => DateTime.utc(2026, 10, 24, 2),
+    );
+    addTearDown(controller.dispose);
+    await controller.initialize(ownerId: 'user-1');
+    await controller.setEnabled(true);
+    await controller.reconcile(
+      dueCount: 3,
+      lastReviewedAt: DateTime.utc(2026, 10, 23, 22),
+      reviewActivityKnown: true,
+    );
+    expect(platform.appliedContexts.last.studiedToday, isTrue);
+  });
 
   test(
     'due work with no review today schedules the one reminder slot',

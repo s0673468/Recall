@@ -99,23 +99,23 @@ class RecallContractsTest {
     }
 
     @Test
-    fun reminderDeliveryFailsClosedUnlessEligibilityClearIsDurable() {
+    fun reminderDeliveryFailsClosedUnlessDailyRecordIsDurable() {
         assertTrue(
             RecallReminderDeliveryEligibility.canDeliver(
                 wasActive = true,
-                clearCommitted = true,
+                recordCommitted = true,
             ),
         )
         assertFalse(
             RecallReminderDeliveryEligibility.canDeliver(
                 wasActive = true,
-                clearCommitted = false,
+                recordCommitted = false,
             ),
         )
         assertFalse(
             RecallReminderDeliveryEligibility.canDeliver(
                 wasActive = false,
-                clearCommitted = true,
+                recordCommitted = true,
             ),
         )
         assertTrue(
@@ -130,21 +130,6 @@ class RecallContractsTest {
         )
         assertFalse(
             RecallReminderDeliveryEligibility.canAttemptDelivery(
-                RecallNotificationReadiness.BLOCKED,
-            ),
-        )
-        assertFalse(
-            RecallReminderDeliveryEligibility.shouldReschedule(
-                RecallNotificationReadiness.READY,
-            ),
-        )
-        assertTrue(
-            RecallReminderDeliveryEligibility.shouldReschedule(
-                RecallNotificationReadiness.NEEDS_RUNTIME_PERMISSION,
-            ),
-        )
-        assertTrue(
-            RecallReminderDeliveryEligibility.shouldReschedule(
                 RecallNotificationReadiness.BLOCKED,
             ),
         )

@@ -32,6 +32,7 @@ class RecallReminderReconciliationTest {
         originalZone = TimeZone.getDefault()
         TimeZone.setDefault(brt)
         context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("recall_reminder", Context.MODE_PRIVATE).edit().clear().commit()
         manager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         nowMillis = at(18, 0)
         ShadowAlarmManager.setCanScheduleExactAlarms(false)
@@ -70,8 +71,8 @@ class RecallReminderReconciliationTest {
     @Test
     fun consumedEligibilityDoesNotResurrectAnOverdueSlot() {
         apply(settings)
-        assertEquals(true, RecallReminderScheduler.consume(context))
-        assertFalse(RecallReminderScheduler.consume(context))
+        assertEquals(true, RecallReminderScheduler.consume(context, at(19, 0)))
+        assertFalse(RecallReminderScheduler.consume(context, at(19, 0)))
         nowMillis = at(19, 10)
         apply(settings)
 
@@ -126,7 +127,7 @@ class RecallReminderReconciliationTest {
             RecallReminderScheduler.restore(context, nowMillis)
 
             assertEquals(0, shadowOf(manager).scheduledAlarms.size)
-            assertFalse(RecallReminderScheduler.consume(context))
+            assertFalse(RecallReminderScheduler.consume(context, at(19, 0)))
         }
     }
 
