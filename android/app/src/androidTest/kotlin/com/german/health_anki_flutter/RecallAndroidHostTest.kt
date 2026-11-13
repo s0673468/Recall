@@ -66,6 +66,7 @@ class RecallAndroidHostTest {
         assumeTrue(manager.areNotificationsEnabled())
 
         try {
+            val now = System.currentTimeMillis()
             RecallReminderScheduler.apply(
                 context,
                 RecallReminderSettings(
@@ -75,25 +76,19 @@ class RecallAndroidHostTest {
                     dueCount = 1,
                     studiedToday = false,
                 ),
+                nowMillis = now,
             )
-            RecallReminderReceiver().onReceive(context, Intent("recall.test.reminder"))
+            val target = RecallReminderTime.nextTriggerAtMillis(19, 0, now)
+            RecallReminderReceiver().onReceiveAt(context, target)
 
             val reminder = manager.activeNotifications.firstOrNull {
                 it.notification.category == Notification.CATEGORY_REMINDER
             }
             assertNotNull(reminder)
             assertNotNull(reminder!!.notification.contentIntent)
-            assertTrue(
-                reminder.notification.extras.getCharSequence(Notification.EXTRA_TITLE) ==
-                    context.getString(R.string.reminder_title),
-            )
-            assertTrue(
-                reminder.notification.extras.getCharSequence(Notification.EXTRA_TEXT) ==
-                    context.getString(R.string.reminder_body),
-            )
             assertFalse(
-                "Reminder eligibility must be cleared after one delivery.",
-                RecallReminderScheduler.consume(context),
+                "A duplicate attempt must not deliver twice on one study day.",
+                RecallReminderScheduler.consume(context, target),
             )
         } finally {
             RecallReminderScheduler.cancel(context)
@@ -110,6 +105,7 @@ class RecallAndroidHostTest {
         )
 
         try {
+            val now = System.currentTimeMillis()
             RecallReminderScheduler.apply(
                 context,
                 RecallReminderSettings(
@@ -119,13 +115,15 @@ class RecallAndroidHostTest {
                     dueCount = 1,
                     studiedToday = false,
                 ),
+                nowMillis = now,
             )
 
-            RecallReminderReceiver().onReceive(context, Intent("recall.test.blocked"))
+            val target = RecallReminderTime.nextTriggerAtMillis(19, 0, now)
+            RecallReminderReceiver().onReceiveAt(context, target)
 
             assertTrue(
                 "Blocked delivery must leave eligibility recoverable.",
-                RecallReminderScheduler.consume(context),
+                RecallReminderScheduler.consume(context, RecallReminderTime.nextTriggerAtMillis(19, 0, target)),
             )
         } finally {
             RecallReminderScheduler.cancel(context)

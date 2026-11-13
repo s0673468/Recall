@@ -9,11 +9,8 @@ internal object RecallReminderDeliveryEligibility {
     fun canAttemptDelivery(readiness: RecallNotificationReadiness): Boolean =
         readiness == RecallNotificationReadiness.READY
 
-    fun shouldReschedule(readiness: RecallNotificationReadiness): Boolean =
-        !canAttemptDelivery(readiness)
-
-    fun canDeliver(wasActive: Boolean, clearCommitted: Boolean): Boolean =
-        wasActive && clearCommitted
+    fun canDeliver(wasActive: Boolean, recordCommitted: Boolean): Boolean =
+        wasActive && recordCommitted
 }
 
 object RecallReminderScheduler {
@@ -22,6 +19,7 @@ object RecallReminderScheduler {
     private const val hourKey = "hour"
     private const val minuteKey = "minute"
     private const val triggerAtKey = "trigger_at_ms"
+    private const val suppressedDayKey = "suppressed_study_day_ms"
     private const val requestCode = 5103
 
     fun apply(
@@ -29,10 +27,9 @@ object RecallReminderScheduler {
         settings: RecallReminderSettings,
         nowMillis: Long = System.currentTimeMillis(),
     ) {
-        val eligible = settings.enabled &&
-            (settings.dueCount ?: 0) > 0 &&
-            !settings.studiedToday
-        if (!eligible) {
+        // A positive last-known workload permits future neutral nudges. Never
+        // persist/repeat a count, infer work from unknown data, or fetch cards here.
+        if (!settings.enabled || (settings.dueCount ?: 0) <= 0) {
             cancel(context)
             return
         }
@@ -43,18 +40,30 @@ object RecallReminderScheduler {
         } else {
             null
         }
-        prefs.edit()
+        val edit = prefs.edit()
             .putBoolean(activeKey, true)
             .putInt(hourKey, settings.hour)
             .putInt(minuteKey, settings.minute)
-            .apply()
+        if (settings.studiedToday) {
+            RecallReminderNotifications.dismiss(context)
+            edit.putLong(
+                suppressedDayKey,
+                maxOf(suppressedDay(context), RecallReminderTime.studyDay(nowMillis)),
+            )
+        }
+        check(edit.commit()) { "Reminder eligibility was not saved" }
         schedule(context, settings.hour, settings.minute, nowMillis, pendingTriggerAt)
     }
 
     fun cancel(context: Context) {
         RecallReminderNotifications.dismiss(context)
         cancelAlarm(context)
-        preferences(context).edit().clear().apply()
+        // Keep only the daily suppression marker: toggling off/on, signing out
+        // or a zero-work refresh must not permit a second nudge on the same day.
+        val day = suppressedDay(context)
+        check(preferences(context).edit().clear().putLong(suppressedDayKey, day).commit()) {
+            "Reminder cancellation was not saved"
+        }
     }
 
     fun restore(context: Context, nowMillis: Long = System.currentTimeMillis()) {
@@ -68,18 +77,22 @@ object RecallReminderScheduler {
         )
     }
 
-    fun consume(context: Context): Boolean {
+    fun consume(context: Context, nowMillis: Long = System.currentTimeMillis()): Boolean {
         val prefs = preferences(context)
         val wasActive = prefs.getBoolean(activeKey, false)
-        if (!wasActive) return false
-        val clearCommitted = prefs.edit().clear().commit()
-        // Fail closed if the durable clear fails. Posting while the eligibility
-        // remains active could restore and deliver the same reminder again.
-        return RecallReminderDeliveryEligibility.canDeliver(
-            wasActive = wasActive,
-            clearCommitted = clearCommitted,
-        )
+        val triggerAt = prefs.getLong(triggerAtKey, 0L)
+        val day = RecallReminderTime.studyDay(nowMillis)
+        if (!wasActive || triggerAt <= 0L || triggerAt > nowMillis ||
+            RecallReminderTime.studyDay(triggerAt) != day || suppressedDay(context) >= day
+        ) return false
+        // Record the day BEFORE posting. If persistence fails, fail closed.
+        // Keep the recurrence and time so native delivery can rearm without Dart.
+        val recordCommitted = prefs.edit().putLong(suppressedDayKey, day).commit()
+        return RecallReminderDeliveryEligibility.canDeliver(wasActive, recordCommitted)
     }
+
+    private fun suppressedDay(context: Context): Long =
+        preferences(context).getLong(suppressedDayKey, Long.MIN_VALUE)
 
     private fun schedule(
         context: Context,
@@ -94,13 +107,13 @@ object RecallReminderScheduler {
             minute = minute,
             nowMillis = nowMillis,
             pendingTriggerAtMillis = pendingTriggerAtMillis,
+            suppressedThroughStudyDay = suppressedDay(context),
         )
-        manager.setAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            triggerAt,
-            pendingIntent(context),
-        )
-        preferences(context).edit().putLong(triggerAtKey, triggerAt).apply()
+        check(preferences(context).edit().putLong(triggerAtKey, triggerAt).commit()) {
+            "Reminder time was not saved"
+        }
+        // Inexact by design: no exact-alarm permission/access is needed.
+        manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent(context))
     }
 
     private fun cancelAlarm(context: Context) {

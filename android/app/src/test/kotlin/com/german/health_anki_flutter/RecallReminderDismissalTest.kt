@@ -29,6 +29,7 @@ class RecallReminderDismissalTest {
     @Before
     fun setUp() {
         context = RuntimeEnvironment.getApplication()
+        context.getSharedPreferences("recall_reminder", Context.MODE_PRIVATE).edit().clear().commit()
         manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(NotificationChannel(
             RecallReminderNotifications.channelId, "Synthetic reminder", NotificationManager.IMPORTANCE_DEFAULT,
@@ -53,11 +54,13 @@ class RecallReminderDismissalTest {
     fun studiedTodayWithdrawsPostedReminder() {
         postReminder()
         RecallReminderScheduler.apply(context, settings.copy(studiedToday = true), now)
-        assertDismissed()
+        assertNull(shadowOf(manager).getNotification(RecallReminderNotifications.notificationId))
+        val alarms = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        assertEquals(1, shadowOf(alarms).scheduledAlarms.size)
     }
 
     @Test
-    fun explicitCancellationIsIdempotentAfterDeliveryConsumedEligibility() {
+    fun explicitCancellationIsIdempotentAfterDelivery() {
         postReminder()
         RecallReminderScheduler.cancel(context)
         RecallReminderScheduler.cancel(context)
@@ -73,9 +76,10 @@ class RecallReminderDismissalTest {
 
     private fun postReminder() {
         RecallReminderScheduler.apply(context, settings, now)
-        // Delivery consumes eligibility before posting. Dismissal must work
-        // even though active/pending preferences are already gone.
-        assertEquals(true, RecallReminderScheduler.consume(context))
+        // Delivery records today's suppression while retaining tomorrow.
+        val alarms = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val target = requireNotNull(shadowOf(alarms).peekNextScheduledAlarm()).triggerAtTime
+        assertEquals(true, RecallReminderScheduler.consume(context, target))
         val notification = Notification.Builder(context, RecallReminderNotifications.channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Synthetic reminder")

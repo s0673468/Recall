@@ -23,10 +23,6 @@ void main() {
     'android/app/src/main/kotlin/com/german/health_anki_flutter/'
     'RecallReminderReceiver.kt',
   );
-  final reminderScheduler = File(
-    'android/app/src/main/kotlin/com/german/health_anki_flutter/'
-    'RecallReminderScheduler.kt',
-  );
   final widgetProvider = File(
     'android/app/src/main/kotlin/com/german/health_anki_flutter/'
     'RecallWidgetProvider.kt',
@@ -369,27 +365,8 @@ void main() {
     );
   });
 
-  test('Android reminder eligibility survives blocked one-shot delivery', () {
-    final receiver = reminderReceiver.readAsStringSync();
-    final scheduler = reminderScheduler.readAsStringSync();
-    final deliveryBlock = receiver.substring(
-      receiver.indexOf('class RecallReminderReceiver'),
-      receiver.indexOf('class RecallReminderRestoreReceiver'),
-    );
-
-    expect(deliveryBlock, contains('shouldReschedule(readiness)'));
-    expect(deliveryBlock, contains('RecallReminderScheduler.restore(context)'));
-    expect(deliveryBlock, contains('RecallReminderScheduler.consume(context)'));
-    expect(
-      deliveryBlock.indexOf('RecallReminderScheduler.restore(context)'),
-      lessThan(
-        deliveryBlock.indexOf('RecallReminderScheduler.consume(context)'),
-      ),
-    );
-    expect(scheduler, contains('fun consume(context: Context): Boolean'));
-    expect(scheduler, contains('.edit().clear().commit()'));
-    expect(scheduler, contains('Fail closed if the durable clear fails'));
-  });
+  // Reminder recurrence, durable deduplication and blocked delivery are exercised
+  // against Android preferences/alarms in RecallReminderRecurrenceTest.
 
   test('Android notification settings launch is versioned and guarded', () {
     final notifications = notificationReadiness.readAsStringSync();
@@ -428,5 +405,4 @@ void main() {
     expect(provider, contains('updateAll(context)'));
     expect(info, contains('android:updatePeriodMillis="0"'));
   });
-
 }
