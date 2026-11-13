@@ -48,6 +48,23 @@ abstract final class ConceptAttribution {
     return out;
   }
 
+  /// Reading links are additive: existing node tags first, then explicit pages.
+  /// This does not change concept attribution for statistics or scheduling.
+  static List<String> readingPageIds(String? tags) {
+    final ids = nodeTags(tags).toSet();
+    for (final token in (tags ?? '').split(_whitespace)) {
+      if (token.startsWith('page::') && token.length > 6) {
+        ids.add(token.substring(6));
+      }
+    }
+    return ids.toList();
+  }
+
+  static List<ConceptPage> readingPages(String? tags, List<ConceptPage> pages) {
+    final byId = {for (final page in pages) page.nodeId: page};
+    return [for (final id in readingPageIds(tags)) ?byId[id]];
+  }
+
   /// Primers whose tagged cards have at least one review on [today]'s local
   /// device day.
   static List<ConceptPage> todayConceptPages({

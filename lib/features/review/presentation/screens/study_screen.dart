@@ -14,6 +14,9 @@ import '../../data/local_review_preferences.dart';
 import '../../data/local_review_store.dart';
 import '../../data/models.dart';
 import '../../data/recall_api.dart';
+import '../../domain/card_back.dart';
+import '../../domain/concept_attribution.dart';
+import '../widgets/study_reading_action.dart';
 import '../widgets/card_face.dart';
 import '../widgets/rating_bar.dart';
 import '../widgets/remediation_rows.dart';
@@ -290,6 +293,16 @@ class StudyScreen extends StatelessWidget {
           deckName: cardDeck?.replaceAll('::', ' › ') ?? 'Deck',
           showBack: s.showBack,
           style: style,
+          readingAction:
+              s.showBack &&
+                  api != null &&
+                  ConceptAttribution.readingPageIds(card.tags).isNotEmpty
+              ? StudyReadingAction(
+                  api: api!,
+                  tags: card.tags,
+                  nativeIos: nativeIos ?? recallRunsAsNativeIos(),
+                )
+              : null,
         );
         // Both controls participate in layout, so the real rating buttons
         // reserve their final height at every width and text scale. Inactive
@@ -768,12 +781,47 @@ class _CardPanel extends StatelessWidget {
   final String deckName;
   final bool showBack;
   final TextStyle style;
+  final Widget? readingAction;
   const _CardPanel({
     required this.card,
     required this.deckName,
     required this.showBack,
     required this.style,
+    this.readingAction,
   });
+
+  Widget _answer(BuildContext context) {
+    final secondary = Theme.of(context).textTheme.titleLarge!.copyWith(
+      color: UiColors.textSecondary,
+      height: 1.6,
+      fontWeight: FontWeight.w400,
+    );
+    Widget face(
+      String html,
+      String suffix,
+      TextStyle textStyle, {
+      bool svg = false,
+    }) => CardFace(
+      html: html,
+      hasLatex: card.hasLatex,
+      latexSvg: svg ? card.latexSvg : null,
+      cacheKey: '${card.id}:back$suffix',
+      selectable: false,
+      textAlign: TextAlign.start,
+      style: textStyle,
+      revealCloze: true,
+    );
+    final parts = splitCardBack(card.back);
+    if (parts == null) return face(card.back, '', secondary, svg: true);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        face(parts.answer, ':answer', style),
+        const SizedBox(height: UiSpacing.md),
+        face(parts.anchor, ':anchor', secondary),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -814,22 +862,8 @@ class _CardPanel extends StatelessWidget {
                           padding: EdgeInsets.symmetric(vertical: UiSpacing.lg),
                           child: Divider(color: UiColors.border, height: 1),
                         ),
-                        CardFace(
-                          html: card.back,
-                          hasLatex: card.hasLatex,
-                          latexSvg: card.latexSvg,
-                          cacheKey: '${card.id}:back',
-                          selectable: false,
-                          textAlign: TextAlign.start,
-                          style: Theme.of(context).textTheme.titleLarge!
-                              .copyWith(
-                                color: UiColors.textSecondary,
-                                height: 1.6,
-                                fontWeight: FontWeight.w400,
-                              ),
-                          // The answer face reveals any cloze deletions it carries.
-                          revealCloze: true,
-                        ),
+                        _answer(context),
+                        ?readingAction,
                       ],
                     ),
                   const SizedBox(height: UiSpacing.sm),
