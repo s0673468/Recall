@@ -523,10 +523,14 @@ class _MathFragment extends StatelessWidget {
     Math buildMath(String source) => Math.tex(
       source,
       textStyle: style,
+      // WidgetSpan already applies the paragraph's accessibility text scale.
+      // Letting Math read MediaQuery here would apply that scale twice.
+      textScaleFactor: 1,
       mathStyle: mathStyle,
       onErrorFallback: (_) => Text(
         fallback,
         style: style,
+        textScaler: TextScaler.noScaling,
         textAlign: TextAlign.center,
         softWrap: true,
       ),
@@ -543,6 +547,7 @@ class _MathFragment extends StatelessWidget {
         child: Text(
           fallback,
           style: style,
+          textScaler: TextScaler.noScaling,
           textAlign: TextAlign.center,
           softWrap: true,
         ),
