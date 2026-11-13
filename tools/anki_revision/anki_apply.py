@@ -158,6 +158,10 @@ def validate_records(
         action = record.get("action")
         if action not in {"keep", "edit", "split", "delete", "add"}:
             raise ApplyError(f"records[{index}].action is invalid")
+        if "tags_remove" in record:
+            raise ApplyError(
+                f"records[{index}].tags_remove is only valid on an edit card"
+            )
         cards = record.get("cards")
         if not isinstance(cards, list):
             raise ApplyError(f"records[{index}].cards must be a list")
@@ -188,6 +192,25 @@ def validate_records(
                 raise ApplyError(
                     f"records[{index}].cards[{card_index}].tags_add is invalid"
                 )
+            if "tags_remove" in card:
+                label = f"records[{index}].cards[{card_index}].tags_remove"
+                if action != "edit":
+                    raise ApplyError(f"{label} is only valid on an edit card")
+                removals = card["tags_remove"]
+                if not isinstance(removals, list) or not all(
+                    isinstance(tag, str)
+                    and tag.startswith("node::")
+                    and not any(c.isspace() for c in tag)
+                    for tag in removals
+                ):
+                    raise ApplyError(f"{label} must be a list of node:: tags")
+                node_additions = [tag for tag in tags if tag.startswith("node::")]
+                if removals and (
+                    len(node_additions) != 1 or node_additions[0] in removals
+                ):
+                    raise ApplyError(
+                        f"{label} requires exactly one different node:: tag in tags_add"
+                    )
         if action in {"edit", "split"}:
             kind = record.get("revision_kind")
             if kind not in {"wording", "material"}:
@@ -426,6 +449,16 @@ def execute_job(
                 f"changeset notes are missing from collection: {missing[:5]}"
             )
         for nid, record in existing.items():
+            for card in record["cards"]:
+                missing_tags = sorted(
+                    set(card.get("tags_remove", []))
+                    - set(existing_rows[nid]["tags"].split())
+                )
+                if missing_tags:
+                    raise ApplyError(
+                        f"nid {nid}: tags_remove tags are missing from live note: "
+                        f"{missing_tags}"
+                    )
             if record["action"] == "keep":
                 card = record["cards"][0]
                 expected_fields = card["front"] + ac.FSEP + card["back"]
@@ -476,6 +509,18 @@ def execute_job(
             "expected_note_count_after": expected_note_count_after,
             "handoff_evidence": handoff_evidence,
         }
+        tag_changes = [
+            {
+                "nid": nid,
+                "tags_add": card.get("tags_add", []),
+                "tags_remove": card["tags_remove"],
+            }
+            for nid, record in existing.items()
+            for card in record["cards"]
+            if card.get("tags_remove")
+        ]
+        if tag_changes:
+            base_receipt["tag_changes"] = tag_changes
         if not commit:
             path = _write_receipt(job_dir / "receipts", "dry-run", base_receipt)
             connection.rollback()
@@ -555,8 +600,19 @@ def execute_job(
                 continue
             first = cards[0]
             material = record["revision_kind"] == "material"
+            original_tags = original["tags"]
+            if first.get("tags_remove"):
+                original_tags = (
+                    " "
+                    + " ".join(
+                        token
+                        for token in original_tags.split()
+                        if token not in first["tags_remove"]
+                    )
+                    + " "
+                )
             updated_tags = _merged_tags(
-                original["tags"],
+                original_tags,
                 first.get("tags_add", []),
                 tag,
                 marker if material else None,

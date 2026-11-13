@@ -73,6 +73,13 @@ def verify(
                 tags = row["tags"].split()
                 if not set(first.get("tags_add", [])).issubset(tags) or tag not in tags:
                     raise VerifyError(f"nid {nid} is missing compiled tags")
+                if first.get("tags_remove"):
+                    if set(first["tags_remove"]).intersection(tags):
+                        raise VerifyError(f"nid {nid} still has removed concept tags")
+                    if sum(token.startswith("node::") for token in tags) != 1:
+                        raise VerifyError(
+                            f"nid {nid} does not have exactly one concept tag after move"
+                        )
                 if record["revision_kind"] == "material" and marker not in tags:
                     raise VerifyError(f"nid {nid} is missing material-change marker")
 
