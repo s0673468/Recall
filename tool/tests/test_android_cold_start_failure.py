@@ -48,6 +48,24 @@ class TechnicalAssetManifestTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 'pubspec_source_pin_changed')
 
 
+    def test_unapproved_dependency_changes_remain_refused_after_sdk_test_repin(self):
+        manifest = (SCRIPT.parent.parent / 'pubspec.yaml').read_bytes()
+        sdk_test = b'  integration_test:\n    sdk: flutter\n'
+        self.assertIn(sdk_test, manifest.split(b'dev_dependencies:', 1)[1])
+        superseded = manifest.replace(sdk_test, b'', 1)
+        self.assertEqual(consumer.pubspec_pin_sha(superseded),
+                         '026f14092a53baaf2c92539964c18c03f9f43b7416615093b67d2b12daf6222a')
+        changed_dev = manifest.replace(sdk_test,
+            sdk_test + b'  unapproved_fixture_dependency: 1.0.0\n', 1)
+        changed_runtime = manifest.replace(b'  shared_preferences: ^2.5.4\n',
+            b'  shared_preferences: ^2.5.5\n', 1)
+        self.assertNotEqual(changed_runtime, manifest)
+        for unapproved in (superseded, changed_dev, changed_runtime):
+            with self.subTest(pin=consumer.pubspec_pin_sha(unapproved)):
+                with self.assertRaises(consumer.Refused) as caught:
+                    consumer.technical_assets_only(unapproved)
+                self.assertEqual(caught.exception.code, 'pubspec_source_pin_changed')
+
     def test_version_only_bump_keeps_pin_but_extra_version_line_is_refused(self):
         manifest = (SCRIPT.parent.parent / 'pubspec.yaml').read_bytes()
         bumped = re.sub(rb'(?m)^version:[^\n]*$', b'version: 99.0.0+99999', manifest)

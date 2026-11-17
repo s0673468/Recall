@@ -21,8 +21,10 @@ import time
 
 PACKAGE = 'com.german.recall.syntheticbenchmark'
 ORIGINAL_PACKAGE = 'com.german.health_anki_flutter'
-BASE_GRADLE_SHA = 'ea553273c9ddc2a8870cc6ba411a55eef3976d74a6662da35896ca8ddcd73277'
-BASE_PUBSPEC_SHA = '026f14092a53baaf2c92539964c18c03f9f43b7416615093b67d2b12daf6222a'
+BASE_GRADLE_SHA = '40b954e1b692f14fa8d587561c633db4506dbd267ce9d835c75314784849d418'
+# Approved manifest adds Flutter SDK integration_test under dev_dependencies.
+# Continue pinning every non-version byte, including dependencies and assets.
+BASE_PUBSPEC_SHA = '1c94a029f5574f43e786fdfa83a36e03bd67f6405ea74f6ad399dba2bacb29c8'
 SENTINEL = 'RECALL_ANDROID_BENCH_JSON '
 SCHEMA = 'recall-synthetic-android/v1'
 FIXTURE_FAILURE_CODES = {'fixture_build_required', 'synthetic_phase_failed'}
