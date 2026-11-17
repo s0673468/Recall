@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [[ $# == 0 ]]; then
+  exec timeout --signal=INT --kill-after=10s 290s ./tool/flutterw test --no-pub --reporter=expanded test/production_scale_acceptance_test.dart test/study_flow_polish_test.dart test/study_day_properties_test.dart
+fi
+if [[ $# != 2 || $1 != --emulator || $2 != emulator-* ]]; then
+  echo 'Use no arguments for the CI widget run, or --emulator emulator-SERIAL for an owned disposable emulator.' >&2
+  exit 2
+fi
+if [[ -z ${ANDROID_AVD_HOME:-} || ! -f "$ANDROID_AVD_HOME/.recall-main-paths-owned" ]] ||
+   [[ $(cat "$ANDROID_AVD_HOME/.recall-main-paths-owned") != "$2" ]]; then
+  echo 'Refusing an emulator without this task’s ownership marker.' >&2
+  exit 2
+fi
+# Never choose a physical device or a signed-in existing emulator implicitly.
+if ! adb -s "$2" emu avd name | tr -d '\r' | head -1 | grep -qx recall_prune_fixture; then
+  echo 'Refusing an emulator outside the recall_prune_fixture AVD.' >&2
+  exit 2
+fi
+exec timeout --signal=INT --kill-after=10s 290s ./tool/flutterw test integration_test/main_paths_test.dart --no-pub -d "$2" --reporter=expanded
