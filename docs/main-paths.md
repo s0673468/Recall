@@ -33,8 +33,10 @@ x86_64 Android image in task-local `ANDROID_AVD_HOME`, then start it with
 After boot, write its serial to `$ANDROID_AVD_HOME/.recall-main-paths-owned`.
 Pass that explicit serial to `./tool/run_main_paths --emulator emulator-PORT`.
 The wrapper checks the ownership marker, emulator serial and AVD name before installing.
-`integration_test/main_paths_test.dart` runs the same invented-data app suite
-inside Android. Do not point it at an existing/signed-in AVD or physical phone.
+`integration_test/main_paths_test.dart` runs the shared normal app traversal
+inside Android. The default widget run also keeps the offline-Undo, keyboard and
+intentional failure-injection cases. Use two admitted CPUs and 11 GiB for the
+emulator plus build; the one-CPU cold setup did not reach the test connection. Do not point it at an existing/signed-in AVD or physical phone.
 The integration test uses in-memory preferences and fixture API dependencies.
 Stop the owned emulator and remove only its task-local AVD when finished.
 
