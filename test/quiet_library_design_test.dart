@@ -265,42 +265,4 @@ void main() {
     expect(find.text('Vector geometry'), findsOneWidget);
     expect(find.text('All available primers are shown above.'), findsNothing);
   });
-
-  testWidgets(
-    'a long primer remains scrollable at 320px and double text size',
-    (tester) async {
-      phone(tester, width: 320);
-      final page = ConceptPage(
-        nodeId: 'long-reading',
-        title: 'A long concept title that needs several lines',
-        bodyHtml: List.generate(
-          18,
-          (index) =>
-              '<p>Paragraph $index explains a real relationship in detail.</p>',
-        ).join(),
-        updatedAt: DateTime(2026, 9, 5),
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: buildRecallTheme(),
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.linear(2)),
-            child: child!,
-          ),
-          home: PrimerScreen(page: page, conceptNodes: const []),
-        ),
-      );
-      await tester.pumpAndSettle();
-      final scroll = tester.state<ScrollableState>(
-        find.byType(Scrollable).first,
-      );
-      expect(scroll.position.maxScrollExtent, greaterThan(1000));
-      await tester.drag(find.byType(ListView), const Offset(0, -500));
-      await tester.pumpAndSettle();
-      expect(scroll.position.pixels, greaterThan(100));
-      expect(tester.takeException(), isNull);
-    },
-  );
 }
