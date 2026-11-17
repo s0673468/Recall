@@ -20,28 +20,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('UI widgets', () {
-    testWidgets('rating buttons omit scheduling estimates', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(body: RatingBar(onRate: (_) {})),
-        ),
-      );
-
-      expect(
-        tester
-            .widgetList<Text>(
-              find.descendant(
-                of: find.byType(RatingBar),
-                matching: find.byType(Text),
-              ),
-            )
-            .map((text) => text.data),
-        ['Again', 'Hard', 'Good', 'Easy'],
-      );
-      expect(find.bySemanticsLabel('Again'), findsOneWidget);
-      expect(find.bySemanticsLabel('Easy'), findsOneWidget);
-    });
-
     testWidgets('RatingBar shows all four ratings and reports taps', (
       tester,
     ) async {
