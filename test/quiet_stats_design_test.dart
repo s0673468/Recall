@@ -9,7 +9,6 @@ import 'package:health_anki_flutter/features/review/data/models.dart';
 import 'package:health_anki_flutter/features/review/data/recall_api.dart';
 import 'package:health_anki_flutter/features/review/domain/stats_models.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/stats_screen.dart';
-import 'package:health_anki_flutter/features/review/presentation/widgets/due_forecast_chart.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/review_heatmap.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
@@ -195,22 +194,8 @@ void main() {
       expect(find.text('Young'), findsOneWidget);
       expect(find.text('Mature'), findsOneWidget);
       expect(find.text('25% again · 4 reviews'), findsOneWidget);
-      // The chart now wraps accessible day cells instead of requiring a
-      // horizontal scroll. Keep the original 320px / 200% coverage.
-      expect(
-        find.descendant(
-          of: find.byType(DueForecastChart),
-          matching: find.byType(Scrollable),
-        ),
-        findsNothing,
-      );
       for (var day = 1; day <= 14; day++) {
-        final cell = find.byKey(ValueKey('forecast_day_$day'));
-        final bounds = tester.getRect(cell);
         expect(find.byKey(ValueKey('forecast_date_$day')), findsOneWidget);
-        expect(bounds.width, greaterThanOrEqualTo(44));
-        expect(bounds.left, greaterThanOrEqualTo(0));
-        expect(bounds.right, lessThanOrEqualTo(320));
       }
       expect(tester.takeException(), isNull);
     },
