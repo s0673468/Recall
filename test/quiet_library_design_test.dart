@@ -265,6 +265,4 @@ void main() {
     expect(find.text('Vector geometry'), findsOneWidget);
     expect(find.text('All available primers are shown above.'), findsNothing);
   });
-
-
 }

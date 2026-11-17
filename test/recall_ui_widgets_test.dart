@@ -317,6 +317,5 @@ void main() {
       expect(find.textContaining('mitochondria'), findsOneWidget);
       expect(find.textContaining('A cell organelle'), findsOneWidget);
     });
-
   });
 }
