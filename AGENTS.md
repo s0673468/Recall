@@ -21,26 +21,21 @@ release from them. Preserved iOS tests are tagged `apple-mobile` and skipped.
 
 ## How to run and check it
 
-`.flutter-version` is the one supported SDK; always go through `tool/flutterw`,
-which checks it before every command.
+Testing follows the shared `tests-work` block ("How we work with tests") in
+`~/.config/agent-policy/policy.md`; `delivery-proof` selects the gate.
 
-```bash
-./tool/bootstrap_flutter
-./tool/flutterw pub get
-./tool/flutterw analyze --no-pub
-./tool/flutterw test --no-pub --reporter=failures-only --exclude-tags apple-mobile
-```
-
-- Hosted CI (`.github/workflows/ci.yml`) is the full gate: analyze, four
-  `flutter test` file shards, Android compile and release-policy checks, and the
-  Python suites. Recall is public, so hosted checks cost no private minutes.
-- Python tooling: `python3 -m unittest discover -s tool/tests -p 'test_*.py'`
-  with the pinned Dart on `PATH`, plus the `tools/*/tests` suites CI lists.
-- While iterating, `python3 tool/affected_tests.py --base origin/main` plans the
-  smallest checks; add `--run` (portable lane) or `--lane android --run`. See
-  `docs/testing.md`. Do not run `flutter clean` between ordinary edits.
-- When you delete a test file, drop its entry from `tool/flutter_test_timings.json`.
-- Speed and visual benchmarks run by hand, never in the default `flutter test`.
+- Main paths: `./tool/bootstrap_flutter`, `./tool/flutterw pub get`, then
+  `./tool/run_main_paths`: invented deck → reveal/rate → offline Undo → flag →
+  deck search → Stats/Read → Settings. Expected results: `docs/main-paths.md`;
+  matching incident checks: `docs/check-incidents.md`.
+- `.flutter-version` and `tool/flutterw` select the supported SDK. Gate entries
+  and affected-check selection: `.github/workflows/ci.yml`, `docs/testing.md`.
+- Keep-list: FSRS scheduling, due/new counts and daily limits; durable outboxes,
+  replay/acknowledgement, Undo and recovery; snapshots and owner migrations;
+  account isolation, sign-out and secure sessions; honest counts, personal-data
+  privacy, upgrade preservation, backup/restore and public-runner/gate boundaries
+  (`test/ci_workflow_test.dart`). Full store/tester proof stays.
+- Test-file removal also updates `tool/flutter_test_timings.json`.
 
 ## What must not break
 
@@ -67,13 +62,6 @@ which checks it before every command.
 - **Diagnostics** (`operational-event/v2`) hold only fixed enums, timestamps,
   bounded numbers and an opaque run ID: no exception text, content,
   identifiers, paths, endpoints or credentials, and no network telemetry.
-- **Tests guard what can lose or corrupt study data:** FSRS scheduling, due/new
-  counts and daily limits; the outbox, sync, acknowledgements, undo and retries;
-  local storage, snapshots and owner migrations; account isolation, sign-out and
-  secure session storage; data honesty; CI gate wiring and public-runner
-  boundaries (`test/ci_workflow_test.dart`). Do not add tests that pin layout
-  geometry, pixel sizes, colours, copy, fonts, motion, haptics or benchmark
-  timings.
 - **Look and feel** (checked by looking, not by tests):
   - Layout: screens fit a 320–360 dp phone at 2x text scale without overflow or
     clipped titles. Wide web and unfolded Android show Study beside Reading.
