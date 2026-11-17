@@ -10,6 +10,9 @@ sys.path.insert(0, str(TOOL))
 import measure_android_cold_start as cold
 
 
+RUNNER_ALIGNMENT = b'    constraints {\n        // Flutter integration_test also brings the runner onto the debug app\n        // classpath. AGP requires instrumentation to resolve the same version.\n        add("debugImplementation", "androidx.test:runner:1.7.0")\n    }\n'
+
+
 class AndroidBenchmarkGradleTests(unittest.TestCase):
     def test_current_source_rewrites_only_one_application_id(self):
         data = (TOOL.parent / 'android/app/build.gradle.kts').read_bytes()
@@ -23,11 +26,23 @@ class AndroidBenchmarkGradleTests(unittest.TestCase):
 
     def test_superseded_reminder_source_pin_is_refused(self):
         data = (TOOL.parent / 'android/app/build.gradle.kts').read_bytes()
+        self.assertEqual(data.count(RUNNER_ALIGNMENT), 1)
+        data = data.replace(RUNNER_ALIGNMENT, b'', 1)
         added = b'    testImplementation("org.robolectric:robolectric:4.16.1")\n'
         self.assertEqual(data.count(added), 1)
         previous = data.replace(added, b'', 1)
         self.assertEqual(cold.sha(previous),
                          '729f278b435614cb6c6060000a3cec7ab9ca1de31d42098a5b693921951beb5d')
+        with self.assertRaises(cold.Refused) as caught:
+            cold.isolated_gradle(previous)
+        self.assertEqual(caught.exception.code, 'gradle_source_pin_changed')
+
+    def test_superseded_unaligned_runner_source_pin_is_refused(self):
+        data = (TOOL.parent / 'android/app/build.gradle.kts').read_bytes()
+        self.assertEqual(data.count(RUNNER_ALIGNMENT), 1)
+        previous = data.replace(RUNNER_ALIGNMENT, b'', 1)
+        self.assertEqual(cold.sha(previous),
+                         'ea553273c9ddc2a8870cc6ba411a55eef3976d74a6662da35896ca8ddcd73277')
         with self.assertRaises(cold.Refused) as caught:
             cold.isolated_gradle(previous)
         self.assertEqual(caught.exception.code, 'gradle_source_pin_changed')
