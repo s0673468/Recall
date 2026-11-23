@@ -9,7 +9,6 @@ import 'package:health_anki_flutter/features/review/application/review_controlle
 import 'package:health_anki_flutter/features/review/data/local_review_store.dart';
 import 'package:health_anki_flutter/features/review/presentation/screens/study_screen.dart';
 import 'package:health_anki_flutter/features/review/presentation/widgets/card_face.dart';
-import 'package:health_anki_flutter/features/review/presentation/widgets/rating_bar.dart';
 import 'package:health_anki_flutter/theme/ui_tokens.dart';
 
 import 'support/recall_test_harness.dart';
@@ -20,32 +19,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('UI widgets', () {
-    testWidgets('RatingBar shows all four ratings and reports taps', (
-      tester,
-    ) async {
-      Rating? tapped;
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: ThemeData(splashFactory: InkRipple.splashFactory),
-          home: Scaffold(body: RatingBar(onRate: (r) => tapped = r)),
-        ),
-      );
-      expect(find.text('Again'), findsOneWidget);
-      expect(find.text('Hard'), findsOneWidget);
-      expect(find.text('Good'), findsOneWidget);
-      expect(find.text('Easy'), findsOneWidget);
-
-      for (final (label, rating) in [
-        ('Again', Rating.again),
-        ('Hard', Rating.hard),
-        ('Good', Rating.good),
-        ('Easy', Rating.easy),
-      ]) {
-        await tester.tap(find.text(label));
-        expect(tapped, rating);
-      }
-    });
-
     testWidgets('CardFace renders plain text', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(

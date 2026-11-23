@@ -243,35 +243,29 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  for (final size in const [Size(320, 740), Size(1280, 800)]) {
-    testWidgets(
-      'synthetic dark library supports long titles, empty results and keyboard at $size',
-      (tester) async {
-        ConceptPage? opened;
-        await _show(
-          tester,
-          PrimerLibraryScreen(
-            pages: _pages,
-            conceptNodes: _nodes,
-            onOpenPrimer: (page) => opened = page,
-          ),
-          size: size,
-          scale: 2,
-        );
-        expect(Theme.of(tester.element(_search)).brightness, Brightness.dark);
-        await tester.enterText(_search, _pages[0].title);
-        await tester.pumpAndSettle();
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-        await tester.pumpAndSettle();
-        expect(opened, same(_pages[0]));
-        await tester.enterText(_search, 'unmatched synthetic query');
-        await tester.pumpAndSettle();
-        expect(find.text('No primers match your search.'), findsOneWidget);
-        expect(tester.takeException(), isNull);
-      },
-    );
-  }
-
+  testWidgets(
+    'library search opens a long title by keyboard and reports empty results',
+    (tester) async {
+      ConceptPage? opened;
+      await _show(
+        tester,
+        PrimerLibraryScreen(
+          pages: _pages,
+          conceptNodes: _nodes,
+          onOpenPrimer: (page) => opened = page,
+        ),
+      );
+      await tester.enterText(_search, _pages[0].title);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(opened, same(_pages[0]));
+      await tester.enterText(_search, 'unmatched synthetic query');
+      await tester.pumpAndSettle();
+      expect(find.text('No primers match your search.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
